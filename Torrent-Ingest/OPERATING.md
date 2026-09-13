@@ -385,16 +385,16 @@ sibling for the same episode is present with its `.nfo`, which makes it a real d
 bash ~/Developer/ship-fleet.sh "what changed"
 ```
 
-Commits and pushes every repo, then restarts every daemon. It refuses to restart a draining
-reaper.
+Commits and pushes the monorepo once, then restarts every daemon. It refuses to restart a
+draining reaper.
 
-**The script itself is a real file at `~/Developer/ship-fleet.sh`, in no repo** (moved
-2026-09-12; it used to be tracked inside Torrent-Ingest and symlinked out). The tool that
-deploys every repo should not be owned by one of them — shipping a broken edit to it could
-take out the very thing needed to ship the fix.
+**The script itself lives at `~/Developer/ship-fleet.sh`, at the root of the one
+repository** (since the 2026-09-13 merge everything is tracked there; before that it was
+deliberately untracked, because owning it from any single repo was a risk). Being at the
+top of the monorepo is the same protection without the untracked trade-off: it cannot be
+mistaken for a single project's property, and it now has history.
 
-The trade-off is real and worth knowing: **it now has no version history and is in no
-backup.** If you change it, keep a copy. `verify_fleet.sh` does not check it, so a syntax
+`verify_fleet.sh` does not check it, so a syntax
 error there surfaces only when you next try to deploy — run `bash -n ~/Developer/ship-fleet.sh`
 after editing it.
 
