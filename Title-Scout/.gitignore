@@ -1,0 +1,8 @@
+# Runtime state (dedupe ledger, found log, find.txt backup).
+state/
+
+# Logs and local scratch.
+*.log
+__pycache__/
+*.pyc
+.DS_Store

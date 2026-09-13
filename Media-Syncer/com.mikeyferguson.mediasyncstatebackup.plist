@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.mediasyncstatebackup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mikeyferguson/Developer/Media-Syncer/run_backup_state.sh</string>
+    </array>
+
+    <!-- Scheduled one-shot: back up remote_inventory.json + sync_state.json every
+         hour (and once at load). No KeepAlive -- it exits after each run. -->
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaSyncStateBackup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaSyncStateBackup.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

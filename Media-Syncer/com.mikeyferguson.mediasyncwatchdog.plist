@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.mediasyncwatchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/mikeyferguson/Developer/Media-Syncer/run_mediasync_watchdog.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- The watchdog itself DOES get KeepAlive: it holds no lock, touches no media, and is
+         useless if it dies. media_sync is the one that must stay killable. -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaSyncWatchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaSyncWatchdog.err</string>
+</dict>
+</plist>

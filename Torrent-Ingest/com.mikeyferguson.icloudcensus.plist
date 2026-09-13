@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.mikeyferguson.icloudcensus</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
+    <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/icloud_census.py</string>
+  </array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/Users/mikeyferguson/Library/Logs/iCloudCensus.log</string>
+  <key>StandardErrorPath</key><string>/Users/mikeyferguson/Library/Logs/iCloudCensus.err</string>
+</dict>
+</plist>

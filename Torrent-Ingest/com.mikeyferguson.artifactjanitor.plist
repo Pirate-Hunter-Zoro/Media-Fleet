@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.artifactjanitor</string>
+
+    <!-- Recurring failed/stale-artifact janitor (diagnosis §5 items 1 + 9). Deletes
+         dead failed/ .torrent files + orphaned .parts + stale magnets, and evicts
+         SD/stale locals whose MEGA copy is better/newer, so the disk never again fills
+         up on junk that only drained by hand. Scheduled one-shot, not a daemon. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/run_janitor.sh</string>
+    </array>
+
+    <!-- Run twice daily (03:00 + 15:00) so a day's worth of failed artifacts never
+         piles up past the point where one manual drain was needed. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>3</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>15</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/ArtifactJanitor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/ArtifactJanitor.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

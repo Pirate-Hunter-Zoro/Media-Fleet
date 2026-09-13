@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.mediafs</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mikeyferguson/Developer/Media-Syncer/run_mediafs.sh</string>
+    </array>
+
+    <!-- Foreground FUSE mount; KeepAlive + the launcher's stale-mount force-clean
+         are the watchdog. Must be a LaunchAgent (user session): macFUSE mounts are
+         owned by the mounting user, and Jellyfin (same user) reads them. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaFS.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaFS.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

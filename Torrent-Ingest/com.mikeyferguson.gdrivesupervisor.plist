@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.gdrivesupervisor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/run_gdrive_supervisor.sh</string>
+    </array>
+
+    <!-- Keeps the Google Drive macOS app running so light novels can be placed into
+         the Novels folder it syncs. Must be a LaunchAgent (user session): it drives a
+         GUI app and posts notifications. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/GDriveSupervisor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/GDriveSupervisor.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

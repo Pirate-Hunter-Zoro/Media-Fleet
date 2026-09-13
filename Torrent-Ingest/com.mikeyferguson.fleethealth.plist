@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.fleethealth</string>
+
+    <!-- The human-attention watchdog. Polls the DeepSeek balance endpoint, disk space,
+         the MEGA free-space cache freshness and the library review list, and writes a
+         phone-glanceable fleet_health.txt to the iCloud Torrents folder. Never fixes,
+         never fails. A dead DeepSeek balance is a loud ACTION in that file while every
+         AI consumer simply defers; it flips back to ALL CLEAR and resumes once topped up.
+         Loops internally; KeepAlive restarts it if it ever dies. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/fleet_health.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mikeyferguson/Developer/Torrent-Ingest</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/FleetHealth.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/FleetHealth.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/mikeyferguson/.local/bin</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

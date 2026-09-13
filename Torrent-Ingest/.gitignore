@@ -1,0 +1,8 @@
+state/
+*.log
+# RotatingFileHandler's numbered backups; `*.log` does not match them
+*.log.[0-9]*
+__pycache__/
+*.pyc
+.DS_Store
+.claude/

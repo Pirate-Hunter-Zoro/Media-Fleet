@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.playlistautobuild</string>
+
+    <!-- Session-independent playlist backfill. Waits for the AI API spend
+         limit to lift, then builds the remaining curated playlists (Naruto,
+         Steven Universe, Sailor Moon) one per cycle. No-ops once all are built. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/playlist_autobuild.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mikeyferguson/Developer/Torrent-Ingest</string>
+
+    <!-- Every 3 hours, and once immediately on load so it starts probing now. -->
+    <key>StartInterval</key>
+    <integer>10800</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/PlaylistAutobuild.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/PlaylistAutobuild.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/mikeyferguson/.local/bin</string>
+        <key>JELLYFIN_URL</key>
+        <string>http://127.0.0.1:8096</string>
+        <key>JELLYFIN_API_KEY</key>
+        <string>__JELLYFIN_API_KEY__</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

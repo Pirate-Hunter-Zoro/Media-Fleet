@@ -1,0 +1,329 @@
+#!/usr/bin/env bash
+# ===========================================================================
+#  verify_fleet.sh -- every read-only check the hand-off's §0.3 asks for, in
+#  one command, before you trust a change.
+#
+#      bash scripts/verify_fleet.sh
+#
+#  Read-only by construction: it imports modules, replays history, and audits
+#  configuration. It never writes to ~/Media, never calls apply_plan, and never
+#  hammers a live source. Exit 0 means every check passed.
+# ===========================================================================
+set -uo pipefail
+
+DEV="$HOME/Developer"
+PY_INGEST="/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3"
+PY_BASE="/opt/homebrew/Caskroom/miniconda/base/bin/python3"
+[ -x "$PY_INGEST" ] || PY_INGEST="$(command -v python3)"
+[ -x "$PY_BASE" ]   || PY_BASE="$(command -v python3)"
+
+fail=0
+run() {  # run <label> <command...>
+  local label="$1"; shift
+  printf '%-46s' "$label"
+  if out="$("$@" 2>&1)"; then
+    echo "OK"
+  else
+    echo "FAILED"
+    echo "$out" | tail -12 | sed 's/^/      /'
+    fail=1
+  fi
+}
+
+echo "=============== FLEET VERIFICATION ==============="
+run "Torrent-Ingest modules import" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" -c "import config,library,identify,fastpath,ingest,journal,direct_ingest,acceptance_gate"
+run "Torrent-Ingest plan API contract" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" contract.py
+run "YouTube-Downloader preflight" \
+    env -C "$DEV/YouTube-Downloader" "$PY_INGEST" preflight.py
+run "Media-Syncer modules import" \
+    env -C "$DEV/Media-Syncer" "$PY_BASE" -c "from scripts import config, utils"
+run "AI is free-only" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/audit_free_only.py
+# ffprobe is how the AI runtime's `Probe` tool reads a container, and how new .nfo files
+# get their <streamdetails>. A homebrew x265 bump leaves ffmpeg linked against a
+# libx265 that is no longer installed, and every invocation then dies in dyld -- silently,
+# because nothing else fails when Probe returns nothing. Cheap to assert, so assert it.
+run "ffprobe is usable" \
+    ffprobe -version
+run "placement guards vs. full history" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_placement_guards.py
+run "acceptance gate vs. full history" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_acceptance_gate.py
+# The gate's `.torrent` half. §4.120 twice over: a gate on ONE of two drop paths goes dark
+# the moment traffic moves to the other, and it did, in both directions. This asserts the
+# second path still reaches the gate, that ingest's .torrent reader still agrees with the
+# searcher's (two readers of one format drift), and that a refusal BEFORE the add never
+# asks qBittorrent to remove a torrent it never had.
+run "acceptance gate, .torrent path (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_torrent_gate_path.py
+# A hostile `.torrent` -- traversal, absolute path, executable -- must be refused before
+# qBittorrent is asked to add it. This check lived ONLY in the searcher, which judged every
+# drop it made; the searcher was removed on 2026-09-10 and hand-dropping is the fleet's only
+# admission path, so deleting it without porting this would have taken the check away from
+# the one route that still admits anything (§4.22, with the traffic already shifted). Both
+# ways: every hostile shape refused, AND every real `.torrent` on disk still accepted.
+run "hostile .torrent metadata refused (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_torrent_metadata_safety.py
+# The duplicate-provider-id check is a check that reports NOTHING almost all the time, so
+# it must be able to prove it CAN report something (§ diagnosis 7). Fixture-based: two
+# series stamped with one key are found, a clean library is not.
+run "duplicate series-key check (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_duplicate_series_keys.py
+# The index lock is what stops YacReader (writing through FUSE) and a fleet tool (writing
+# the same physical file on the SSD) from overlapping, which corrupts the database. If
+# `is_held()` could never be true the supervisor would start the app straight onto a tool's
+# edit, and the only symptom would be an index that goes bad now and then. Temp-file based,
+# both directions, cross-process.
+run "YacReader index lock (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_yacreader_lock.py
+# A blocklist row that matches nothing is indistinguishable from no row at all, and both
+# look exactly like a finished purge -- that is how 'Saiki? no' hid a stalled purge for
+# weeks (§4.186). The audit that finds them is only trustworthy if its ORPHAN verdict can
+# actually fire, and its corpora are live mutable state (§4.114), so the verdicts are
+# asserted against FIXTURES here: all four reachable, including the real §4.186 string and
+# a control proving the prefix matcher still matches.
+run "blocklist orphan verdicts (fixtures)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/audit_blocklist_orphans.py --selftest
+# The backup census has one branch that has NEVER fired: 6 of 7 backups are clean, so
+# "no clean backup exists" has never been printed -- and that is the only state from which
+# a corruption is unrecoverable. Fixture-based, because the live index cannot exercise it.
+run "YacReader backup census (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_yacreader_backup_census.py
+# The two AI prompts that choose WHAT TO ACQUIRE are the only remaining open-world paths,
+# §4.146: a repair tool once REPORTED 250 repairs it never made, so the acceptance bar for
+# the guide-first filler is "prove each claimed repair changed a file", never a count. This
+# re-reads every sidecar off disk and asserts the returned number equals the files that
+# really changed -- and that a half-covered episode (title, no summary) is left for the AI
+# rather than written into a LOCKED sidecar nothing will revisit.
+run "repair fills from the guide first (verified)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_repair_guide_first.py
+# The iCloud control directory holds new.txt -- the ONLY admission path. Its census is the
+# only thing that can ever explain a §4.13 vanishing, because the unified log retains ~9h.
+# A loss must be reported AND growth must not be, or the log is noise nobody reads.
+run "iCloud census drop detection (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/icloud_census.py --selftest
+# The identify base prompt may be SCOPED by media kind but never shortened by deletion: it
+# has zero verbatim repetition, so every character removed by editing is a rule removed, and
+# a placement rule cannot be regression-tested without spending the daily budget the shrink
+# exists to save. The load-bearing assertion is that the union of the kind variants is the
+# WHOLE prompt -- that is what makes it a scoping and not a quiet deletion.
+run "identify prompt scoping (nothing deleted)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_prompt_scoping.py
+# identify and every auxiliary AI caller share three free accounts, and only two of them can
+# run an identify prompt at all (groq's ceiling is 26,367 chars against a 58,513-char floor).
+# `ai_budget_healthy()` read True with BOTH of identify's providers capped, so the searcher
+# was free to drain them at the daily reset while downloads sat unfiled. The policy lives in
+# one module and each repo wraps it; this asserts the two wrappers still agree, because a
+# gate whose two halves disagree is the silent failure this fleet keeps paying for.
+run "AI budget reservation (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_ai_budget_contract.py
+# fleet_doctor acts on fleet_health findings unattended, and for an unrecognised finding a
+# free model picks which repair runs. The containment is that it can only ever NAME one from
+# a closed registry -- so this reads the source of every remedy and fails the build on a
+# destructive operation, with a control proving the scanner can still catch one.
+# The MEGA free-space cache goes stale for the whole of a purge because the reaper kills
+# Media-Syncer on purpose, so for days at a time fleet_health reported a fault that was the
+# fleet working correctly -- and a warning that is always on is one nobody reads. The pause
+# is now subtracted, which means the check must still catch BOTH things that hides: a
+# genuinely stuck sync loop, and a LEAKED pause (marker present, reaper gone) that leaves
+# replication stopped forever and previously had no detector at all.
+# A multi-episode file (`S01E01-E02`) carries ONE .nfo naming only its FIRST episode, so
+# reading that bare number as the file's whole claim made every SECOND slot of every pair
+# file report as a placement fault -- ~37 false items on The Powerpuff Girls alone, each
+# telling the owner to re-file a correctly-placed file. §4.26 one level deeper: that lesson
+# fixed a check reading the FILENAME instead of the file's own record; this fixes the same
+# check reading that record without understanding what it is a record OF. Both ways: a
+# legitimate pair file is clean at BOTH its slots, and a genuinely misfiled file (including
+# one whose .nfo puts it in another season) is still caught.
+# One Pace S13E05 held two files whose sidecars BOTH said "Quack Doctor", so the collision
+# check could not say which was wrong. The newer cut had inherited the pre-seeded sidecar's
+# title when it was filed into the slot. `_title_is_janky` cannot see this -- the title is
+# perfectly good, just another episode's. The tie is broken by a THIRD witness (the ingest
+# journal), not by preferring the filename, so §4.26 still stands. Both ways, and the
+# second half matters more: a detector this eager would rewrite hundreds of correct titles
+# if it mistook sanitised characters, truncation or case for a contradiction.
+run "sidecar title contradiction (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_sidecar_title_contradiction.py
+
+run "Season-0 specials stay locked (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_specials_locked.py
+
+run "One Pace re-cut replaces, not drops (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_onepace_recut_replaces.py
+run "multi-episode .nfo coverage (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_multi_episode_span.py
+run "MEGA staleness vs. the reaper pause (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_mega_pause_check.py
+# rclone.conf is where ~800 MEGA accounts live, and the reaper's 16-way probe heals dead
+# sessions by rewriting it. Its old private copy was a lockless non-atomic read-modify-write;
+# on 2026-09-13 two probe workers raced it and ZEROED the file, and every remote then read
+# as dead. Asserts a strip removes one session and nothing else, that 22 concurrent strips
+# cannot tear or zero it, and that the reaper goes through the locked primitive.
+run "rclone.conf session strip never loses an account" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_rclone_conf_strip.py
+run "self-healing remedies are non-destructive" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_remedies.py
+# A chunked pack's `chunk_done` is a claim about the PAST, and a re-drop by hand usually
+# means the content is GONE -- so carrying that claim turns the owner's re-acquisition into
+# a silent no-op that reports COMPLETED (§4.31). Asserts progress is carried only where it
+# is PROVABLE on the mount, and that a pack which proved nothing FAILS -- with controls,
+# because a gate that fires on everything is not a gate.
+# A chunked pack is STOPPED between waves while the finished wave is filed, so
+# qBittorrent's `last_activity` -- the stall clock -- goes stale by design. The next wave
+# then inherited that clock and was destroyed seconds after resuming: Monogatari (103
+# files, 75 GB) was enabled at 09:11:55 and failed at 09:12:16 as "stalled 8h with no
+# progress (no seeders/peers)" against a swarm of 450 seeders, with delete_files=True.
+# The deadline now runs from the later of `last_activity` and the wave's own start. Both
+# ways, because a stall guard that cannot fire lets a dead torrent pin the download budget
+# forever -- the exact deadlock it was written to break.
+# Monogatari was run deliberately as the hardest naming case in the library, and the free
+# identify chain failed it in a way nothing checked: one 26-episode arc filed across six
+# season folders as absolute episodes 1-23, leaving Season 09 holding 18,19,20,21,23 and
+# Season 10 holding only 22. Every file had a correct title and plot; the PLAN was
+# incoherent. §4.4 -- the harness disposes. Both ways, and Part 3 is the load-bearing
+# half: zero rejections over all 783 completed plans in the journal, because a placement
+# guard that rejects real history stops the fleet filing anything.
+# Which folders share a filename label, and whether their episode numbers form one
+# continuous run across them, is arithmetic -- so the harness computes it and hands the
+# model the finding as a fact instead of making it spot the conflict inside a 90,000-char
+# prompt. That conflict is exactly what Monogatari failed on. Both ways: it fires on the
+# real Monogatari layout naming the right folders, and stays silent on per-season folders,
+# two-show packs, overlapping disc splits, and flat releases.
+# The whole-library shows digest is ~32,000 chars of ~300 folders, sent on EVERY identify
+# call -- so placing an anime pack shipped The Office's season breakdown to a provider on a
+# daily budget. It is now scoped by name relevance. Both ways, and the second half is what
+# protects correctness: it must FAIL OPEN (no hint, or a hint matching nothing, yields the
+# byte-identical full digest), and every folder must still be named even when its detail is
+# dropped, so nothing in the library can become invisible to the model.
+run "library digest relevance scoping (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_digest_scoping.py
+# The most authoritative-sounding line in the identify prompt used to be the wrong one:
+# the retired searcher's stored file->item mapping, rendered as "reuse this mapping; do NOT
+# re-derive the numbering". Monogatari's stored mapping keeps one absolute run across
+# seasons 4,5,7,8,9 and strands episode 22 in season 10 -- the exact shape the harness
+# rejects, and the exact layout that got filed. Nothing produces or re-checks these maps
+# now. A stored plan is evidence; an incoherent one is withheld entirely.
+# Identify runs were ending rc 0 with NO plan file -- the one failure that tells the
+# harness nothing, because there is no wrong answer to reject and feed back. The runtime's
+# own turn log explained it: six identical Greps in a row, then more, until all 40 turns
+# were gone. A model does not track its turn count and cannot tell a result is one it
+# already has; both are now said to it out loud. Both ways, and Part 2 matters most: a
+# breaker this eager would corrupt ordinary varied work.
+run "agent turn budget + tool loop breaker (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_agent_loop_guard.py
+run "stored plan is evidence, not instruction (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_stored_plan_coherence.py
+# The fleet already holds the provider's season shape -- epguide.season_shape() is cached
+# on disk and used by the metadata repair -- and identify never saw it, so every run
+# re-derived the season layout by web search and still got a boundary wrong (Nekomonogatari
+# (Black) filed into the season the provider gives Tsubasa Tiger). Both the mistake and its
+# answer were one lookup away. Best-effort by contract: an unknown title, or a guide that
+# raises, must yield nothing and leave the run exactly as it was.
+run "provider season shape in the prompt (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_provider_season_block.py
+run "release structure conflict detector (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_release_structure.py
+# The three HANDOFF §6 limits that turned out to be defects rather than facts of life.
+# Each of these tools was either confidently WRONG (the arc sampler), actively misfiring
+# (the supervisor, 17 Jellyfin restarts) or silently inflating (library.db, 25.9% duplicate
+# rows). Their fixes are cheap to assert and expensive to regress, so they are gated.
+run "a library scan is not a hang (supervisor)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_supervisor_scan_grace.py
+run "arc mapping censuses, never samples" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_arc_mapping_census.py
+run "library.db upsert + reconcile guards" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_library_db_reconcile.py
+# Nothing used to stop library.db claiming purged content -- reconcile_media was orphaned
+# with the searcher on 2026-09-10, and 212 absent series / 5,769 rows had accumulated by
+# 2026-09-13. The reaper now supersedes the rows for the paths it VERIFIED gone; the
+# fixture proves item-level matching (one episode, not its siblings), both series rows of
+# a duplicated norm, loose and foldered films, comics by folder chain and by marker-less
+# stem, and that a collection is dropped only when exactly one row could be meant.
+run "a verified purge supersedes its library.db rows" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_purge_db_sync.py
+# The arc->season mapping the harness now COMPUTES, and the two guards that enforce it.
+# This is the acceptance gate's own check: Monogatari failed three runs because nothing
+# married the release's arcs to the provider's seasons, and the counts lined up perfectly
+# while the arcs were wrong. Part 4 replays every historical plan through both guards --
+# a guard that rejects real content is worse than the bug it fixes (§4.114).
+run "arc -> season mapping + guards (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_arc_mapping.py
+# Model ids rot -- five of the eight a careful reader would have written down on
+# 2026-09-12 were already dead (HTTP 404/410). The chain now discovers a live replacement,
+# PROBES it with a real tool call, and records it in an overlay. The safety property is the
+# one this asserts: a retired model is told apart from a busy or rate-limited one, so a 503
+# under load can never silently move the fleet off the ids a human chose.
+run "retired model ids heal themselves (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_model_retirement.py
+run "absolute run split across seasons (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_absolute_run_split.py
+run "chunked wave stall clock (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_chunked_stall_clock.py
+run "chunked progress is proven, not remembered (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_chunk_progress_proof.py
+# The English-only rule is enforced by two `parse` gates, and both leaked:
+# a Japanese-market manga edition redeemed itself with its own Latin gloss, and a bare
+# scene tag ("... FRENCH") was foreign only when suffixed `-dub`. The bare-tag rule has to
+# be POSITIONAL because a language word is also a title word, so this carries the
+# false-positive controls (*The Italian Job*) and replays both gates over the real journal
+# to prove the new rules refuse nothing the old ones accepted.
+run "English-only language gates (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_language_gate.py
+
+# ---- advisory: is the acceptance gate still being REACHED? (§4.120) ----------
+# Deliberately NOT part of the pass/fail above. This script answers "is the code sound?",
+# and the gate going dark is a runtime fault -- `fleet_health` raises it as an ACTION.
+# Printed here because this is the command a session actually runs first (§0.3), so it is
+# where a human will see it.
+echo
+printf '%-46s' "acceptance gate liveness (advisory)"
+if gate_out="$(env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/gate_status.py 2>&1)"; then
+  echo "ALIVE"
+else
+  echo "DARK -- see below (does not block shipping)"
+  echo "$gate_out" | sed 's/^/      /'
+fi
+
+# ---- advisory: can identify RUN at all? -------------------------------------
+# Not blocking, for the same reason as the gate advisory: an exhausted daily cap is a
+# runtime condition, not a code fault. Printed because "downloads finish and sit UNFILED"
+# is otherwise only visible as one repeated line in torrent_ingest.log, and because the
+# OTHER thing this reports -- a provider whose tokens-per-minute ceiling is below the
+# smallest prompt we can build -- never clears on its own and has no other symptom.
+echo
+printf '%-46s' "identify capacity (advisory)"
+if cap_out="$(env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/identify_capacity.py 2>&1)"; then
+  echo "OK"
+else
+  echo "NONE -- downloads will sit unfiled (does not block shipping)"
+fi
+echo "$cap_out" | sed 's/^/      /'
+
+# ---- advisory: is YacReader's index intact? ---------------------------------
+# Runtime state, not a code fault, so it does not block shipping -- but it is printed
+# here because nothing else in the fleet looks. The corruption is partial and quiet
+# (`folder` answers while `comic` does not), so row counts read healthy and only
+# PRAGMA integrity_check catches it; two separate corruptions went unnoticed for four
+# weeks because the only detector was the owner seeing black-X covers (§4.185).
+echo
+printf '%-46s' "YacReader index (advisory)"
+yac_out="$(env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/yacreader_index_health.py 2>&1)"
+case $? in
+  0) echo "OK" ;;
+  # Status 2 is deliberately NOT reported as damage: the index is intact, and saying
+  # "DAMAGED" about a healthy library is how a real warning gets learned as noise. What is
+  # missing is the thing that makes the NEXT corruption survivable.
+  2) echo "INTACT, BUT NOT RECOVERABLE -- no clean backup exists (does not block shipping)" ;;
+  *) echo "DAMAGED -- see below (does not block shipping)" ;;
+esac
+echo "$yac_out" | sed 's/^/      /'
+
+echo
+if [ $fail -eq 0 ]; then
+  echo "ALL CHECKS PASSED."
+else
+  echo "SOMETHING FAILED -- do not ship." >&2
+fi
+exit $fail

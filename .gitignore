@@ -1,0 +1,16 @@
+# Repository-root ignores. Each sub-project keeps its own .gitignore for its own
+# state/logs/secrets; git applies those relative to their directory, so this file only
+# covers the root.
+#
+# .DS_Store
+.DS_Store
+
+# The opencode CLI install behind `node_modules/` (package.json / package-lock.json stay
+# tracked so the toolchain can be reinstalled).
+node_modules/
+
+# Local archives and scratch that are not part of the running fleet. Kept on disk,
+# deliberately not in the repository: .archive is 61 MB of pre-2026-09-10 history and
+# folx is a download manager's scratch images.
+.archive/
+folx/

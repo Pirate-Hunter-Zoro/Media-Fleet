@@ -1,0 +1,10 @@
+state/
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+.claude/
+# Never commit a live credential. Cookies live in ~/.config/youtube-sync/ by default;
+# this catches a stray copy dropped in the repo by hand.
+cookies.txt
+*.cookies

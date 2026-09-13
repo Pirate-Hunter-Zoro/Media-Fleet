@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.brewupgrade</string>
+
+    <!-- Daily `brew update && brew upgrade`, unattended. Woken hourly and gated to one
+         run per ~20h by state/brew_upgrade.json: a plain daily calendar job on a laptop
+         loses the whole day whenever the machine is asleep or on battery at 04:00, with
+         no retry until tomorrow. Hourly + the gate is still one upgrade a day, and it
+         catches up the moment the machine is awake and on power. 23 of the 24 wake-ups
+         cost one stat() of the stamp file and exit silently. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mikeyferguson/Developer/Open-Code-Doctor/run_brew_upgrade.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mikeyferguson/Developer/Open-Code-Doctor</string>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <!-- No RunAtLoad: a login, a deploy or a `ship.sh` restart should not be able to
+         start a multi-gigabyte upgrade at the moment someone sits down at the machine.
+         The first tick is an hour away, and the gate decides even then. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/BrewUpgrade.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/BrewUpgrade.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/mikeyferguson</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>

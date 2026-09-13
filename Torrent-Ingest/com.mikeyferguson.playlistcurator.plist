@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.playlistcurator</string>
+
+    <!-- Universal playlist curator. Supersedes the hard-coded CURATION_TASKS
+         gating: walks EVERY show, has a headless AI run decide per show whether it
+         warrants a curated "watchable" cut (filler-heavy -> yes, tight -> no),
+         then builds one warranted-but-unbuilt playlist per cycle via the validated
+         builder. Seeds the legacy hand-tuned tasks so existing combined playlists
+         are preserved. Budget-gated; a scheduled one-shot (like playlistautobuild,
+         which it replaces). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/playlist_curator.py</string>
+        <string>--once</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mikeyferguson/Developer/Torrent-Ingest</string>
+
+    <!-- Every 3 hours, and once on load so it starts judging now. -->
+    <key>StartInterval</key>
+    <integer>10800</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/PlaylistCurator.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/PlaylistCurator.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/mikeyferguson/.local/bin</string>
+        <key>JELLYFIN_URL</key>
+        <string>http://127.0.0.1:8096</string>
+        <key>JELLYFIN_API_KEY</key>
+        <string>__JELLYFIN_API_KEY__</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

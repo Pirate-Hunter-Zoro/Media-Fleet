@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.fleetdoctor</string>
+
+    <!-- Acts on what fleet_health detects. fleet_health writes fleet_health.json every
+         5 min; this reads it every 15 and runs the matching repair from the CLOSED
+         registry in remedies.py -- never an action composed at runtime. A free model is
+         consulted for one thing only: choosing which registered repair fits a finding
+         nothing is registered against, and its answer is a lookup into that registry, so
+         an unrecognised reply resolves to "do nothing".
+
+         It cannot delete media, write ~/Media, touch mediafs_deletions.jsonl, or restart
+         torrentreap (a restart discards a multi-day drain, §4.6/§4.24) or the quarantined
+         torrentsearcher. scripts/test_remedies.py fails the build if a remedy ever gains
+         one of those, so this is a property of the code rather than of this comment.
+
+         Its own report is fleet_doctor.txt in the iCloud Torrents folder, beside
+         fleet_health.txt: what it fixed, and what only a person can do.
+
+         Runs at a LOWER cadence than fleet_health on purpose -- a repair should never
+         race the detector that justifies it, and every remedy re-checks the fault itself
+         before acting. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/fleet_doctor.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mikeyferguson/Developer/Torrent-Ingest</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/FleetDoctor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/FleetDoctor.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/mikeyferguson/.local/bin</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

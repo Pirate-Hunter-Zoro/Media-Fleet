@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.torrentingest</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/run_torrent_ingest.sh</string>
+    </array>
+
+    <!-- The daemon runs its own loop; KeepAlive restarts it only if it dies. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/TorrentIngest.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/TorrentIngest.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <!-- Post-ingest Jellyfin rescan so "on disk" and "watchable" are seconds
+             apart. Without these the daemon skips the nudge and waits on Jellyfin's
+             own scan. -->
+        <key>JELLYFIN_URL</key>
+        <string>http://127.0.0.1:8096</string>
+        <key>JELLYFIN_API_KEY</key>
+        <string>__JELLYFIN_API_KEY__</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

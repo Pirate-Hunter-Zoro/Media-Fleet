@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.mediadoctor</string>
+
+    <!-- Continuous library health daemon. Reconciles disk truth against Jellyfin
+         presentation every cycle: heals series with unresolved episodes, pushes
+         missing posters, fixes janky episode titles, sweeps AppleDouble junk, and
+         escalates the judgment cases (blank synopses, wrong IDs, duplicates) to a
+         headless AI run -- one show per cycle, budget-gated. Loops internally;
+         KeepAlive restarts it if it ever dies. NEVER deletes a media file. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/media_doctor.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mikeyferguson/Developer/Torrent-Ingest</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- Don't hammer on a tight crash loop if something is misconfigured. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaDoctor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/MediaDoctor.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/mikeyferguson/.local/bin</string>
+        <key>JELLYFIN_URL</key>
+        <string>http://127.0.0.1:8096</string>
+        <key>JELLYFIN_API_KEY</key>
+        <string>__JELLYFIN_API_KEY__</string>
+        <!-- Cadence is NOT set here on purpose. media_doctor.py's CYCLE_SEC default
+             (1800 s / 30 min) is the single source of truth; an override here is what
+             let the code's default drift to 900 unnoticed, since the daemon never ran
+             at it. Set MEDIA_DOCTOR_CYCLE_SEC only to deviate from the documented
+             cadence, and update the README when you do. -->
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>

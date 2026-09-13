@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mikeyferguson.youtubesync</string>
+
+    <!-- One cycle per invocation (not a resident daemon): discover, sync what fits
+         in this cycle's wave budget, exit. A crash therefore costs one cycle, and
+         nothing is left holding disk or a lock between runs.
+
+         StartInterval is short (5 min, matching POLL_INTERVAL_SEC) so a newly-added
+         playlist item is picked up promptly rather than within the old hourly sweep;
+         each cycle re-enumerates every registered playlist with a cheap flat listing. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mikeyferguson/Developer/YouTube-Downloader/run_youtube_sync.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/YouTubeSync.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/mikeyferguson/Library/Logs/YouTubeSync.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <!-- The sibling repo whose placement pipeline this one runs. -->
+        <key>TORRENT_INGEST_DIR</key>
+        <string>/Users/mikeyferguson/Developer/Torrent-Ingest</string>
+    </dict>
+
+    <!-- Background + low-priority I/O: this shares a disk with the torrent ingest,
+         Media-Syncer's uploads and the mediafs mount Jellyfin reads through, and it
+         is never the urgent job. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>Nice</key>
+    <integer>5</integer>
+</dict>
+</plist>

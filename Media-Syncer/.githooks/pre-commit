@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# pre-commit -- keep MEGA session tokens out of every commit in this repo.
+#
+# `rclone.conf` is tracked on purpose: it is the pool's account list and the
+# fleet is useless without it. But rclone WRITES BACK to it. After a successful
+# login to a `type = mega` remote it caches the session in the config file:
+#
+#     session_id = <opaque login token>
+#     master_key = <the account's encryption key>
+#
+# Nobody adds those lines; rclone does, in the background, while the reaper is
+# probing accounts. So the next `git add -A` -- which is exactly what
+# scripts/save-and-push.sh runs -- sweeps them into a commit, and on 2026-09-09 it
+# did: two of them reached origin as a side effect of an unrelated deploy.
+# Diagnosis §4.3 has said "never commit a MEGA session_id/master_key" from the
+# beginning, and §4.24 is the lesson that a rule the deploy script breaks is not
+# a rule. This is the rule git enforces.
+#
+# It EDITS THE INDEX rather than rejecting the commit, for two reasons. A hook
+# that blocks is a hook people bypass with `--no-verify`, and blocking here would
+# stall every deploy until someone hand-edited a file that rclone is entitled to
+# keep writing. So the working tree is left exactly as rclone wants it -- the
+# session cache still works, no re-login is forced -- and only the COMMITTED copy
+# is cleaned. The two can differ; `git diff` will show it, which is correct: the
+# difference is the secret.
+#
+# Enabled per clone, once:
+#     git config core.hooksPath .githooks
+# (scripts/save-and-push.sh does it for you if it is not already set.)
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+# Only the keys rclone caches. Deliberately NOT `pass`: the account passwords are
+# tracked here by the owner's design, and a hook that silently dropped them would
+# quietly destroy the pool config it is supposed to protect.
+SECRET_KEYS='^[[:space:]]*(session_id|master_key)[[:space:]]*='
+
+# A HERE-STRING, never `printf ... | grep`. `grep -q` exits on its first match, the
+# writer takes SIGPIPE, and with `pipefail` set that makes the whole PIPELINE fail --
+# so the `|| continue` below skipped every file and this hook silently did nothing
+# while exiting 0. A guard whose failure mode is to pass is not a guard (§4.5); it was
+# caught only by testing it against a file that DID carry a token, which it committed.
+cleaned=0
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  # The staged blob, not the working file: the working file is rclone's.
+  staged="$(git show ":$path" 2>/dev/null)" || continue
+  grep -Eq "$SECRET_KEYS" <<<"$staged" || continue
+
+  tmp="$(mktemp)" || continue
+  # `git show` drops the trailing newline; the redirect below puts one back, so the
+  # blob is a well-formed text file rather than one missing its final newline.
+  grep -Ev "$SECRET_KEYS" <<<"$staged" > "$tmp"
+  # Collapse the blank line the removal leaves behind, so the committed config
+  # does not accumulate a gap under every remote rclone has logged into.
+  if command -v awk >/dev/null 2>&1; then
+    awk 'BEGIN{b=0} /^[[:space:]]*$/{b++; next} {while(b>1){print ""; b--} if(b==1){print ""; b=0} print} END{if(b>0)print ""}' \
+      "$tmp" > "$tmp.sq" 2>/dev/null && mv "$tmp.sq" "$tmp"
+  fi
+
+  blob="$(git hash-object -w "$tmp")" || { rm -f "$tmp"; continue; }
+  mode="$(git ls-files --stage -- "$path" | awk '{print $1}')"
+  [ -n "$mode" ] || mode=100644
+  if git update-index --cacheinfo "$mode,$blob,$path"; then
+    n="$(grep -Ec "$SECRET_KEYS" <<<"$staged")"
+    echo "pre-commit: stripped $n MEGA session token line(s) from the committed" \
+         "copy of $path (§4.3). Your working file is unchanged."
+    cleaned=$((cleaned + 1))
+  fi
+  rm -f "$tmp"
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+exit 0

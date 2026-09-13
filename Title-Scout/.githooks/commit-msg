@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# commit-msg -- strip AI attribution from every commit message in this repo.
+#
+# The work here belongs to the person who did it. Assistants are told, by their
+# own harnesses, to sign commits with a Co-Authored-By trailer naming the model,
+# and GitHub counts a co-author as a contributor. Instructing an assistant not to
+# is a rule it has to choose to follow; this is a rule git enforces.
+#
+# Enabled per clone, once:
+#     git config core.hooksPath .githooks
+# (scripts/save-and-push.sh does it for you if it is not already set.)
+#
+# It edits rather than rejects: a stripped trailer should never cost anyone a
+# commit, and a hook that blocks is a hook people bypass.
+# ---------------------------------------------------------------------------
+set -uo pipefail
+
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+
+BEFORE="$(cat "$MSG_FILE")"
+
+# Any co-author or generated-by line naming an assistant or its vendor.
+AI='claude|anthropic|copilot|chatgpt|openai|gpt-4|gpt-5|gemini|deepseek|cursor|codeium|codex|devin|aider'
+
+# Three shapes get stripped, and only these three:
+#   1. an attribution trailer  -> "Co-Authored-By: Claude <noreply@anthropic.com>"
+#   2. a generated-with line   -> "🤖 Generated with [Claude Code](...)"
+#   3. a vendor-keyed trailer whose VALUE is a URL or an address, which is how
+#      harnesses stamp a session -> "Claude-Session: https://claude.ai/code/...",
+#      plus a bare line that is only such a URL.
+# (3) deliberately requires the URL/address value: a prose line that merely names
+# a vendor is content, not attribution. This repository's own commits legitimately
+# say things like "never reference deepseek_key from fleet code", and a broader
+# rule would eat them.
+
+cleaned="$(
+  printf '%s\n' "$BEFORE" \
+  | grep -viE "^[[:space:]]*(co-authored-by|signed-off-by|generated-by|assisted-by)[[:space:]]*:.*($AI)" \
+  | grep -viE "^[[:space:]]*🤖?[[:space:]]*generated with .*($AI)" \
+  | grep -viE "^[[:space:]]*($AI)[a-z0-9-]*[[:space:]]*:[[:space:]]*(https?://|[^[:space:]]+@)" \
+  | grep -viE "^[[:space:]]*https?://[^[:space:]]*(claude\.ai|anthropic\.com|chatgpt\.com|openai\.com)[^[:space:]]*[[:space:]]*$" \
+  | awk '
+      { line[NR] = $0 }
+      END {
+        n = NR
+        while (n > 0 && line[n] ~ /^[[:space:]]*$/) n--   # drop trailing blanks
+        for (i = 1; i <= n; i++) print line[i]
+      }'
+)"
+
+if [ "$cleaned" != "$BEFORE" ]; then
+  printf '%s\n' "$cleaned" > "$MSG_FILE"
+  echo "commit-msg: removed assistant attribution from the commit message" >&2
+fi
+
+# A message that was *only* attribution is now empty; let git complain normally.
+exit 0

@@ -1,0 +1,28 @@
+*.log
+# RotatingFileHandler's numbered backups; `*.log` does not match them
+*.log.[0-9]*
+# Atomic-write staging files (utils.write_json_atomic). The `*.json` rule below does NOT
+# match a `.tmp` suffix, so without these a crash between the write and the os.replace
+# leaves a multi-megabyte state dump sitting committable in the working tree. Both forms
+# are listed: the plain one for older leftovers, the PID form the writer uses now.
+*.json.tmp
+*.json.*.tmp
+# The reaper claims the deletions queue by renaming it aside; same reasoning.
+*.jsonl.processing
+__pycache__/
+.DS_Store
+*.json
+*.jsonl
+.host_mode
+.claude
+.codex
+.vscode
+# Runtime lock: created per-process, must never be version-controlled
+upload.lock
+# 24 MB of random bytes benchmark_exit_nodes.py uploads to measure a node. It removes this on
+# exit, including on Ctrl-C; the entry exists so a crash in between cannot leave it committable.
+.exit_probe_payload.bin
+
+# One-off state backups taken before a migration (see README "Renaming or
+# Restructuring a Title"). Local rollback copies, never history.
+*.bak-*
