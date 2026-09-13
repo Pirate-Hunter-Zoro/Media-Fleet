@@ -11,12 +11,9 @@ this file and is updated at the end of each working session.
 
 ## Repository layout
 
-Since 2026-09-13 this is **one repository**. Before that it was five repositories with
-five remotes; they have been merged and the old `.git` directories were removed, so the
-history starts here. The directory names did **not** change, and that is deliberate:
-every launchd plist, `config.py`, cross-project import and runbook line addresses these
-paths absolutely, and renaming a directory would silently break a daemon. The names are
-the interface.
+This is **one repository**; the five projects are directories in it. The directory names
+are the interface: every launchd plist, `config.py`, cross-project import and runbook line
+addresses these paths absolutely, and renaming a directory silently breaks a daemon.
 
 | directory | what it is | deep docs |
 |---|---|---|
@@ -34,9 +31,8 @@ Supporting documents at the root:
 * `.githooks/` — `commit-msg` strips assistant attribution; `pre-commit` refuses to
   commit MEGA session tokens.
 
-Outside the repo, at `~/Developer/`: `.megaignore` (MEGAsync's ignore list for the sync
-root, with its patterns re-pointed into `Media-Fleet/`). The old `HANDOFF-history` and
-`.archive` were retired with the 2026-09-13 restructure.
+Outside the repo, at `~/Developer/`: `.megaignore`, MEGAsync's ignore list for the sync
+root, with its patterns pointing into `Media-Fleet/`.
 
 ## Deploying
 

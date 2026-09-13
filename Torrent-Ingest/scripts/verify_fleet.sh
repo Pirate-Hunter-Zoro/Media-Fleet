@@ -235,11 +235,10 @@ run "arc mapping censuses, never samples" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_arc_mapping_census.py
 run "library.db upsert + reconcile guards" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_library_db_reconcile.py
-# Nothing used to stop library.db claiming purged content -- reconcile_media was orphaned
-# with the searcher on 2026-09-10, and 212 absent series / 5,769 rows had accumulated by
-# 2026-09-13. The reaper now supersedes the rows for the paths it VERIFIED gone; the
-# fixture proves item-level matching (one episode, not its siblings), both series rows of
-# a duplicated norm, loose and foldered films, comics by folder chain and by marker-less
+# A purge that leaves library.db claiming the content makes the acceptance gate refuse
+# the title's own re-drop. The reaper supersedes the rows for the paths it VERIFIED gone;
+# the fixture proves item-level matching (one episode, not its siblings), both series rows
+# of a duplicated norm, loose and foldered films, comics by folder chain and by marker-less
 # stem, and that a collection is dropped only when exactly one row could be meant.
 run "a verified purge supersedes its library.db rows" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_purge_db_sync.py

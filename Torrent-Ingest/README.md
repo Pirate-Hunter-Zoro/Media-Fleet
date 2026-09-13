@@ -2318,11 +2318,9 @@ resume), so it can't re-download a half-purged file mid-ritual:
    are marked `superseded` by `dbhook.record_purge`: episodes and films by title and
    item number, comics by folder chain (the franchise layout nests a series at an
    unpredictable depth) and then by file stem, and a collection only when exactly one
-   row could be meant. Nothing did this before 2026-09-13 — `reconcile_media` was
-   orphaned with the searcher — so every purge left an ownership claim behind, each
-   one a re-drop the acceptance gate refused as "already owned" (5,769 such rows
-   across 212 absent series had accumulated). Fail-open: a DB error is logged and
-   never fails the purge.
+   row could be meant. Without that pass a purge leaves an ownership claim behind, a
+   re-drop the acceptance gate refuses as "already owned". Fail-open: a DB error is
+   logged and never fails the purge.
 7. **Resume Media-Syncer** and advance the snapshot: successfully-purged files
    leave tracking entirely; survivors stay tracked for a retry.
 

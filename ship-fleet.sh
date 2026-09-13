@@ -23,11 +23,9 @@
 # ===========================================================================
 set -uo pipefail
 
-# The Developer root. This script lives AT that root, and since the monorepo
-# (2026-09-13) that root is the single repository every project lives in -- so the
-# deploy tool IS tracked, at the top of the thing it deploys, which is the one place it
-# cannot be confused for a single project's property. (Before the merge it was deliberately
-# untracked, because owning it from any one repo was a risk.)
+# The repository root. This script lives at the top of the one repository every project
+# lives in -- the one place the deploy tool cannot be confused for a single project's
+# property.
 #
 # DEV is simply this file's own directory. The symlink walk is kept because it costs
 # nothing and keeps the script correct if it is ever reached through one again.

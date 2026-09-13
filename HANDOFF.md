@@ -14,9 +14,8 @@ Three documents, in the order you need them:
 | `Torrent-Ingest/OPERATING.md` | the standing runbook — procedures that do not go stale | before any operation |
 | `Torrent-Ingest/README.md` | the architecture, ~3,900 lines | when changing how something works |
 
-There is no separate history file any more: the long narrative was retired with the
-2026-09-13 restructure. The rules below carry the reasons that matter; the deep
-architecture and the incident write-ups live in `README.md` and `OPERATING.md`.
+The rules below carry the reasons that matter; the deep architecture and the incident
+write-ups live in `README.md` and `OPERATING.md`.
 
 ---
 
@@ -27,13 +26,12 @@ A media fleet on one Mac. ~20 launchd daemons take a `.torrent` dropped into
 **validate that answer**, and file it into a Jellyfin library on a FUSE mount
 (`~/MediaLibrary`) backed by an SSD (`~/Media`) and a pool of MEGA accounts.
 
-**One git repository under `~/Developer/Media-Fleet` since 2026-09-13** — the five projects are
-directories in it, not repos of their own. The directory names deliberately did not
-change: launchd plists, `config.py` and cross-project imports address the sub-directories
-absolutely, so renaming one breaks a daemon. `Torrent-Ingest` is the project that
-matters; the others are `Media-Syncer` (replication + the pool), `Title-Scout`,
-`YouTube-Downloader`, `Open-Code-Doctor`. The old per-repo history and remotes are gone;
-the root `README.md` maps the layout.
+**One git repository at `~/Developer/Media-Fleet`** — the five projects are directories in
+it. The directory names are load-bearing: launchd plists, `config.py` and cross-project
+imports address the sub-directories absolutely, so renaming one breaks a daemon.
+`Torrent-Ingest` is the project that matters; the others are `Media-Syncer` (replication +
+the pool), `Title-Scout`, `YouTube-Downloader`, `Open-Code-Doctor`. The root `README.md`
+maps the layout.
 
 There is no discovery and no search. **The owner hand-drops every `.torrent`.** If you find
 yourself designing something that goes and finds content, stop — that subsystem existed and
@@ -185,9 +183,9 @@ a verdict.
 Jellyfin Playlist, an empty BoxSet, orphan Video rows, a journal record that will
 **re-adopt the torrent twenty minutes later**, and `library.db` rows that make the title
 refuse its own re-drop as already-owned. Follow `OPERATING.md` §6 exactly, including steps
-6 and 7. Step 8 (the `library.db` rows) is automatic since 2026-09-13 — the reaper
-supersedes the rows for the paths it verified gone; only comics it could not match from the
-path still need `reconcile_library_db.py --apply --include-requested` or a hand delete.
+6 and 7. Step 8 (the `library.db` rows) is automatic: the reaper supersedes the rows for
+the paths it verified gone. Only comics it cannot match from the path need
+`reconcile_library_db.py --apply --include-requested` or a hand delete.
 
 **When you renumber or delete a section in a doc, grep the tree for the old reference.** The
 code cites these files by section number.
@@ -205,7 +203,7 @@ Every number below was measured, not estimated.
 | `fleet_health` | all clear |
 | `media_doctor` | 0 shows flagged, 0 pending human/AI review |
 | `library_health.txt` | "All shows healthy. Nothing to fix." |
-| Repo | **one monorepo** under `~/Developer/Media-Fleet` (merged 2026-09-13), pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `919e7c0` |
+| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `df4a4f9` |
 | Jellyfin | 298 series, 18,280 episodes, 440 movies |
 | Mount | Shows 295, Movies 2,647, Comics 8 — primed and serving |
 | `library.db` | 22,644 owned rows, 22,644 distinct, **0 redundant** |

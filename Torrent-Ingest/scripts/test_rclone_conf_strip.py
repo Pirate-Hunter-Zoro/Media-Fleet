@@ -8,11 +8,9 @@ WHAT IS BEING PROVED
   1. Stripping a remote removes ONLY that section's `session_id`/`master_key` and
      leaves every other section byte-for-byte intact.
   2. Concurrent strips -- the reaper's 16-way fleet probe does exactly this -- cannot
-     tear the file. The old implementation was a bare read-modify-write with no lock
-     and a non-atomic `write_text`; on 2026-09-13 two probe workers raced it, one
-     read the truncated file, and its empty rewrite ZEROED the fleet's 822-account
-     rclone.conf. Every remote then read as dead and the purge attempted 713 remotes
-     per file. This test drives the same concurrent shape against a fixture.
+     tear the file into an empty one, which would make every remote read as dead and
+     send the purge after every account. This test drives that concurrent shape
+     against a fixture.
   3. The reaper's path goes through the locked, section-count-refusing primitive
      (`scripts/rclone_conf.strip_session`), not a private copy. That is verified by
      delegating and by refusing to write when the primitive refuses.

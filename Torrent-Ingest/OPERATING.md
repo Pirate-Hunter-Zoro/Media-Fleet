@@ -345,16 +345,12 @@ curl -s -X DELETE -H "X-Emby-Token: $JELLYFIN_API_KEY" "$JELLYFIN_URL/Items/<id>
 `JELLYFIN_URL` / `JELLYFIN_API_KEY` live in the launchd plists
 (`com.mikeyferguson.mediadoctor.plist`, `EnvironmentVariables`).
 
-**Step 8 is the one you no longer do by hand.** Until 2026-09-13 nothing updated
-`library.db` on a purge — `reconcile_media` was orphaned with the searcher — so every
-purge left its owned rows behind, each one a re-drop the acceptance gate refused as
-"already owned" (5,769 such rows across 212 absent series had accumulated). The reaper
-now marks the rows for the paths it VERIFIED gone `superseded` (never a survivor's: its
-pool copy still exists) — episodes and films by title/item, comics by folder chain then
-file stem, and a collection only when exactly one row could be meant. It is fail-open;
-a DB error is logged and cannot fail the purge. What still needs the reconcile command
-above: a comic whose folder chain and stem match no series, a collection in a series
-with several, and content that vanished without a purge ever running.
+**Step 8 is automatic.** The reaper marks the rows for the paths it VERIFIED gone
+`superseded` (never a survivor's: its pool copy still exists) — episodes and films by
+title/item, comics by folder chain then file stem, and a collection only when exactly one
+row could be meant. It is fail-open; a DB error is logged and cannot fail the purge. What
+still needs the reconcile command above: a comic whose folder chain and stem match no
+series, a collection in a series with several, and content absent without a purge.
 
 **Then, at the start of the next session, run the standing check.** A purge followed by a
 re-download leaves queue lines pointing at live content, and the reaper cannot tell them
@@ -406,17 +402,14 @@ new PID and no NEW traceback appeared — check the log's modification time firs
 
 ## 8. Things that are known, unfixed, and not urgent
 
-* **`library.db` used to over-claim; the reaper now keeps it honest after a purge.** Until
-  2026-09-13 nothing updated the ledger when content was deleted (`reconcile_media` was
-  orphaned with the searcher on 2026-09-10), so it accreted ownership claims for things that
-  were gone — 5,769 rows across 212 series by the time it was measured, every one a re-drop
-  the acceptance gate would refuse as already-owned. Now `reap.py` supersedes the purged
-  paths' rows itself (step 8 of §6), and `scripts/reconcile_library_db.py --apply
-  --include-requested` sweeps the backlog. **What can still over-claim:** a purged comic
-  whose folder chain and file stem match no series, a collection in a series that holds
-  several, and any content that vanished without a purge. For those, delete that title's
-  rows by hand (`sqlite3 state/library.db`) or re-run the reconcile command — the tool skips
-  manga/comics it cannot enumerate, so hand-deletion is often the only route.
+* **`library.db` ownership is maintained by two passes.** `reap.py` supersedes the purged
+  paths' rows itself (step 8 of §6) as each purge completes, and
+  `scripts/reconcile_library_db.py --apply --include-requested` sweeps anything else that
+  holds owned rows for absent content. **What can still over-claim:** a purged comic whose
+  folder chain and file stem match no series, a collection in a series that holds several,
+  and any content absent without a purge. For those, delete that title's rows by hand
+  (`sqlite3 state/library.db`) or re-run the reconcile command — the tool skips manga/comics
+  it cannot enumerate, so hand-deletion is often the only route.
 * **Jellyfin's DB grows orphaned rows.** `jellyfindbguardian` repairs them, and has done so
   94 times. The repair works; the cause has never been found.
 * **A daemon that HANGS without exiting is still undetected.** `KeepAlive` restarts a

@@ -11,9 +11,8 @@
 # One such interleave got far enough that git asked for `git reset --hard` to recover the
 # tree -- see the GetComics.log entries from 2026-08-02.
 #
-# THE MONOREPO (2026-09-13). All five projects live in one repository now, so there is
-# exactly ONE lock, shared by every launcher, no matter which sub-project's run script
-# calls in. The repo is resolved with `git rev-parse --absolute-git-dir`, not by looking
+# ONE REPOSITORY, ONE LOCK. All five projects live in one repository, so every launcher
+# shares a single lock, no matter which sub-project's run script calls in. The repo is resolved with `git rev-parse --absolute-git-dir`, not by looking
 # for `$repo/.git`: a caller hands us its own sub-directory (`Torrent-Ingest`,
 # `Media-Syncer`, ...), which is inside the work tree but has no `.git` of its own.
 #

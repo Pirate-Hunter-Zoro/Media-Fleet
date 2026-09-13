@@ -10,8 +10,7 @@
 # the outside.
 #
 # This is the ONE commit path for the repository. The per-project
-# `scripts/save-and-push.sh` files in the sub-directories still exist for
-# muscle memory; they commit the same tree and push the same remote.
+# `scripts/save-and-push.sh` files commit the same tree and push the same remote.
 #
 # The commit is authored by whoever `git config user.name` says, and carries no
 # trailers, no co-authors, and no attribution to any assistant. The work is the

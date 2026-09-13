@@ -190,11 +190,9 @@ def stale_pass(conn, inv: dict, include_requested: bool = False) -> dict:
     `include_requested` extends the absent-series rule to `new.txt`/`watchlist`/`ingest`
     sources -- but only when the series has owned rows. The default spares those sources
     because a fresh acquisition may be mid-filing; an owned row is proof files DID land,
-    so a series absent from the inventory is an over-claim whichever list admitted it.
-    Measured 2026-09-13: 212 such series held 5,769 rows (Fairy Tail, Monogatari, Soul
-    Eater anime ...), none updated within the day, and every one was a re-drop the
-    acceptance gate would have refused as already owned. Every row is recoverable: the
-    restore branch flips it back if the content reappears.
+    so a series absent from the inventory is an over-claim whichever list admitted it,
+    and a re-drop the acceptance gate would refuse as already owned. Every row is
+    recoverable: the restore branch flips it back if the content reappears.
     """
     owned: dict = {}
     for norm, cov in (inv.get("shows") or {}).items():

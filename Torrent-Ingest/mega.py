@@ -111,14 +111,11 @@ def strip_session(remote: str) -> None:
     same machine-local file.
 
     Delegates to `rclone_conf.strip_session`, which holds the CROSS-PROCESS lock and
-    refuses any rewrite that would change the section count. This function used to
-    carry its own copy -- a bare read-modify-write with no lock and a non-atomic
-    `write_text`. On 2026-09-13 the reaper's 16-way fleet probe met a wave of dead
-    sessions, two workers raced that write, one read the truncated file, and its
-    empty rewrite ZEROED the fleet's 822-account rclone.conf. Every remote then read
-    as dead (`didn't find section in config file`), the probe stamped all 713 as
-    MAYBE-present, and the purge attempted 713 remotes for every file. The lock and
-    the section-count refusal are precisely the guards that failure needs.
+    refuses any rewrite that would change the section count. A bare read-modify-write
+    here is dangerous: the fleet probe heals dead sessions from 16 workers at once, and
+    two racing non-atomic writes can persist a torn read -- an empty file, which makes
+    every remote read as dead (`didn't find section in config file`) and sends the purge
+    after every account. The lock and the section-count refusal prevent exactly that.
     """
     conf = config.RCLONE_CONFIG
     if not conf.exists():

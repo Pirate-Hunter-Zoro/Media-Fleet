@@ -808,10 +808,9 @@ def purge_batch(confirmed: set[str]) -> None:
 def _sweep_library_db(purged: set[str]) -> None:
     """Mark the purged titles' rows superseded in library.db. Fail-open.
 
-    Nothing used to do this: `reconcile_media` was orphaned with the searcher on
-    2026-09-10, so every purge left its owned rows behind -- 212 absent series and
-    5,769 rows by 2026-09-13, each one a re-drop that would be refused as already
-    owned. A DB problem must never fail the purge that already succeeded.
+    Without this a purge leaves its ownership rows behind, and the acceptance gate
+    refuses the title's own re-drop as already owned. A DB problem must never fail
+    the purge that already succeeded.
     """
     if DRY_RUN or not purged:
         return

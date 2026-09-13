@@ -5,11 +5,9 @@
 
 WHY THIS EXISTS
 
-    Nothing updated library.db when the reaper deleted content: `reconcile_media` was
-    orphaned with the searcher on 2026-09-10, so every purge left its owned rows behind.
-    By 2026-09-13 that was 212 series / 5,769 rows, each a re-drop the acceptance gate
-    would refuse as "already owned" (OPERATING §8). `dbhook.record_purge` is the fix; the
-    reaper calls it with the purged paths it VERIFIED gone.
+    A purge that leaves its ownership rows behind makes the acceptance gate refuse the
+    title's own re-drop as "already owned" (OPERATING §8). `dbhook.record_purge` is the
+    pass that prevents it; the reaper calls it with the purged paths it VERIFIED gone.
 
 WHAT IS PROVED HERE
 
