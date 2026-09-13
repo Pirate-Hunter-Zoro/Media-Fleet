@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEV = Path.home() / "Developer"
+DEV = Path.home() / "Developer" / "Media-Fleet"
 sys.path.insert(0, str(DEV / "Torrent-Ingest"))
 
 import ai_budget                                                     # noqa: E402

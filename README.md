@@ -31,12 +31,12 @@ the interface.
 Supporting documents at the root:
 
 * `HANDOFF.md` — the briefing every session starts from.
-* `HANDOFF-history-2026-09-12.md` — the long narrative (worked examples, measurements,
-  the *why* behind the rules). Nothing is deleted into it; go there before concluding a
-  rule is unnecessary.
-* `.megaignore` — MEGAsync's ignore list for this directory.
 * `.githooks/` — `commit-msg` strips assistant attribution; `pre-commit` refuses to
   commit MEGA session tokens.
+
+Outside the repo, at `~/Developer/`: `.megaignore` (MEGAsync's ignore list for the sync
+root, with its patterns re-pointed into `Media-Fleet/`). The old `HANDOFF-history` and
+`.archive` were retired with the 2026-09-13 restructure.
 
 ## Deploying
 

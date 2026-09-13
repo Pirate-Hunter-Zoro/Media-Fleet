@@ -44,7 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config                                                          # noqa: E402
 
-DEV = Path.home() / "Developer"
+DEV = Path.home() / "Developer" / "Media-Fleet"
 REPOS = ("Torrent-Ingest", "Media-Syncer",
          "YouTube-Downloader", "Title-Scout", "Open-Code-Doctor")
 

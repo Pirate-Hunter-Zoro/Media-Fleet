@@ -2,8 +2,8 @@
 # ===========================================================================
 #  ship-fleet.sh -- commit, push and restart the WHOLE fleet, in a safe order.
 #
-#      bash ~/Developer/ship-fleet.sh "commit message"
-#      bash ~/Developer/ship-fleet.sh --restart-only
+#      bash ~/Developer/Media-Fleet/ship-fleet.sh "commit message"
+#      bash ~/Developer/Media-Fleet/ship-fleet.sh --restart-only
 #
 #  Each repository already has `scripts/ship.sh`, which ships that repo and
 #  bounces the daemons that run its code. That is the right tool for a change
@@ -32,7 +32,7 @@ set -uo pipefail
 # DEV is simply this file's own directory. The symlink walk is kept because it costs
 # nothing and keeps the script correct if it is ever reached through one again.
 _self="${BASH_SOURCE[0]}"
-while [ -L "$_self" ]; do _self="$(readlink "$_self")"; case "$_self" in /*) ;; *) _self="$HOME/Developer/$_self";; esac; done
+while [ -L "$_self" ]; do _self="$(readlink "$_self")"; case "$_self" in /*) ;; *) _self="$HOME/Developer/Media-Fleet/$_self";; esac; done
 DEV="$(cd "$(dirname "$_self")" && pwd)"
 if [ ! -d "$DEV/Torrent-Ingest" ]; then
   echo "ship-fleet: cannot locate the Developer root (tried $DEV)" >&2
@@ -46,7 +46,7 @@ fi
 # before the daemons that read and write through them.
 # `torrentsearcher` is NOT here because it no longer exists: torrent and comic discovery
 # was removed from the fleet on 2026-09-10, repo and all. The bootstrap fallback below
-# searches ~/Developer/*/ for a matching plist, so there is nothing left for it to revive.
+# searches ~/Developer/Media-Fleet/*/ for a matching plist, so there is nothing left for it to revive.
 #
 # `fleetdoctor` IS here now. It carries KeepAlive and is a persistent daemon, but it was
 # missing from this list for weeks -- so every deploy left it running the pre-deploy code

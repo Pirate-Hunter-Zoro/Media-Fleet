@@ -2880,7 +2880,7 @@ def _jellyfin_rescan():
 
 # --- main loop ---------------------------------------------------------------
 
-_BLOCKLIST_PATH = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/blocklist.json")
+_BLOCKLIST_PATH = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
 
 
 def _block_key(name: str) -> str:
@@ -3125,7 +3125,7 @@ def main():
             "magnet and .torrent).")
     # Assert the plan API still behaves as its callers require. This repo's own ingest is
     # one of them, but the load-bearing reason is the OTHER one: the YouTube ingest
-    # (~/Developer/YouTube-Downloader) calls validate_plan/apply_plan/verify_applied
+    # (~/Developer/Media-Fleet/YouTube-Downloader) calls validate_plan/apply_plan/verify_applied
     # directly, so a change here breaks it silently -- its plans just start being rejected
     # on a machine nobody is watching. Reported and NOT fatal: a broken cross-repo
     # contract must never stop torrents from ingesting.

@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config                                                        # noqa: E402
 
-JOURNAL = Path.home() / "Developer" / "Torrent-Ingest" / "state" / "journal.jsonl"
+JOURNAL = Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest" / "state" / "journal.jsonl"
 
 
 def _jf(path: str, params: dict) -> dict:

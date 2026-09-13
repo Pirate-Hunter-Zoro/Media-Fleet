@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/run_library_supervisor.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/run_library_supervisor.sh</string>
     </array>
 
     <!-- Owns startup ordering for the library apps: holds Jellyfin + YacReader

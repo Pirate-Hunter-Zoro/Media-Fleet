@@ -21,8 +21,8 @@ a change in any one can break the other two:
 | **Torrent-Ingest** | `library` (validate/apply/verify + the locked-`.nfo` writers), `playlist_watch`, and `config.MEDIA_ROOT` | nothing can be placed; the ingest fails at validation |
 | **Media-Syncer** | `scripts/split_tunnel_anthropic.sh`, a **root LaunchDaemon** pinning Google around the VPN exit | every cycle defers, and the ingest does *nothing* — silently, by design |
 
-Full detail for each sibling lives in its own README — `~/Developer/Torrent-Ingest/README.md`
-for the plan API, the ingest state machine and playlists, and `~/Developer/Media-Syncer/README.md`
+Full detail for each sibling lives in its own README — `~/Developer/Media-Fleet/Torrent-Ingest/README.md`
+for the plan API, the ingest state machine and playlists, and `~/Developer/Media-Fleet/Media-Syncer/README.md`
 for the split tunnel, the MEGA pool and the `mediafs` mount.
 
 **These couplings are asserted, not just documented.** `preflight.py` runs at the start of
@@ -448,7 +448,7 @@ YouTube refusing the video (see Troubleshooting). `preflight` warns once it drif
 
 Plus an **OpenRouter API key** at `~/.config/api-keys/openrouter_key` (the identify step,
 which `startup.sh` checks for),
-and the Torrent-Ingest repo at `~/Developer/Torrent-Ingest` (override
+and the Torrent-Ingest repo at `~/Developer/Media-Fleet/Torrent-Ingest` (override
 with `TORRENT_INGEST_DIR`) — which is also where the agent runtime itself lives
 (`ai_client.py` / `ai_runner.py`).
 

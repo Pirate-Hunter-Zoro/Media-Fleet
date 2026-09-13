@@ -74,11 +74,11 @@ _ACTIVE_STATES = {
 def _state_dir() -> Path:
     """Ingest's own state dir. The recorded-magnet store used to live in the searcher;
     it moved here when the searcher was removed (2026-09-10)."""
-    return Path.home() / "Developer" / "Torrent-Ingest" / "state"
+    return Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest" / "state"
 
 
 def _media_syncer_dir() -> Path:
-    return Path.home() / "Developer" / "Media-Syncer"
+    return Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer"
 
 
 def _is_older(p: Path, grace_sec: int, now: float) -> bool:

@@ -1598,7 +1598,7 @@ RCLONE_CONFIG = Path(
 # committed Media-Syncer conf (user/pass only, no session tokens). The backup
 # COPIES it into RCLONE_CONFIG rather than using it in place, so rclone never
 # writes a regenerated session token back into a git-tracked file.
-MEDIA_SYNCER_RCLONE_CONF = Path.home() / "Developer/Media-Syncer/rclone.conf"
+MEDIA_SYNCER_RCLONE_CONF = Path.home() / "Developer/Media-Fleet/Media-Syncer/rclone.conf"
 
 # Which MEGA remote (a pool account from rclone.conf) receives the backup, and
 # the top-level path on it. The path is deliberately NOT Shows/Movies/Comics:
@@ -1709,7 +1709,7 @@ LOOSE_PAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 # stayed intact (§ circuit breaker below).
 
 # Media-Syncer lives here; we read its inventory/sync-state and control its agent.
-MEDIA_SYNCER_DIR = Path.home() / "Developer" / "Media-Syncer"
+MEDIA_SYNCER_DIR = Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer"
 MEDIA_SYNCER_INVENTORY = MEDIA_SYNCER_DIR / "remote_inventory.json"
 # The virtual-library delete signal. When a media file is deleted THROUGH the
 # mediafs mount (you remove a title in Jellyfin/Infuse), mediafs appends its

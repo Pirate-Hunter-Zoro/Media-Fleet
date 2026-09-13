@@ -11,7 +11,7 @@
          up on junk that only drained by hand. Scheduled one-shot, not a daemon. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Torrent-Ingest/run_janitor.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/run_janitor.sh</string>
     </array>
 
     <!-- Run twice daily (03:00 + 15:00) so a day's worth of failed artifacts never

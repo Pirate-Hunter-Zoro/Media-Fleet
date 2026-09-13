@@ -46,7 +46,7 @@ import urllib.request
 from pathlib import Path
 
 MOUNT = Path("/Users/mikeyferguson/MediaLibrary/Shows")
-BLOCKLIST = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/blocklist.json")
+BLOCKLIST = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
 VID = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".ts", ".webm"}
 # `S01E01-E03` / `S01E01E02` / `S01E01`. The optional tail is what makes a multi-episode file
 # count as the several episodes it actually contains.

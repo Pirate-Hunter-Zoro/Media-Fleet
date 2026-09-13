@@ -83,11 +83,11 @@ import sqlite3
 from pathlib import Path
 
 MOUNT = Path("/Users/mikeyferguson/MediaLibrary")
-BLOCKLIST = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/blocklist.json")
-WANTS = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/wants.json")
-LIBRARY_DB = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/library.db")
-PURGE_LOG = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/reap_purges.log")
-DELETIONS_DIR = Path("/Users/mikeyferguson/Developer/Media-Syncer")
+BLOCKLIST = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
+WANTS = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/wants.json")
+LIBRARY_DB = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/library.db")
+PURGE_LOG = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/reap_purges.log")
+DELETIONS_DIR = Path("/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer")
 DELETIONS_GLOB = "mediafs_deletions.jsonl*"
 ROOTS = ["Shows", "Movies", "Comics/Manga", "Comics"]
 

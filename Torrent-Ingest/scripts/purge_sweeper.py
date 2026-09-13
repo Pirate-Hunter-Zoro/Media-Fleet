@@ -78,7 +78,7 @@ def _norm(s: str) -> str:
 
 def _blocked_norms() -> set:
     """The owner's purge blocklist, from Torrent-Searcher. Empty set if unreadable."""
-    p = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/blocklist.json")
+    p = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

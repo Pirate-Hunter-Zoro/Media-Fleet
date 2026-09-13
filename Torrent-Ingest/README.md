@@ -62,8 +62,8 @@ shared contract, so read the sibling README rather than inferring behaviour from
 | Repo | Role | Its README covers |
 |---|---|---|
 | **Torrent-Ingest** (this) | acquisition and placement: torrents, direct comic/novel ingest, drive ingest, the plan API, Jellyfin health | the ingest state machine, the plan schema, the reaper, playlists, `media_doctor` |
-| **Media-Syncer** (`~/Developer/Media-Syncer`) | replication to the MEGA pool, the `mediafs` virtual library, pre-download and eviction | the sync cycle, the purge/rename runbooks, the mount, the split tunnel |
-| **YouTube-Downloader** (`~/Developer/YouTube-Downloader`) | YouTube discovery and download, placed through **this repo's** plan API | discovery, download waves, routing, the soundtrack split |
+| **Media-Syncer** (`~/Developer/Media-Fleet/Media-Syncer`) | replication to the MEGA pool, the `mediafs` virtual library, pre-download and eviction | the sync cycle, the purge/rename runbooks, the mount, the split tunnel |
+| **YouTube-Downloader** (`~/Developer/Media-Fleet/YouTube-Downloader`) | YouTube discovery and download, placed through **this repo's** plan API | discovery, download waves, routing, the soundtrack split |
 
 
 This daemon runs on the **Mini** only. That is not a config toggle, it is an
@@ -3664,7 +3664,7 @@ Each cycle, for every attached external volume it finds top-level entries holdin
 
 Safety: only **media** files are ever moved (never other data on the drive); files are moved, never deleted; the boot volume and Time Machine disks are skipped; and a drive carrying a **`.no-media-library`** marker is skipped entirely (drop that file on any drive you don't want auto-organized/uploaded). Installed by `startup.sh` alongside the direct-ingest daemon.
 
-### YouTube ingest (`~/Developer/YouTube-Downloader`, daemon `com.mikeyferguson.youtubesync`)
+### YouTube ingest (`~/Developer/Media-Fleet/YouTube-Downloader`, daemon `com.mikeyferguson.youtubesync`)
 
 <a name="non-torrent-sources"></a>The fourth source, and it lives in its **own repo** while running **this** pipeline. It discovers every playlist on the YouTube account — the ones created *and* the ones saved from other people, plus Liked videos, excluding Watch Later and History — downloads new videos in space-bounded waves onto the Downloads volume, and then hands them to `identify → validate_plan → apply_plan → verify_applied` exactly as direct-ingest and drive-ingest do. Nothing about placement is reimplemented there; it imports `library`, `identify`'s conventions, `playlist_watch` and this `config`, so a YouTube video is named, staged, published, verified and uploaded identically to a torrent. (Because both repos would otherwise define `config`, its own settings module is called **`ytconfig.py`** — this repo's modules must keep getting *their* `config` from a plain `import config`.)
 
@@ -3886,7 +3886,7 @@ nothing reads as wrong. Not hypothetical: the searcher was removed exactly this 
 nothing noticed for four days.
 
 `check_daemons_loaded` closes it. The expected roster is **derived from the repos' own
-plists** (`~/Developer/*/com.mikeyferguson.*.plist`), not hand-listed — a hand-maintained
+plists** (`~/Developer/Media-Fleet/*/com.mikeyferguson.*.plist`), not hand-listed — a hand-maintained
 roster is a second copy of the truth, and two records of one fact drifting apart while
 both look healthy is this fleet's most expensive recurring failure. Adding a plist to a
 repo supervises it automatically. `remedies.NOT_EXPECTED` carries the exceptions with

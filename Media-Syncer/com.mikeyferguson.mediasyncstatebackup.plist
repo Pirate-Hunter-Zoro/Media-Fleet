@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Media-Syncer/run_backup_state.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/run_backup_state.sh</string>
     </array>
 
     <!-- Scheduled one-shot: back up remote_inventory.json + sync_state.json every

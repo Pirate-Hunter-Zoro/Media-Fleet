@@ -53,7 +53,7 @@ import yacreader_db
 
 MOUNT = Path("/Users/mikeyferguson/MediaLibrary/Comics")
 LOCAL = Path("/Users/mikeyferguson/Media/Comics")
-INVENTORY = Path("/Users/mikeyferguson/Developer/Media-Syncer/remote_inventory.json")
+INVENTORY = Path("/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/remote_inventory.json")
 YAC_DB = LOCAL / ".yacreaderlibrary" / "library.ydb"
 # Where a comic series directory lives, relative to the Comics root.
 SERIES_ROOTS = ("Manga", "")

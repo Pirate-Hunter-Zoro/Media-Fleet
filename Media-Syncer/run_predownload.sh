@@ -4,7 +4,7 @@ set -euo pipefail
 # Predictive pre-download daemon: keeps the local cache full of what you're likely to
 # watch/read next (driven by Jellyfin watch-state + mediafs access log), bounded by the
 # storage budget. Reads instant from disk; on-demand streaming is only the cold-miss path.
-PROJECT_DIR="/Users/mikeyferguson/Developer/Media-Syncer"
+PROJECT_DIR="/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer"
 PYTHON_EXEC="/opt/homebrew/Caskroom/miniconda/base/envs/media_sync_env/bin/python"
 MODULE_PATH="scripts.predownload"
 

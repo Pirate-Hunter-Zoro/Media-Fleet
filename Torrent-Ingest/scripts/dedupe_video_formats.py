@@ -50,7 +50,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config                                                          # noqa: E402
 
-SYNCER = Path.home() / "Developer/Media-Syncer"
+SYNCER = Path.home() / "Developer/Media-Fleet/Media-Syncer"
 INVENTORY = SYNCER / "remote_inventory.json"
 SYNC_STATE = SYNCER / "sync_state.json"
 UPLOAD_LOG = Path.home() / "Library/Logs/MediaSync.err"

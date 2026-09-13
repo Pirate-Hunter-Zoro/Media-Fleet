@@ -138,7 +138,7 @@ check("a movies-only plan is fine",
       rejects([{"dst_rel": "Movies/A Film (2001)/A Film (2001).mkv"}]), False)
 
 print("\nPart 3 -- ZERO regressions over the real journal")
-jp = Path.home() / "Developer/Torrent-Ingest/state/journal.jsonl"
+jp = Path.home() / "Developer/Media-Fleet/Torrent-Ingest/state/journal.jsonl"
 records = {}
 if jp.exists():
     for line in jp.read_text(errors="replace").splitlines():

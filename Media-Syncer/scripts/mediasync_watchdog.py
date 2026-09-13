@@ -47,13 +47,13 @@ LOG_FILE = config.SCRIPT_DIR.parent / "mediasync_watchdog.log"
 # The reaper writes this while it holds media_sync down on purpose. Read from
 # Torrent-Ingest's config when importable so the two cannot drift; the literal path is the
 # fallback for a machine where that repo is absent.
-_FALLBACK_MARKER = Path.home() / "Developer" / "Torrent-Ingest" / "state" / "reap_ms_paused"
+_FALLBACK_MARKER = Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest" / "state" / "reap_ms_paused"
 
 
 def paused_marker() -> Path:
     try:
         import sys
-        ti = Path.home() / "Developer" / "Torrent-Ingest"
+        ti = Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest"
         if str(ti) not in sys.path:
             sys.path.append(str(ti))
         import config as ti_config           # noqa: WPS433  (Torrent-Ingest's config)

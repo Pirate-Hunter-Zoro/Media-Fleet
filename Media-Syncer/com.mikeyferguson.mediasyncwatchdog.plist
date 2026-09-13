@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/mikeyferguson/Developer/Media-Syncer/run_mediasync_watchdog.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/run_mediasync_watchdog.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

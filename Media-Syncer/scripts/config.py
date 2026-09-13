@@ -643,7 +643,7 @@ def upload_excluded_remotes() -> set:
     excluded = set()
     try:
         import sys
-        ti = Path.home() / "Developer" / "Torrent-Ingest"
+        ti = Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest"
         if str(ti) not in sys.path:
             sys.path.append(str(ti))
         import config as ti_config                     # Torrent-Ingest's config

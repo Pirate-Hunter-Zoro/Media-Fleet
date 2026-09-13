@@ -1,7 +1,7 @@
 """The plan API's contract, asserted at startup instead of discovered at runtime.
 
 `library.validate_plan` / `apply_plan` / `verify_applied` stopped being private the moment
-a second repo started calling them. `~/Developer/YouTube-Downloader` builds plans and
+a second repo started calling them. `~/Developer/Media-Fleet/YouTube-Downloader` builds plans and
 hands them to those functions directly, which means a change here can break that repo
 SILENTLY: its plans simply start failing validation, hours later, on a machine nobody is
 watching, and the log blames the plan rather than the schema change underneath it.

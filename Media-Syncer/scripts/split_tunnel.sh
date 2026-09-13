@@ -27,7 +27,7 @@
 #    the caller's own retry budget is touched at all. A rotation now costs a retried turn;
 #    it used to cost the whole run.
 #
-# 2. GOOGLE / YOUTUBE -- the YouTube ingest (~/Developer/YouTube-Downloader) authenticates
+# 2. GOOGLE / YOUTUBE -- the YouTube ingest (~/Developer/Media-Fleet/YouTube-Downloader) authenticates
 #    as the account owner with a session cookie. Mullvad exits are commercial-VPN
 #    DATACENTER IPs, which YouTube challenges hard, and for an authenticated request its
 #    response is not a solvable captcha -- it REVOKES the session. Rotation makes it
@@ -93,7 +93,7 @@ if [ -z "$HOME_DIR" ]; then
         HOME_DIR="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
     fi
 fi
-REPO_COPY="${HOME_DIR:-/nonexistent}/Developer/Media-Syncer/scripts/split_tunnel.sh"
+REPO_COPY="${HOME_DIR:-/nonexistent}/Developer/Media-Fleet/Media-Syncer/scripts/split_tunnel.sh"
 SELF="${BASH_SOURCE[0]}"
 if [ -f "$REPO_COPY" ] && [ "$(cd "$(dirname "$SELF")" && pwd)/$(basename "$SELF")" != "$REPO_COPY" ]; then
     if ! cmp -s "$SELF" "$REPO_COPY"; then

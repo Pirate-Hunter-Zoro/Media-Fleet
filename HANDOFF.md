@@ -14,10 +14,9 @@ Three documents, in the order you need them:
 | `Torrent-Ingest/OPERATING.md` | the standing runbook — procedures that do not go stale | before any operation |
 | `Torrent-Ingest/README.md` | the architecture, ~3,900 lines | when changing how something works |
 
-`HANDOFF-history-2026-09-12.md` (beside this file) is the long narrative this replaced:
-every worked example, every measurement, every lesson with the incident behind it. Nothing
-was deleted — go there for the *why* behind a rule here, and especially before you conclude
-that a rule is unnecessary.
+There is no separate history file any more: the long narrative was retired with the
+2026-09-13 restructure. The rules below carry the reasons that matter; the deep
+architecture and the incident write-ups live in `README.md` and `OPERATING.md`.
 
 ---
 
@@ -28,7 +27,7 @@ A media fleet on one Mac. ~20 launchd daemons take a `.torrent` dropped into
 **validate that answer**, and file it into a Jellyfin library on a FUSE mount
 (`~/MediaLibrary`) backed by an SSD (`~/Media`) and a pool of MEGA accounts.
 
-**One git repository under `~/Developer` since 2026-09-13** — the five projects are
+**One git repository under `~/Developer/Media-Fleet` since 2026-09-13** — the five projects are
 directories in it, not repos of their own. The directory names deliberately did not
 change: launchd plists, `config.py` and cross-project imports address the sub-directories
 absolutely, so renaming one breaks a daemon. `Torrent-Ingest` is the project that
@@ -59,7 +58,7 @@ Violating any of these has destroyed data or burned a day. They are not style pr
    destination and rejects a bad plan whatever wrote it. **Do not weaken that seam to make a
    model's answer fit.** If a plan is being rejected, the plan is usually wrong.
 
-**Deploying:** `bash ~/Developer/ship-fleet.sh "what changed"` (or `bash
+**Deploying:** `bash ~/Developer/Media-Fleet/ship-fleet.sh "what changed"` (or `bash
 scripts/ship.sh`) — commits once at the monorepo root, pushes, and restarts every daemon in
 a safe order. It correctly refuses to bounce the reaper while it is draining. For a change
 confined to scripts no daemon loads, `scripts/save-and-push.sh "msg"` commits and pushes
@@ -107,9 +106,9 @@ undo a twentyfold capacity increase.
 ## 4. Orient in sixty seconds
 
 ```bash
-bash ~/Developer/Torrent-Ingest/scripts/verify_fleet.sh          # must say ALL CHECKS PASSED
-python3 ~/Developer/Torrent-Ingest/scripts/fleet_doctor.py  --once --dry-run
-python3 ~/Developer/Torrent-Ingest/scripts/fleet_health.py  --once
+bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh          # must say ALL CHECKS PASSED
+python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/fleet_doctor.py  --once --dry-run
+python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/fleet_health.py  --once
 ```
 
 `media_doctor` needs Jellyfin credentials that live in its launchd plist, not your shell —
@@ -120,7 +119,7 @@ nothing:
 JELLYFIN_URL=http://127.0.0.1:8096 \
 JELLYFIN_API_KEY="$(plutil -extract EnvironmentVariables.JELLYFIN_API_KEY raw \
     ~/Library/LaunchAgents/com.mikeyferguson.mediadoctor.plist)" \
-python3 ~/Developer/Torrent-Ingest/scripts/media_doctor.py --once --dry-run
+python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/media_doctor.py --once --dry-run
 ```
 
 **The human-facing reports live in `iCloud Drive/Torrents/`**, not in the repo:
@@ -206,7 +205,7 @@ Every number below was measured, not estimated.
 | `fleet_health` | all clear |
 | `media_doctor` | 0 shows flagged, 0 pending human/AI review |
 | `library_health.txt` | "All shows healthy. Nothing to fix." |
-| Repo | **one monorepo** under `~/Developer` (merged 2026-09-13), pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `919e7c0` |
+| Repo | **one monorepo** under `~/Developer/Media-Fleet` (merged 2026-09-13), pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `919e7c0` |
 | Jellyfin | 298 series, 18,280 episodes, 440 movies |
 | Mount | Shows 295, Movies 2,647, Comics 8 — primed and serving |
 | `library.db` | 22,644 owned rows, 22,644 distinct, **0 redundant** |

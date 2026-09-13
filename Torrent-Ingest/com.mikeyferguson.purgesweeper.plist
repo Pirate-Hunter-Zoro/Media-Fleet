@@ -6,7 +6,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
-    <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/purge_sweeper.py</string>
+    <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/scripts/purge_sweeper.py</string>
     <string>--apply</string>
   </array>
   <key>EnvironmentVariables</key>

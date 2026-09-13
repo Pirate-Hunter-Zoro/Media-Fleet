@@ -37,8 +37,8 @@ from pathlib import Path
 
 MOUNT = Path("/Users/mikeyferguson/MediaLibrary")
 LOCAL = Path("/Users/mikeyferguson/Media")
-BLOCKLIST = Path("/Users/mikeyferguson/Developer/Torrent-Ingest/state/blocklist.json")
-DELETIONS = Path("/Users/mikeyferguson/Developer/Media-Syncer/mediafs_deletions.jsonl")
+BLOCKLIST = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
+DELETIONS = Path("/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/mediafs_deletions.jsonl")
 MEDIA_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".ts", ".webm", ".cbz", ".cbr",
              ".pdf", ".epub"}
 ROOTS = ["Shows", "Movies", "Comics/Manga", "Comics"]

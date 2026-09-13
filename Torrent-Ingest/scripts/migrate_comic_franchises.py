@@ -67,7 +67,7 @@ import config                                                          # noqa: E
 import library                                                         # noqa: E402
 import rclone_conf                                                     # noqa: E402
 
-SYNCER = Path.home() / "Developer/Media-Syncer"
+SYNCER = Path.home() / "Developer/Media-Fleet/Media-Syncer"
 INVENTORY = SYNCER / "remote_inventory.json"
 SYNC_STATE = SYNCER / "sync_state.json"
 UPLOAD_LOG = Path.home() / "Library/Logs/MediaSync.err"

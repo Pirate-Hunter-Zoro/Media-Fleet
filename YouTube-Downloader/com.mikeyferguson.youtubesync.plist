@@ -14,7 +14,7 @@
          each cycle re-enumerates every registered playlist with a cheap flat listing. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/YouTube-Downloader/run_youtube_sync.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Fleet/YouTube-Downloader/run_youtube_sync.sh</string>
     </array>
 
     <key>StartInterval</key>
@@ -35,7 +35,7 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <!-- The sibling repo whose placement pipeline this one runs. -->
         <key>TORRENT_INGEST_DIR</key>
-        <string>/Users/mikeyferguson/Developer/Torrent-Ingest</string>
+        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest</string>
     </dict>
 
     <!-- Background + low-priority I/O: this shares a disk with the torrent ingest,

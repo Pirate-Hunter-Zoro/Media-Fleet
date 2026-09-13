@@ -4,7 +4,7 @@ set -euo pipefail
 # Tailscale watchdog: relaunches Tailscale when the 100.x CGNAT address disappears. Without it
 # a dead network extension idles Torrent-Ingest indefinitely (qBittorrent is bound to that
 # address) and stalls every MEGA transfer.
-PROJECT_DIR="/Users/mikeyferguson/Developer/Media-Syncer"
+PROJECT_DIR="/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer"
 PYTHON_EXEC="/opt/homebrew/Caskroom/miniconda/base/envs/media_sync_env/bin/python"
 MODULE_PATH="scripts.tailscale_watchdog"
 

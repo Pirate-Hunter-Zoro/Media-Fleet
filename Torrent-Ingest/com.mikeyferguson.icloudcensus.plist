@@ -6,7 +6,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
-    <string>/Users/mikeyferguson/Developer/Torrent-Ingest/scripts/icloud_census.py</string>
+    <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/scripts/icloud_census.py</string>
   </array>
   <key>StartInterval</key><integer>1800</integer>
   <key>RunAtLoad</key><true/>
