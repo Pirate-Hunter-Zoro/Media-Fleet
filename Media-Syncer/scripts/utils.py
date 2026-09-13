@@ -114,6 +114,21 @@ def write_json_atomic(path, obj, indent: int = 4) -> bool:
         return False
 
 
+def _worktree_git_dir(start: Path) -> Path:
+    """The `.git` directory of the work tree containing `start`, walking up.
+
+    The lock path must not be derived as `<this project>/.git`: the fleet is one
+    repository, so `.git` lives at its root, not in any project directory. Locking a
+    path under a project directory would create a second, empty lock domain while the
+    launchers (which resolve via `git rev-parse`) lock the real one, and two domains
+    exclude nobody. Walking up matches `git_pull_locked.sh`'s resolution exactly.
+    """
+    for d in (start, *start.parents):
+        if (d / ".git").exists():
+            return d / ".git"
+    return start.parent / ".git"       # not a work tree: keep the old best effort
+
+
 @contextmanager
 def git_tree_lock(block: bool, timeout_sec: float = 180.0):
     """Serialize every operation that touches the repo WORKING TREE, not just `git pull`.
@@ -162,7 +177,7 @@ def git_tree_lock(block: bool, timeout_sec: float = 180.0):
     while a wedged or killed holder cannot stall provisioning forever -- the provisioner falls
     back to proceeding unlocked, which is exactly today's behaviour and never loses an account.
     """
-    path = config.SCRIPT_DIR.parent / ".git" / "pull.lock"
+    path = _worktree_git_dir(config.SCRIPT_DIR) / "pull.lock"
     acquired = False
     deadline = time.monotonic() + timeout_sec
     while True:
@@ -185,7 +200,8 @@ def git_tree_lock(block: bool, timeout_sec: float = 180.0):
             if not block or time.monotonic() >= deadline:
                 break
             time.sleep(0.5)
-        except OSError:
+        except OSError as exc:
+            logging.warning(f"could not lock {path}: {exc}; proceeding unlocked")
             break        # unwritable .git -- proceed unlocked rather than fail the cycle
     try:
         yield acquired
