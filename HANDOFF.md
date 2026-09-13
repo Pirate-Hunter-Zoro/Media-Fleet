@@ -203,7 +203,7 @@ Every number below was measured, not estimated.
 | `fleet_health` | all clear |
 | `media_doctor` | 0 shows flagged, 0 pending human/AI review |
 | `library_health.txt` | "All shows healthy. Nothing to fix." |
-| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `df4a4f9` |
+| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `04b5583` |
 | Jellyfin | 298 series, 18,280 episodes, 440 movies |
 | Mount | Shows 295, Movies 2,647, Comics 8 — primed and serving |
 | `library.db` | 22,644 owned rows, 22,644 distinct, **0 redundant** |
