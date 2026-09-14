@@ -600,12 +600,19 @@ GDRIVE_APP_NAME = "Google Drive"
 GDRIVE_BUNDLE_ID = "com.google.drivefs"
 GDRIVE_PROC_PATTERN = "Google Drive.app/Contents/MacOS"
 
-# Loose-file direct ingest: comics and novels that arrive as already-downloaded files
-# rather than torrents (the sweeper downloads them straight from GetComics / LibGen /
-# the Internet Archive / Anna's Archive and drops them here; `direct_ingest.py` then
-# runs them through the same identify -> validate -> apply -> verify pipeline). Local,
-# NOT iCloud: comic archives are large and need no cross-device sync.
+# Loose-file direct ingest: already-downloaded media (comics, e-books, and — since
+# 2026-09-13 — raw video files/folders) that arrives without a torrent. The owner drops
+# it here and `direct_ingest.py` runs it through the same identify -> validate -> apply
+# -> verify pipeline the torrent flow uses. Local, NOT iCloud: raw media is large and
+# movement is the bridge's job (`direct_ingest_bridge.py`), below.
 DIRECT_INGEST_DIR = Path.home() / "Downloads" / "DirectIngest"
+
+# The iCloud drop mirror for direct ingest. `direct_ingest_bridge.py` watches this
+# subfolder of TORRENTS_DIR, materializes each drop (iCloud may hand it over as a
+# dataless placeholder), waits for it to settle, and MOVES it into DIRECT_INGEST_DIR,
+# where the ordinary direct-ingest daemon files it. A drop point, not a second library:
+# the iCloud copy is removed once the local copy is verified, so the folder empties.
+ICLOUD_DIRECT_INGEST_DIR = TORRENTS_DIR / "DirectIngest"
 
 # Dedicated, dot-prefixed subdir where in-flight torrents download. It lives on the
 # MAC SSD (the Downloads volume), NEVER on the SSD. A torrent's heavy random I/O on
@@ -1673,11 +1680,16 @@ MEDIA_EXTENSIONS = (
     VIDEO_EXTENSIONS | SUBTITLE_EXTENSIONS | COMIC_EXTENSIONS
     | COMIC_CONVERT_EXTENSIONS | NOVEL_EXTENSIONS
 )
-# Loose files the direct-ingest daemon picks up (comic archives + e-books; no video —
-# video arrives via the torrent pipeline). A `.zip` comic archive is picked up and the
-# identify step renames it to `.cbz`.
+# Loose files the direct-ingest daemon picks up: comic archives, e-books/PDFs, and
+# video (a raw `.mkv`/`.mp4` movie or episode that did not arrive as a torrent). A
+# `.zip` comic archive is picked up and the identify step renames it to `.cbz`.
+# A DIRECTORY dropped here is picked up too (a season folder, a loose-pages comic
+# story folder) and identify plans the whole tree in one run, exactly as for a torrent.
+# Subtitle files are NOT standalone watch entries — a lone `.srt` has no identity —
+# but a video's siblings (names beginning with the video's stem) are attached to its
+# plan deterministically in `direct_ingest._attach_video_sidecars`.
 DIRECT_INGEST_EXTENSIONS = (
-    COMIC_EXTENSIONS | COMIC_CONVERT_EXTENSIONS | NOVEL_EXTENSIONS
+    VIDEO_EXTENSIONS | COMIC_EXTENSIONS | COMIC_CONVERT_EXTENSIONS | NOVEL_EXTENSIONS
 )
 # Loose scanned page images are NOT ingestible as-is (YACReader reads archives,
 # not a bare pile of pages), but a folder of them IS packageable into a `.cbz`

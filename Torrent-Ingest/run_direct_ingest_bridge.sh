@@ -1,7 +1,8 @@
 #!/bin/bash
-# Launcher invoked by launchd for the direct-ingest daemon (comics, novels, video --
-# files and folders). Pulls any config edits, then execs the daemon under its conda env
-# (its own loop; launchd restarts on death).
+# Launcher invoked by launchd for the direct-ingest iCloud bridge. Pulls any config
+# edits, then execs the daemon under its conda env (its own loop; launchd restarts on
+# death). The bridge only MOVES drops out of iCloud into the local DirectIngest folder;
+# direct_ingest.py does the actual filing.
 set -euo pipefail
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin"
@@ -20,4 +21,4 @@ fi
 CONDA_PY="/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3"
 if [ -x "$CONDA_PY" ]; then PYTHON="$CONDA_PY"; else PYTHON="$(command -v python3)"; fi
 
-exec "$PYTHON" "$SCRIPT_DIR/direct_ingest.py"
+exec "$PYTHON" "$SCRIPT_DIR/direct_ingest_bridge.py"

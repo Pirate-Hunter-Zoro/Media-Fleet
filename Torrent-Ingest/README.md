@@ -61,7 +61,7 @@ shared contract, so read the sibling README rather than inferring behaviour from
 
 | Repo | Role | Its README covers |
 |---|---|---|
-| **Torrent-Ingest** (this) | acquisition and placement: torrents, direct comic/novel ingest, drive ingest, the plan API, Jellyfin health | the ingest state machine, the plan schema, the reaper, playlists, `media_doctor` |
+| **Torrent-Ingest** (this) | acquisition and placement: torrents, direct all-media ingest (+ the iCloud drop bridge), drive ingest, the plan API, Jellyfin health | the ingest state machine, the plan schema, the reaper, playlists, `media_doctor` |
 | **Media-Syncer** (`~/Developer/Media-Fleet/Media-Syncer`) | replication to the MEGA pool, the `mediafs` virtual library, pre-download and eviction | the sync cycle, the purge/rename runbooks, the mount, the split tunnel |
 | **YouTube-Downloader** (`~/Developer/Media-Fleet/YouTube-Downloader`) | YouTube discovery and download, placed through **this repo's** plan API | discovery, download waves, routing, the soundtrack split |
 
@@ -232,6 +232,15 @@ failure files it to `finished/` / `failed/`. The move is just `os.replace` withi
 iCloud and the journal's `torrent_path` is updated at each hop, so a crash-and-resume
 picks up the `.torrent` wherever it currently sits. Re-dropping still means moving a
 `.torrent` back to the **top level** (see below).
+
+**`DirectIngest/` is the one subfolder that is an input, not a state mirror.** It is the
+cross-device drop point for RAW media — a loose `.mkv`/`.mp4`, a `.cbz`/`.epub`, or a
+folder of them — for when the owner downloads something directly instead of handing over
+a `.torrent`. `direct_ingest_bridge.py` watches it, materializes each drop (iCloud may
+hand it over as a dataless placeholder), and MOVES it onto the local
+`~/Downloads/DirectIngest/`, where `direct_ingest.py` files it. The folder is emptied by
+design, and the iCloud census treats a falling count there as the fleet working rather
+than as a §4.13 loss (it is still snapshotted).
 
 Registration runs at **both the start and the end of each cycle**, not just once:
 the per-torrent `advance()` sweep can take many minutes when the chunked backlog is
@@ -409,11 +418,12 @@ is literally a ZIP of page images, so a story folder *can* be shelved once packa
   *does* contain media, an empty plan is still rejected — that is the
   "already-present" shortcut the validator exists to stop, not a verdict.
 
-This mirrors `direct_ingest.py`, which already separates the same empty-plan verdict from
-real errors (a loose single archive filed with no library media); the
-torrent path was the one that still treated it as a failure. The empty-plan guard in
-`validate_plan` is untouched — it still rejects empty plans — so the cross-repo plan
-contract (§ YouTube ingest) is unchanged.
+This mirrors `direct_ingest.py`, which separates the same empty-plan verdict from real
+errors (a loose single archive filed with no library media); the torrent path was the one
+that still treated it as a failure. For direct-ingest VIDEO and directories the verdict is
+stricter, not looser — nothing is deleted unless the library proves the content is already
+present (§ Direct ingest). The empty-plan guard in `validate_plan` is untouched — it still
+rejects empty plans — so the cross-repo plan contract (§ YouTube ingest) is unchanged.
 
 ### Duplicate variants collapse, not crash
 
@@ -3013,6 +3023,8 @@ rm ~/Library/LaunchAgents/com.mikeyferguson.torrentingest.plist
 | `COMIC_EXTENSIONS` | Archive types treated as comics (`.cbz`, `.cbr`, …). |
 | `COMIC_CONVERT_EXTENSIONS` | Plain archive types (`.zip`) accepted as comics and filed as `.cbz` (rename-on-apply, no repackaging). |
 | `LOOSE_PAGE_EXTENSIONS` | Bare image suffixes (`.jpg`/`.jpeg`/`.png`/`.gif`/`.webp`/`.bmp`) that count as page images when a loose-page folder is packaged into a `.cbz` (§ Loose page images are packaged). Anything else in such a folder (`Thumbs.db`, release `.txt`/`.nfo`, `.DS_Store`) is left out of the archive. |
+| `DIRECT_INGEST_DIR` / `ICLOUD_DIRECT_INGEST_DIR` | Direct ingest's local watch folder (`~/Downloads/DirectIngest/`) and its iCloud drop mirror (`Torrents/DirectIngest/`, drained into the former by `direct_ingest_bridge.py`). |
+| `DIRECT_INGEST_EXTENSIONS` | What the direct-ingest daemon picks up: `VIDEO_EXTENSIONS \| COMIC_EXTENSIONS \| COMIC_CONVERT_EXTENSIONS \| NOVEL_EXTENSIONS`. A dropped DIRECTORY holding any of these (or loose page images) is one identify run, like a torrent's download dir. |
 | `STAGING_DIRNAME` | Dot-dir under `MEDIA_ROOT` for atomic assembly (`.ingest-staging`). |
 | `QBT_HOST` / `QBT_PORT` | WebUI endpoint (`127.0.0.1:8090`). |
 | `QBT_CATEGORY` | Tag isolating our torrents from the user's. |
@@ -3052,7 +3064,8 @@ rm ~/Library/LaunchAgents/com.mikeyferguson.torrentingest.plist
 | `ai_runner.py` | The CLI every daemon spawns (`config.AI_BIN`). Prompt on stdin, JSON envelope on stdout, exit 2 for "the run never happened". |
 | `prompts/identify.md` | The engineered identification prompt (prime directive lives here). |
 | `library.py` | Library digest (numbering/ownership/blank-metadata summary, cached), plan validation, atomic apply, verify, `.nfo` generation + repair helpers. |
-| `direct_ingest.py` | Loose-file comic/novel ingester (§ Direct ingest): files the sweeper downloaded into `~/Downloads/DirectIngest/` through `identify → validate → apply → verify`. Comics land under `Comics/`, novels under the Google Drive `Novels/`. |
+| `direct_ingest.py` | Loose-file ingester for ALL media (§ Direct ingest): files what the owner drops into `~/Downloads/DirectIngest/` — files OR folders — through `identify → validate → apply → verify`. Video lands in `Shows/`/`Movies/`, comics under `Comics/`, novels under the Google Drive `Novels/`. |
+| `direct_ingest_bridge.py` | iCloud bridge daemon (§ Direct ingest): materializes and MOVES raw-media drops out of `Torrents/DirectIngest/` into `~/Downloads/DirectIngest/`; copy → verify → rename → delete, collision-safe, dry-run capable. |
 | `journal.py` | Append-only state journal + human-readable decisions log. |
 | `reap.py` | The remote-deletion **reaper** daemon (§ Remote deletion): detects a locally-vanished file, runs the circuit-breaker-guarded purge across the MEGA fleet + metadata backup, controls Media-Syncer. |
 | `mega.py` | Self-contained rclone/MEGA ops for the reaper: fleet enumeration, existence probe, delete/rmdir/cleanup/purge, dead-session detection + healing. |
@@ -3075,13 +3088,15 @@ rm ~/Library/LaunchAgents/com.mikeyferguson.torrentingest.plist
 | `startup.sh` / `run_torrent_ingest.sh` | Installer / launchd launcher. |
 | `run_torrent_reap.sh` | launchd launcher for the reaper (same conda env as ingest). |
 | `run_db_guardian.sh` | launchd launcher for the Jellyfin DB guardian. |
-| `run_direct_ingest.sh` | launchd launcher for the loose-file comic/novel ingester. |
+| `run_direct_ingest.sh` | launchd launcher for the loose-file (comic/novel/video) ingester. |
+| `run_direct_ingest_bridge.sh` | launchd launcher for the iCloud DirectIngest bridge. |
 | `run_drive_ingest.sh` | launchd launcher for the external-drive auto-organizer. |
 | `run_library_supervisor.sh` | launchd launcher for the mount-gated Jellyfin/YacReader supervisor. |
 | `run_gdrive_supervisor.sh` | launchd launcher for the Google Drive app supervisor (light novels). |
 | `com.mikeyferguson.torrentingest.plist` | Launch agent for the ingest daemon. |
 | `com.mikeyferguson.torrentmetadata.plist` | Launch agent for the nightly metadata safety net. |
 | `com.mikeyferguson.torrentreap.plist` | Launch agent for the remote-deletion reaper (in `startup.sh`'s `AGENTS`, so it installs and loads with the rest). |
+| `com.mikeyferguson.directingest.plist` / `com.mikeyferguson.directingestbridge.plist` | Launch agents for the local ingester and the iCloud drop bridge; both in `startup.sh`'s `AGENTS` and `ship-fleet.sh`'s `LABELS`. |
 | `cancel_ingest.sh` | Stop the daemon. |
 
 ## State files (all gitignored)
@@ -3582,7 +3597,20 @@ downloading at all.
 
 ### Direct ingest (`direct_ingest.py`, daemon `com.mikeyferguson.directingest`)
 
-Not everything comes from a torrent. Comics from GetComics.com (and anywhere else) and light novels / e-books from LibGen, the Internet Archive, and Anna's Archive arrive as loose `.cbr`/`.cbz`/`.pdf`/`.epub` files. The owner drops them straight into **`~/Downloads/DirectIngest/`** (a *local* folder, not iCloud — comic archives are large and need no cross-device sync; until 2026-09-10 the searcher's comic sweeper filled it automatically, and that is what was removed), and this daemon files them with a headless AI run matching the existing library's conventions, landing them through the torrent pipeline wholesale (`identify.run_identify → library.validate_plan → apply_plan → verify_applied`). **Two destinations, one pipeline:** comics land under `Comics/` in `config.MEDIA_ROOT` (YACReader, uploaded to the MEGA pool); novels (`.epub`) land in the Google Drive `Novels` folder via the `Novels/` top-dir. **No format conversion** (`.cbr`/`.cbz`/`.pdf`/`.epub` file as-is; a plain `.zip` comic archive is renamed to `.cbz`). Failures park in `DirectIngest/.failed/` with a `.error.txt`; drops with no library media in them are deleted (below). Install via `startup.sh` (or `launchctl bootstrap` the plist).
+Not everything comes from a torrent. Comics from GetComics.com (and anywhere else), light novels / e-books from LibGen / the Internet Archive / Anna's Archive, and — since 2026-09-13 — **raw video** (a movie or episode downloaded directly) arrive as loose files or folders. The owner drops them into **`~/Downloads/DirectIngest/`** (a *local* folder, not iCloud) or into the iCloud mirror **`Torrents/DirectIngest/`**, which `direct_ingest_bridge.py` moves onto the local folder first (below). This daemon files them with a headless AI run matching the existing library's conventions, landing them through the torrent pipeline wholesale (`identify.run_identify → library.validate_plan → apply_plan → verify_applied`). **Four destinations, one pipeline:** video (`.mkv`/`.mp4`/`.avi`/`.m4v`/`.mov`) lands in `Shows/` or `Movies/` exactly like a torrent's files (with the same `.nfo` handling, and a Jellyfin rescan); comics land under `Comics/` in `config.MEDIA_ROOT` (YACReader, uploaded to the MEGA pool); novels (`.epub`, and `.pdf` planned as a novel) land in the Google Drive `Novels` folder via the `Novels/` top-dir. A dropped **directory** is one identify run over the whole tree — a season folder or a loose-pages comic folder — just like a torrent's download directory, because that is the shape identify reads best. **No format conversion** (`.cbr`/`.cbz`/`.pdf`/`.epub` file as-is; a plain `.zip` comic archive is renamed to `.cbz`). Failures park in `DirectIngest/.failed/` with a `.error.txt`; processed sources are deleted once verified. Install via `startup.sh` (or `launchctl bootstrap` the plist).
+
+A loose video's subtitle siblings are filed **deterministically**: the run only sees the video file, so `_attach_video_sidecars` appends every sibling whose name begins with the video's stem — `Movie.srt`, `Movie.en.srt`, `Show.S01E01-E02.srt` — to the plan at the video's own planned destination, keeping the name tail intact (the compute-don't-ask rule; a directory drop is listed whole, so there the run plans them itself).
+
+#### The iCloud drop mirror (`direct_ingest_bridge.py`, daemon `com.mikeyferguson.directingestbridge`)
+
+`Torrents/DirectIngest/` is the cross-device counterpart of the local watch folder. The bridge daemon polls it every 20 s and MOVES each drop to `~/Downloads/DirectIngest/`; the folder is emptied by design, so a drop made from a phone does not keep reappearing on other devices. Four properties make the crossing safe, because it crosses both an iCloud sync layer and a volume boundary:
+
+* **Materialize, then settle.** iCloud may hand a drop over as a dataless placeholder (`.Name.mkv.icloud`); `brctl download` is invoked on every placeholder (the same primitive `ingest.materialize` uses for a `.torrent`), then the bridge waits for the placeholder to become real bytes AND for the tree's whole byte total to hold still for `STABLE_SEC`. A half-synced file is never copied and never deleted.
+* **Copy → verify → rename → delete.** The local copy is staged in `DirectIngest/.icloud-bridge/` (dot-named, invisible to the ingester) and only `os.replace`d into the watch folder once its size is verified. A crash can never leave a half-file where `direct_ingest.py` would file it; a failed copy leaves the iCloud source untouched.
+* **Collisions never clobber.** If a same-named entry is already local, identical content means the iCloud copy is a leftover from an earlier crashed pass and is removed; different content is uniquified (`name.1.ext`).
+* **Only ingestible media is touched.** `config.DIRECT_INGEST_EXTENSIONS` files, and directories holding those or loose page images. Dot-files, AppleDouble junk, `.icloud` placeholders themselves and the fleet's state subfolders are left alone.
+
+`--once` is one pass; `--once --dry-run` reports what it sees and touches nothing (not even the materialization). The iCloud census still snapshots the folder but exempts its falling count from the "drop" verdict — draining it is the fleet working, not a §4.13 loss.
 
 #### Failure mode: the AI API being unavailable quarantines a whole batch of perfectly good content
 
@@ -3622,15 +3650,15 @@ The YouTube caller matters for a subtler reason: `mark_failed_batch()` spends on
 
 #### Processed files are deleted from the watch folder, not parked
 
-The watch folder is a local scratch area, but parking a processed comic there still means it consumes disk forever. Once `verify_applied` confirms the files are in their destination the source archive is a pure duplicate, so `direct_ingest.py` **deletes it** (an unlink failure leaves it for the next pass).
+The watch folder is a local scratch area, but parking processed media there still means it consumes disk forever. Once `verify_applied` confirms the planned files are in their destination the source bytes are a pure duplicate, so `direct_ingest.py` **deletes them** (an unlink failure leaves them for the next pass). For a directory drop, only the files the plan actually placed are removed — unplanned leftovers (release `.nfo`, a declined sample) are moved to `.skipped/` instead of being destroyed, and emptied subdirectories are pruned.
 
-Only the success path deletes. `.failed/` keeps its file (you want to look at it) and so does `.skipped/` — a skipped archive has **no** library copy by definition, so deleting it would be real loss.
+Only the success path deletes. `.failed/` keeps its entry (you want to look at it) and so does `.skipped/` — a skipped archive has **no** library copy by definition, so deleting it would be real loss.
 
-#### An empty plan on a loose comic/novel is a verdict, not a breakdown
+#### An empty plan is read by drop type: a verdict for archives, a claim to PROVE for video
 
-`validate_plan` rejects an empty `files` list, and rightly so — for a **torrent** it means the run gave up on a directory it was supposed to place. But a single loose archive is different: a single issue already contained in a shelved collection, or a `(Variant Cover Only)` rip, genuinely contains no library media, and the correct plan really is empty. That `PlanError` used to land the archive in `.failed/` next to real errors.
+`validate_plan` rejects an empty `files` list, and rightly so — for a **torrent** it means the run gave up on a directory it was supposed to place. A single loose archive is different: a single issue already contained in a shelved collection, or a `(Variant Cover Only)` rip, genuinely contains no library media, and the correct plan really is empty. `direct_ingest.process()` catches that one `PlanError` specifically and, by default (`DELETE_SKIPPED = True`), **deletes** the archive. The trade is deliberate — a skipped file has no library copy, so deletion is final, which is acceptable precisely because "skipped" means the content is already shelved inside a collection or is not comic/novel content at all. Set `DELETE_SKIPPED = False` to park in `.skipped/` and review them instead.
 
-`direct_ingest.process()` catches that one `PlanError` specifically and, by default (`DELETE_SKIPPED = True`), **deletes** the archive. The trade is deliberate — a skipped file has no library copy, so deletion is final, which is acceptable precisely because "skipped" means the content is already shelved inside a collection or is not comic/novel content at all. Set `DELETE_SKIPPED = False` to park in `.skipped/` and review them instead.
+**Video and directories do NOT get that verdict.** A free model can simply return nothing over content that is not in the library (the "That 90s Show" incident, § *An empty plan over media*), and a direct drop has no `.torrent` left for a retry — deletion would be the only copy gone. So `_empty_plan_is_proven` requires POSITIVE evidence: with an `SxxExx` tag, every episode key must already exist in the library (local tree + remote inventory); without one, the film's folded title must match an owned film. Anything else parks in `.failed/` with a `.error.txt` and is never deleted on a model's word. The torrent path's proof function cannot be reused here because it treats "could not check" as fine; the direct path's bar is inverted.
 
 #### Volumes supersede chapters; colored supersedes B/W — the manga hierarchy
 

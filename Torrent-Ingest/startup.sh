@@ -67,7 +67,8 @@ AGENTS=(
     torrentingest        # the ingest state machine
     torrentreap          # queue-only remote deletion reaper
     torrentmetadata      # nightly .nfo/artwork backup to the metadata-backup remote
-    directingest         # loose-file comic/novel ingester (files the sweeper downloaded)
+    directingest         # loose-file (comic/novel/video) ingester
+    directingestbridge   # drains iCloud Torrents/DirectIngest into the local watch folder
     driveingest          # external-drive auto-organizer
     jellyfindbguardian   # continuous Jellyfin SQLite watcher (verified backups + auto-heal)
     mediadoctor          # library health daemon; writes library_health.txt

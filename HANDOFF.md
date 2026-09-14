@@ -26,6 +26,11 @@ A media fleet on one Mac. ~20 launchd daemons take a `.torrent` dropped into
 **validate that answer**, and file it into a Jellyfin library on a FUSE mount
 (`~/MediaLibrary`) backed by an SSD (`~/Media`) and a pool of MEGA accounts.
 
+Raw media with no torrent is dropped into `iCloud Drive/Torrents/DirectIngest/` (emptied
+into the local `~/Downloads/DirectIngest/` by `directingestbridge`) or straight into
+`~/Downloads/DirectIngest/`, and the `directingest` daemon files it through the same
+pipeline: video to Shows/Movies, comics to Comics, e-books to Google Drive Novels.
+
 **One git repository at `~/Developer/Media-Fleet`** — the five projects are directories in
 it. The directory names are load-bearing: launchd plists, `config.py` and cross-project
 imports address the sub-directories absolutely, so renaming one breaks a daemon.
@@ -49,7 +54,7 @@ Violating any of these has destroyed data or burned a day. They are not style pr
 2. **Never restart the reaper mid-drain.** `pgrep -f 'Torrent-Ingest/reap.py'` — any output
    means leave it alone. A single drain has run for five days.
 3. **`bash Torrent-Ingest/scripts/verify_fleet.sh` must print `ALL CHECKS PASSED` before any
-   deploy.** It is the gate. 40 blocking checks.
+   deploy.** It is the gate. 42 blocking checks.
 4. **Never deploy while an identify run is in flight** — `pgrep -f ai_runner.py`. The run is
    a subprocess of the daemon; a deploy kills it *and* the provider's daily budget with it.
 5. **The model PROPOSES, the harness DISPOSES.** `library.validate_plan` re-derives every
@@ -198,7 +203,7 @@ Every number below was measured, not estimated.
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 40 blocking checks |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 42 blocking checks |
 | `fleet_doctor` | 0 findings |
 | `fleet_health` | all clear |
 | `media_doctor` | 0 shows flagged, 0 pending human/AI review |

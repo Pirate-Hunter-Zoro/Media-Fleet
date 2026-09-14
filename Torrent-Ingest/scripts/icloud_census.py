@@ -25,6 +25,14 @@ control plane. `find.txt` is Title-Scout's inbox; `queued/`, `ingesting/`, `fini
 sync event that empties it does not just lose files, it silently erases the owner's
 instructions to the fleet.
 
+ONE FOLDER IS EXEMPT FROM THE DROP VERDICT, AND ONLY THE VERDICT. `DirectIngest/` is the
+bridge's drop mirror (`direct_ingest_bridge.py`), and it is drained BY DESIGN: every drop
+that appears is MOVED to the local watch folder, so its file count falls constantly. A
+decrease there is the fleet working, not an iCloud vanishing -- flagging it would put a
+"drop" in the one log that is supposed to be nothing but real ones. It is still CENSUSED
+(the snapshot records its counts, so a vanish before a bridge pass is still visible in the
+log by comparing snapshots), just never promoted to a `"drop"` list entry.
+
 NOTE (2026-09-10): `new.txt`, `compilations.txt`, `acquisition_mode.txt` and
 `would_download.txt` were REMOVED DELIBERATELY when torrent/comic discovery was deleted from
 the fleet -- they were the searcher's inbox, mode switch and drop ledger, and nothing reads
@@ -92,12 +100,19 @@ def census(root: Path) -> dict:
     return snap
 
 
+# Folders whose falling count is the fleet working, not a loss (see the module docstring).
+_TRANSIENT_DIRS = {"DirectIngest"}
+
+
 def diff(prev: dict, cur: dict) -> list[str]:
-    """What is GONE or SMALLER since the previous census. Growth is never a drop."""
+    """What is GONE or SMALLER since the previous census. Growth is never a drop, and a
+    transient drop folder's decrease (the bridge draining it) is not one either."""
     if not prev or not prev.get("ok") or not cur.get("ok"):
         return []
     out = []
     for name, was in (prev.get("dirs") or {}).items():
+        if name in _TRANSIENT_DIRS:
+            continue
         now = (cur.get("dirs") or {}).get(name)
         if now is None:
             out.append(f"dir {name!r} GONE (had {was['n']} files)")
@@ -206,6 +221,17 @@ def selftest() -> int:
     d = diff(grown, shrunk)
     check("a lost queued file is reported", any("queued" in x and "3 -> 2" in x for x in d), True)
     check("a lost new.txt is reported", any("new.txt" in x and "GONE" in x for x in d), True)
+
+    # the bridge's drop folder is drained on purpose: still censused, never a "drop"
+    (root / "DirectIngest").mkdir()
+    (root / "DirectIngest" / "movie.mkv").write_bytes(b"vvvv")
+    with_bridge = census(root)
+    check("the bridge drop folder is censused",
+          with_bridge["dirs"]["DirectIngest"]["n"], 1)
+    (root / "DirectIngest" / "movie.mkv").unlink()
+    drained = census(root)
+    check("its drained count is recorded", drained["dirs"]["DirectIngest"]["n"], 0)
+    check("a drained bridge drop is NOT reported as a loss", diff(with_bridge, drained), [])
 
     # lose the whole directory
     for p in sorted(root.rglob("*"), reverse=True):

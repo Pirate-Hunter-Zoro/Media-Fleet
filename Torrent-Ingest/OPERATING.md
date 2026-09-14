@@ -26,7 +26,7 @@ thing to do.
 On the Mac itself, the one command that answers "is the code sound?":
 
 ```bash
-bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh      # 40 blocking checks
+bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh      # 42 blocking checks
 ```
 
 It must print `ALL CHECKS PASSED`. If it does not, do not deploy anything.
@@ -48,8 +48,14 @@ Re-dropping a `.torrent` from `finished/` or `failed/` back to the top level ret
 
 Two other inboxes still work:
 
-* `~/Downloads/DirectIngest/` — drop a loose `.cbz`/`.cbr`/`.pdf`/`.epub` here and it is
-  filed into Comics or Novels.
+* `~/Downloads/DirectIngest/` — drop a loose file OR folder here and it is filed: video
+  (`.mkv`/`.mp4`/`.avi`/`.m4v`/`.mov`) into Shows or Movies, comics (`.cbz`/`.cbr`/`.pdf`)
+  into Comics, e-books (`.epub`, or a `.pdf` planned as one) into the Google Drive Novels
+  folder. A video's subtitle siblings (names beginning with the video's stem, e.g.
+  `Movie.srt`, `Movie.en.srt`) go along automatically.
+* **`iCloud Drive/Torrents/DirectIngest/`** — the same thing, droppable from any device.
+  `directingestbridge` MOVES whatever lands there into the local folder above, then the
+  local ingester files it. This folder empties itself by design; that is not a problem.
 * `find.txt` in the Torrents folder — put one title on a line and **Title-Scout** goes and
   finds that one thing. This is the deliberate, one-off replacement for the searcher, and
   it is still running.
@@ -394,7 +400,7 @@ mistaken for a single project's property, and it now has history.
 error there surfaces only when you next try to deploy — run `bash -n ~/Developer/Media-Fleet/ship-fleet.sh`
 after editing it.
 
-Before you ship: `verify_fleet.sh` must pass all 40. After you ship: check the daemon got a
+Before you ship: `verify_fleet.sh` must pass all 42. After you ship: check the daemon got a
 new PID and no NEW traceback appeared — check the log's modification time first, because
 `DirectIngest.err` holds 2,176 stale ones from August.
 

@@ -55,7 +55,7 @@ fi
 # `com.mikeyferguson.`, which is what nearly every job here is called.
 LABELS=(
   mediafs mediasync predownload torrentreap
-  torrentingest directingest driveingest
+  torrentingest directingest directingestbridge driveingest
   titlescout youtubesync
   librarysupervisor gdrivesupervisor megasupervisor megatrash
   jellyfindbguardian mediadoctor fleethealth fleetdoctor onepacethumbs

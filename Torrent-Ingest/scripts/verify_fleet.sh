@@ -32,7 +32,7 @@ run() {  # run <label> <command...>
 
 echo "=============== FLEET VERIFICATION ==============="
 run "Torrent-Ingest modules import" \
-    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" -c "import config,library,identify,fastpath,ingest,journal,direct_ingest,acceptance_gate"
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" -c "import config,library,identify,fastpath,ingest,journal,direct_ingest,direct_ingest_bridge,acceptance_gate"
 run "Torrent-Ingest plan API contract" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" contract.py
 run "YouTube-Downloader preflight" \
@@ -104,6 +104,18 @@ run "repair fills from the guide first (verified)" \
 # A loss must be reported AND growth must not be, or the log is noise nobody reads.
 run "iCloud census drop detection (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/icloud_census.py --selftest
+# Direct ingest is the fleet's non-torrent admission path, and since 2026-09-13 it takes
+# video and dropped directories too. The dangerous half is the empty plan: over a single
+# archive it is a verdict, but over video or a directory it used to mean deletion on a
+# free model's word -- the "That 90s Show" class one layer out. Both directions: proven
+# already-present is deleted, unproven is parked intact.
+run "direct ingest: all media, safe empty plans" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_direct_ingest_media.py
+# The iCloud Torrents/DirectIngest bridge crosses a sync layer and a volume: a dataless
+# placeholder must be materialized and settled before the move, a same-named local file
+# must never be clobbered, and a failed copy must leave the iCloud source intact.
+run "direct ingest bridge: move, never clobber" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_direct_ingest_bridge.py
 # The identify base prompt may be SCOPED by media kind but never shortened by deletion: it
 # has zero verbatim repetition, so every character removed by editing is a rule removed, and
 # a placement rule cannot be regression-tested without spending the daily budget the shrink
