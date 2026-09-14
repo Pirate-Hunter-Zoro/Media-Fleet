@@ -205,9 +205,15 @@ COMIC_FRANCHISES = [
             "the astounding wolf man": "The Astounding Wolf-Man",
         },
     },
-    # ElfQuest REMOVED 2026-09-05 at owner instruction: the whole franchise is purged and
-    # blocklisted, so a franchise row here would only re-file new arrivals of content that
-    # must never be acquired again (§4.145 is now moot).
+    # ElfQuest row REMOVED 2026-09-05 (purged then), and deliberately NOT restored when
+    # the owner re-acquired the franchise on 2026-09-13. Without a row, `Comics/ElfQuest/`
+    # is an ordinary western series root: the Complete ElfQuest v01-v08 volumes sit
+    # directly under it with `The Final Quest/` as a subseries, which is the layout the
+    # owner asked for ("just a normal comic"). A franchise row would force every member
+    # -- the main run included -- into its own subfolder. Caveat measured that day: the
+    # identify model filed several of those volumes under `Comics/Manga/ElfQuest/`
+    # (ElfQuest is American, not manga) and they had to be moved to the western root by
+    # hand, so a future ElfQuest drop may need the same nudge.
     {
         "name": "Attack on Titan",
         "kind": "manga",

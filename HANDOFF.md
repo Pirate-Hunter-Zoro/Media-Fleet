@@ -197,7 +197,7 @@ code cites these files by section number.
 
 ---
 
-## 6. State, verified 2026-09-13 15:17 CDT
+## 6. State, verified 2026-09-13 20:46 CDT
 
 Every number below was measured, not estimated.
 
@@ -205,14 +205,14 @@ Every number below was measured, not estimated.
 |---|---|
 | `verify_fleet.sh` | **ALL CHECKS PASSED**, 42 blocking checks |
 | `fleet_doctor` | 0 findings |
-| `fleet_health` | all clear |
+| `fleet_health` | all clear (20:42 report) |
 | `media_doctor` | 0 shows flagged, 0 pending human/AI review |
-| `library_health.txt` | "All shows healthy. Nothing to fix." |
-| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `ffabc0a` |
-| Jellyfin | 298 series, 18,280 episodes, 440 movies |
-| Mount | Shows 295, Movies 2,647, Comics 8 — primed and serving |
-| `library.db` | 22,644 owned rows, 22,644 distinct, **0 redundant** |
-| In flight | no identify run; reaper running (idle-looping, queues empty) |
+| `library_health.txt` | "All shows healthy. Nothing to fix." (19:33) |
+| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `47ebd43` |
+| Jellyfin | 301 series, 18,395 episodes, 444 movies |
+| Mount | Shows 300, Movies 2,663, Comics 9 — primed and serving |
+| `library.db` | 22,733 owned rows, 22,733 distinct, **0 redundant** (ElfQuest-family stale rows superseded by hand) |
+| In flight | torrent identify running (Space Battleship Yamato pack, cycling providers since 18:59); reaper running (queue empty). **The full-fleet restart after the 2026-09-13 direct-ingest ship is HELD until that identify finishes (rule 4)** — `directingest` and `directingestbridge` are already on the new code |
 | Open work | **none queued.** Read §7 before reading that as "nothing is wrong" |
 
 ---
