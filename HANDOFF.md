@@ -212,7 +212,7 @@ Every number below was measured, not estimated.
 | Jellyfin | 301 series, 18,395 episodes, 444 movies |
 | Mount | Shows 300, Movies 2,663, Comics 9 — primed and serving |
 | `library.db` | 22,733 owned rows, 22,733 distinct, **0 redundant** (ElfQuest-family stale rows superseded by hand) |
-| In flight | torrent identify running (Space Battleship Yamato pack, cycling providers since 18:59); reaper running (queue empty). **The full-fleet restart after the 2026-09-13 direct-ingest ship is HELD until that identify finishes (rule 4)** — `directingest` and `directingestbridge` are already on the new code |
+| In flight | torrent identify running back-to-back over 8 active records (LOGH, Galaxy Express 999, Harlock, Yamato 3199; Yamato 2199 verified + filed at 20:46); reaper running (queue empty). **The full-fleet restart after the 2026-09-13 direct-ingest ship is HELD while identify runs are in flight (rule 4)** — `directingest` and `directingestbridge` are already on the new code, and the shared `config.py` change they carry is additive/behavior-neutral for the torrent path |
 | Open work | **none queued.** Read §7 before reading that as "nothing is wrong" |
 
 ---
