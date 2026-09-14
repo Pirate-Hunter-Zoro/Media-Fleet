@@ -257,7 +257,7 @@ def _yacreader_tick(state: dict) -> None:
     if yacreader_running():
         started = state.get("yac_started_at")
         if started is None:
-            state["yac_started_at"] = now
+            state["yac_started_at"] = started = now
         elif now - started >= config.SUPERVISOR_YAC_CRASH_WINDOW_SEC:
             state["yac_crashes"] = 0
         # 1. Drift in the scan flags is the "new comics never appear" fault and the app
@@ -285,21 +285,30 @@ def _yacreader_tick(state: dict) -> None:
             return
         # 3. Up but windowless: no window means `LibrariesUpdateCoordinator::init()`
         #    never ran, so the startup update never fired and the app scans nothing --
-        #    the state a crash restore leaves. Probe the open index and activate.
+        #    the state a crash restore leaves. Only a JUST-STARTED app can be judged:
+        #    a healthy one begins its update within seconds (the transaction journal
+        #    appears), while a long-running quiet app is indistinguishable from an idle
+        #    one through this filesystem. Activating mid-update must never happen -- the
+        #    index flickers closed between operations and a model reload can collide
+        #    with the update transaction (the 2026-09-14 wedge).
         if now - state.get("yac_index_checked_at", 0) >= config.SUPERVISOR_YAC_INDEX_CHECK_SEC:
             state["yac_index_checked_at"] = now
-            if yacreader_db.index_open():
+            if yacreader_db.update_in_progress():
                 state["yac_activate_attempts"] = 0
                 state["yac_activate_alerted"] = False
-            else:
-                state["yac_activate_attempts"] = state.get("yac_activate_attempts", 0) + 1
-                log("YacReader is up but has no library open -> activating it so the "
-                    "startup update runs (attempt "
+            elif started is not None \
+                    and now - started <= config.SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC:
+                state["yac_activate_attempts"] = \
+                    state.get("yac_activate_attempts", 0) + 1
+                log("YacReader just started and no update is running -> activating it so "
+                    "the library window (and its startup update) exist (attempt "
                     f"{state['yac_activate_attempts']})")
                 yacreader_db.activate_app()
-                if state["yac_activate_attempts"] >= 5 and not state.get("yac_activate_alerted"):
-                    alert("YacReaderLibrary is running but has opened no library; the "
-                          "startup update cannot run and new comics will not be indexed.")
+                if state["yac_activate_attempts"] >= 5 \
+                        and not state.get("yac_activate_alerted"):
+                    alert("YacReaderLibrary started but has opened no library; the "
+                          "startup update cannot run and new comics will not be "
+                          "indexed.")
                     state["yac_activate_alerted"] = True
         return
 

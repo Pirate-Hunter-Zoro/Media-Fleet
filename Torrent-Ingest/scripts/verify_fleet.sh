@@ -106,6 +106,13 @@ run "YacReader scan-at-startup enforced (both ways)" \
 # restarting forever. Driven with fake app control and a fake clock, both directions.
 run "YacReader supervisor freshness (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_supervisor_yacreader.py
+# The outside view: a crash row, a damaged index, a windowless app, drifted flags and
+# shelf files the index lacks each get the severity that matches who can fix them, and
+# `fleet_doctor` has reviewed remedies for the auto-fixable two. The detector is driven
+# with fakes in both directions -- a checker that only ever said ALL CLEAR would pass on
+# a good day and prove nothing (2026-09-14: ElfQuest invisible with no warning anywhere).
+run "YacReader health check + remedies (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_fleet_health_yacreader.py
 # `FolderModel::createModelData` dereferences the parent it looks up `ORDER BY
 # parentId,name` with no null check, so a dangling parent / cycle / missing root / a
 # parent that sorts after its child is a SIGSEGV inside the app -- the FolderModel::reload

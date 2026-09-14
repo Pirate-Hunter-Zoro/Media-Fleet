@@ -107,12 +107,18 @@ def index_names(db: Path | str) -> set[str]:
     return {str(r[0]).lstrip("/") for r in rows if r[0]}
 
 
-def shelf_names(inventory_path: Path | str, mount_root: Path | str) -> set[str]:
+def shelf_names(inventory_path: Path | str, mount_root: Path | str,
+                include_mount: bool = True) -> set[str]:
     """Comic files the fleet HOLDS, relative to the Comics root.
 
     The union of the pool inventory (authoritative; eviction does not remove a comic)
     and the mounted tree (a just-filed file may not be uploaded yet). Never the SSD
     alone -- that is the HANDOFF's first rule.
+
+    `include_mount=False` skips the FUSE walk: a 5-minute health daemon must not rglob
+    thousands of comics through the mount. The pool view can only UNDER-report (a file
+    filed seconds ago and not yet uploaded), never over-report, so the periodic check
+    stays conservative; the refresh marker covers the fresh-filing case.
     """
     exts = tuple(config.COMIC_EXTENSIONS)
     out: set[str] = set()
@@ -125,6 +131,8 @@ def shelf_names(inventory_path: Path | str, mount_root: Path | str) -> set[str]:
             parts = str(rel).split("/")
             if len(parts) >= 3 and parts[0] == "Comics" and parts[-1].lower().endswith(exts):
                 out.add("/".join(parts[1:]))
+    if not include_mount:
+        return out
     root = Path(mount_root)
     try:
         for p in root.rglob("*"):
@@ -139,11 +147,11 @@ def shelf_names(inventory_path: Path | str, mount_root: Path | str) -> set[str]:
 
 
 def unindexed_files(db: Path | str, inventory_path: Path | str,
-                    mount_root: Path | str) -> list[str]:
+                    mount_root: Path | str, include_mount: bool = True) -> list[str]:
     """Shelf comic files YacReader's index does not know about, sorted.
 
     An empty result is the only honest "the reader is current". A non-empty one means
     the app has not run a library update since those files landed -- the state the
     ElfQuest drop sat in, with every file present and nothing in the grid.
     """
-    return sorted(shelf_names(inventory_path, mount_root) - index_names(db))
+    return sorted(shelf_names(inventory_path, mount_root, include_mount) - index_names(db))

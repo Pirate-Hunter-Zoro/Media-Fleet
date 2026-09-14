@@ -2238,9 +2238,20 @@ SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC = int(
     os.environ.get("SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC", str(30 * 60)))
 # The app can be up with NO library window (a crash restore), in which case
 # `LibrariesUpdateCoordinator::init()` never runs and neither does the startup update --
-# the app looks healthy and scans nothing. The supervisor probes the open index at most
-# this often and activates the app when it is missing.
+# the app looks healthy and scans nothing. The supervisor activates it, but only inside
+# this window after a start: a healthy app begins its update within seconds of starting
+# (the transaction journal appears), so a just-started app that is doing NOTHING is the
+# one that lost its window. A long-running quiet app is indistinguishable from an idle
+# one through this filesystem, and bumping it to the front forever would be churn.
 SUPERVISOR_YAC_INDEX_CHECK_SEC = int(os.environ.get("SUPERVISOR_YAC_INDEX_CHECK_SEC", "60"))
+SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC = int(
+    os.environ.get("SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC", "600"))
+# How long the index may sit unchanged with shelf files missing and no update running
+# before fleet_health escalates it from a warning to an ACTION (and the doctor may
+# request a rescan). Long on purpose: a pool-backed scan can spend many minutes reading
+# one archive before its next commit, and `update_in_progress()` covers that window.
+SUPERVISOR_YAC_STALE_ACTION_SEC = int(
+    os.environ.get("SUPERVISOR_YAC_STALE_ACTION_SEC", "3600"))
 # A YacReader that dies and comes straight back is crashing, not running. Count restarts
 # inside this window; at the limit, stop restarting it, say so, and wait out the backoff
 # instead of thrashing (the app crashed twice on 2026-09-11 and once on 2026-09-13).

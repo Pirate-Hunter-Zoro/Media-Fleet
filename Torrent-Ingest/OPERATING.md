@@ -319,6 +319,15 @@ python3 scripts/comic_shelf_audit.py           # empty dirs, stale rows, and the
                                                # missing-from-index report
 ```
 
+**The fleet now watches this for you.** `fleet_health` reports the reader in the same phone
+report as everything else — a crash row, a damaged index, drifted flags, and shelf files
+the index does not know about — and `fleet_doctor` repairs the two it safely can
+(`refresh_yacreader`, `repair_yacreader_index`). A running scan is never mistaken for
+staleness: `update_in_progress()` reads the transaction journal or an open archive, not
+CPU. A *damaged* index is deliberately an owner remedy: restoring a backup needs the
+newest one that PASSES `integrity_check`, which is a human read
+(`scripts/yacreader_index_health.py`).
+
 **If the reader CRASHES instead of showing nothing**, it is almost always the folder
 tree: `FolderModel::createModelData` dereferences the parent it looks up
 `ORDER BY parentId,name` with no null check, so a dangling parent, a cycle, a missing

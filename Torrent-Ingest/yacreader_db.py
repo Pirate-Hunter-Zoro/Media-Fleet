@@ -211,30 +211,77 @@ def scan_settings_ok(ini_path: Path | None = None) -> bool:
                for k, v in config.YACREADER_SCAN_SETTINGS.items())
 
 
-def index_open() -> bool:
-    """True when a RUNNING YACReader has its library index open.
-
-    The app can be up with NO library loaded: after a crash it restores to no window,
-    `LibrariesUpdateCoordinator::init()` (which fires the startup update) only runs when
-    the library window is created, and no window means no scan -- the exact state that
-    kept the filed ElfQuest invisible on 2026-09-14 while the app looked healthy. Probed
-    by open file handle; the app opens the index through the FUSE mount.
-    """
+def _open_fd_names() -> list[str]:
+    """Every open file name the running app holds, via one lsof call."""
     pids = subprocess.run(["/usr/bin/pgrep", "-f", config.YACREADER_PROC_PATTERN],
                           capture_output=True, text=True).stdout.split()
-    if not pids:
-        return False
-    wanted = {str(config.YACREADER_DB), str(config.YACREADER_DB_MOUNT)}
+    names: list[str] = []
     for pid in pids:
         try:
             r = subprocess.run(["/usr/sbin/lsof", "-p", pid, "-Fn"],
                                capture_output=True, text=True, timeout=15)
         except (OSError, subprocess.TimeoutExpired):
             continue
-        for line in r.stdout.splitlines():
-            if line.startswith("n") and line[1:] in wanted:
+        names.extend(line[1:] for line in r.stdout.splitlines() if line.startswith("n"))
+    return names
+
+
+def index_open() -> bool:
+    """True when a RUNNING YACReader has its library index open at this instant.
+
+    One probe, not proof of a loaded library: the app opens the index per operation and
+    closes it again, so this is False between operations (and for a healthy idle app).
+    `update_in_progress()` is the question most callers actually have.
+    """
+    wanted = {str(config.YACREADER_DB), str(config.YACREADER_DB_MOUNT)}
+    return any(name in wanted for name in _open_fd_names())
+
+
+def update_in_progress() -> bool:
+    """True when YACReader is doing library work RIGHT NOW.
+
+    Three read-only witnesses, any one enough:
+      * the rollback journal of an open write transaction -- `LibraryCreator::
+        processLibrary` wraps the whole walk in one transaction, so once the first insert
+        happens `library.ydb-journal` exists until the final commit;
+      * the index itself held open at this instant;
+      * a comic archive open under the Comics mount -- the walk's hash (`pseudoHash`
+        reads 512KB of EVERY comic) and its cover extraction hold one open, which covers
+        the long read-only stretches before the transaction's first write.
+
+    CPU is deliberately NOT a witness: an I/O-bound scan through the pool was measured
+    at 1.5%, indistinguishable from an idle app, while a wrongly-activated scan wedges
+    (2026-09-14).
+    """
+    for db in (config.YACREADER_DB, config.YACREADER_DB_MOUNT):
+        try:
+            if db.with_name(db.name + "-journal").exists():
                 return True
+        except OSError:
+            continue
+    exts = tuple(config.COMIC_EXTENSIONS)
+    mount_prefix = str(config.MEDIAFS_MOUNT / "Comics") + "/"
+    for name in _open_fd_names():
+        if name in (str(config.YACREADER_DB), str(config.YACREADER_DB_MOUNT)):
+            return True
+        if name.endswith("library.ydb-journal"):
+            return True
+        if name.startswith(mount_prefix) and name.lower().endswith(exts):
+            return True
     return False
+
+
+def index_quiet_sec() -> float | None:
+    """Seconds since the index file last changed, or None if it cannot be read.
+
+    A reader that has been up with a quiet index for a long time and cannot show shelf
+    files is the actionable stale state; one that changed seconds ago is simply between
+    commits of a running scan.
+    """
+    try:
+        return max(0.0, time.time() - config.YACREADER_DB.stat().st_mtime)
+    except OSError:
+        return None
 
 
 def activate_app() -> bool:
@@ -249,6 +296,30 @@ def activate_app() -> bool:
                     f'tell application "{config.YACREADER_APP_NAME}" to activate'],
                    capture_output=True, timeout=10, check=False)
     return True
+
+
+def update_in_progress() -> bool:
+    """True when YacReader is running a library update RIGHT NOW.
+
+    `LibraryCreator::processLibrary` wraps the WHOLE walk in one SQLite transaction, so
+    its rollback journal (`library.ydb-journal`) exists from the first insert to the final
+    commit -- while CPU can sit near zero for many minutes at a time, because the work is
+    I/O-bound pool reads. CPU is therefore the wrong signal (a real scan was measured at
+    1.5%); the journal, or an index handle open at this instant, is the honest one.
+
+    The caller must have already established that the app is running: a stale hot journal
+    after a crash is rolled back by the next open, and while the app is down nothing is
+    updating.
+    """
+    if index_open():
+        return True
+    for db in (config.YACREADER_DB, config.YACREADER_DB_MOUNT):
+        try:
+            if db.with_name(db.name + "-journal").exists():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def ensure_scan_settings(ini_path: Path | None = None) -> bool:

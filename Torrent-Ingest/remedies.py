@@ -41,13 +41,17 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 import config
+import yacreader_db
+import yacreader_index
 
 DIRECT_INGEST_DIR = Path.home() / "Downloads" / "DirectIngest"
 MEDIA_ROOT = Path.home() / "Media"
@@ -284,6 +288,128 @@ DEAD_DAEMON = Remedy(
 )
 
 
+# --- remedy: the reader is not picking up the shelf --------------------------
+#
+# WHY THIS IS A REMEDY AND NOT JUST A SUPERVISOR. The supervisor owns the normal path
+# (patch the flags, bounce the app, consume the filing marker). But it can only act on
+# state it polls; when it was itself the thing that needed upgrading, the reader sat with
+# both auto-update flags `false` while every ElfQuest file was on the shelf -- invisible.
+# `fleet_health` now detects that state from the outside and this remedy repairs it with
+# the same reviewed tool a human would run, so the loop closes even when the supervisor
+# is the broken half. `yacreader_rescan.py --apply` is idempotent and non-destructive:
+# flags patched under the index lock, marker dropped, app restarted by the supervisor.
+
+def _detect_yacreader_refresh() -> tuple[bool, str]:
+    if not config.YACREADER_DB.exists():
+        return False, "no YacReader index exists yet"
+    if not yacreader_db.scan_settings_ok():
+        return True, "the auto-update flags are off"
+    if not yacreader_db.app_running():
+        return False, "the reader is down; its next start scans with the flags on"
+    if yacreader_db.update_in_progress():
+        return False, "an update is already running"
+    missing = yacreader_index.unindexed_files(
+        config.YACREADER_DB, config.MEDIA_SYNCER_INVENTORY,
+        config.MEDIAFS_MOUNT / "Comics", include_mount=False)
+    if missing:
+        quiet = yacreader_db.index_quiet_sec()
+        if quiet is not None and quiet < config.SUPERVISOR_YAC_STALE_ACTION_SEC:
+            return False, ("the index changed recently; a scan may already be starting")
+        return True, f"{len(missing)} shelf comic file(s) are not in the index"
+    return False, "the reader is current and its flags are on"
+
+
+def _apply_yacreader_refresh() -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(
+            [sys.executable,
+             str(Path(__file__).resolve().parent / "scripts" / "yacreader_rescan.py"),
+             "--apply"],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"could not run yacreader_rescan.py: {exc}"
+    if proc.returncode != 0:
+        return False, (f"yacreader_rescan.py rc={proc.returncode}: "
+                       f"{(proc.stderr or proc.stdout or '').strip()[-200:]}")
+    return True, "checked the scan flags and requested a refresh"
+
+
+def _verify_yacreader_refresh() -> tuple[bool, str]:
+    if not yacreader_db.scan_settings_ok():
+        return False, "the auto-update flags are still not on"
+    if config.YACREADER_REFRESH_MARKER.exists():
+        return True, ("flags are on; the refresh marker is pending and the supervisor "
+                      "will bounce the reader")
+    return True, ("flags are on; the refresh marker was already consumed, so the "
+                  "supervisor is restarting the reader now")
+
+
+REFRESH_YACREADER = Remedy(
+    id="refresh_yacreader",
+    answers=("check_yacreader",),
+    title="Put YacReader's auto-update flags on and request a library rescan",
+    safety="auto",
+    detect=_detect_yacreader_refresh,
+    apply=_apply_yacreader_refresh,
+    verify=_verify_yacreader_refresh,
+)
+
+
+# --- remedy: the reader's own index will crash it ----------------------------
+#
+# `FolderModel::createModelData` dereferences the parent it looks up
+# `ORDER BY parentId,name` with NO null check, so a dangling/cyclic/rootless folder row is
+# a SIGSEGV on the next reload -- the 2026-09-13 crash, which left the app up for ten
+# hours with a stale index and new comics invisible. `yacreader_index_repair.py --apply`
+# fixes the tree under the index lock, with a verified backup and an integrity check.
+
+def _detect_yacreader_crash_rows() -> tuple[bool, str]:
+    if not config.YACREADER_DB.exists():
+        return False, "no YacReader index exists yet"
+    faults = [f for f in yacreader_index.load_order_faults(config.YACREADER_DB)
+              if f["kind"] != "unreadable"]
+    if not faults:
+        return False, "no row can crash the loader"
+    return True, (f"{len(faults)} row(s) would crash the loader: "
+                  + "; ".join(f["detail"] for f in faults[:3]))
+
+
+def _apply_yacreader_crash_rows() -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(
+            [sys.executable,
+             str(Path(__file__).resolve().parent / "scripts" / "yacreader_index_repair.py"),
+             "--apply"],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"could not run yacreader_index_repair.py: {exc}"
+    if proc.returncode != 0:
+        return False, (f"yacreader_index_repair.py rc={proc.returncode}: "
+                       f"{(proc.stderr or proc.stdout or '').strip()[-200:]}")
+    return True, "repaired the folder tree under the index lock"
+
+
+def _verify_yacreader_crash_rows() -> tuple[bool, str]:
+    faults = [f for f in yacreader_index.load_order_faults(config.YACREADER_DB)
+              if f["kind"] != "unreadable"]
+    if faults:
+        return False, f"{len(faults)} crash row(s) remain"
+    return True, "the loader's parent-order invariant holds"
+
+
+REPAIR_YACREADER_INDEX = Remedy(
+    id="repair_yacreader_index",
+    answers=("check_yacreader",),
+    title="Repair folder rows that would crash YacReader's loader",
+    safety="auto",
+    detect=_detect_yacreader_crash_rows,
+    apply=_apply_yacreader_crash_rows,
+    verify=_verify_yacreader_crash_rows,
+)
+
+
 # --- remedies the doctor must NEVER automate ---------------------------------
 #
 # Present in the registry ON PURPOSE. A finding with no entry at all gets a generic "a
@@ -347,10 +473,49 @@ AI_KEY_MISSING = Remedy(
 )
 
 
+def _detect_yacreader_damaged() -> tuple[bool, str]:
+    if not config.YACREADER_DB.exists():
+        return False, "no YacReader index exists yet"
+    try:
+        con = sqlite3.connect(f"file:{config.YACREADER_DB}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        return True, f"the index is unopenable: {exc}"
+    try:
+        integ = con.execute("PRAGMA integrity_check").fetchone()[0]
+    except sqlite3.DatabaseError as exc:
+        return True, f"the index is malformed: {exc}"
+    finally:
+        con.close()
+    return (integ != "ok"), f"integrity_check says {str(integ).splitlines()[0]!r}"
+
+
+YACREADER_INDEX_DAMAGED = Remedy(
+    id="yacreader_index_damaged",
+    answers=("check_yacreader",),
+    title="The YacReader index is damaged",
+    safety="owner",
+    detect=_detect_yacreader_damaged,
+    owner_instruction=(
+        "Do NOT restore the NEWEST backup -- restore the newest one that PASSES "
+        "integrity_check. A backup taken on the way into a repair is a backup of the "
+        "damage, and restoring it restores the corruption (§4.185).\n"
+        "    python3 scripts/yacreader_index_health.py   # prints the per-backup census\n"
+        "    cp -p '<the newest CLEAN backup>' "
+        "~/Media/Comics/.yacreaderlibrary/library.ydb\n"
+        "    Then let the supervisor restart YacReader (or run "
+        "scripts/yacreader_rescan.py --apply). Do not run comic_shelf_audit --apply "
+        "against a damaged index; it refuses one precisely so a repair cannot snapshot "
+        "the damage."),
+)
+
+
 REGISTRY: tuple[Remedy, ...] = (
     DEAD_DAEMON,
     MISSING_DAEMON,
     REAPER_MISSING,
+    REFRESH_YACREADER,
+    REPAIR_YACREADER_INDEX,
+    YACREADER_INDEX_DAMAGED,
     GATE_DARK,
     LIBRARY_REVIEW,
     DISK_LOW,

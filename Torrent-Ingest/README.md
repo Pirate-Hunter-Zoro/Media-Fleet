@@ -1814,6 +1814,14 @@ It never fixes and never fails — it is a detector + notifier.
   Guard: `scripts/test_mega_pause_check.py`, all four branches.
 * **Library** — surfaces the count of `NEEDS REVIEW` items from `library_health.txt`, so
   the phone report shows them without opening the other file.
+* **YacReader** — is the reader indexing what the shelf HOLDS? Reports a folder row that
+  would crash the loader on its next reload, a damaged index, drifted auto-update flags,
+  and shelf files the index does not know about. The freshness check is deliberately
+  conservative: `update_in_progress()` (the update transaction's journal, the open index,
+  or an open comic archive — never CPU, which sits at ~1.5% during pool reads) keeps a
+  running scan from reading as staleness, and only a long-quiet index with files missing
+  becomes an `[ACTION]`. That is the detector whose absence let the 2026-09-14 ElfQuest
+  drop sit invisible with every other check reporting fine.
 
 **Removed on 2026-09-10 with the searcher**: the GetComics check (files the sweeper could
 not auto-download past a captcha) and the tracker-reachability probes with their
@@ -3890,6 +3898,17 @@ automation is wrong — the acceptance gate must not be cleared by a faked heart
 library review list is curation, not a bug list, and 82 of its 86 items were misnumbered
 sets whose `.nfo` names the right episode. Saying that plainly beats inventing an
 automated action that half-works.
+
+**The YacReader pair** is the newest auto pair, and the reason the reader's freshness is
+now a closed loop even when the supervisor itself is the broken half:
+`refresh_yacreader` runs `scripts/yacreader_rescan.py --apply` (flags under the index
+lock, then the refresh marker) when the flags have drifted or a long-quiet index is
+missing shelf files, and `repair_yacreader_index` runs
+`scripts/yacreader_index_repair.py --apply` when a folder row would SIGSEGV the loader
+(`FolderModel::createModelData` dereferences a missing parent). A *damaged* index has an
+owner remedy instead, because restoring a backup is not a decision an unattended doctor
+makes: it requires the newest backup that PASSES `integrity_check`, and that census is a
+human read.
 
 Its report is `fleet_doctor.txt`, beside `fleet_health.txt` in the iCloud Torrents folder.
 

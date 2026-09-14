@@ -44,6 +44,7 @@ class Fake:
         self.stops = 0
         self.activations = 0
         self.index_open = False
+        self.updating = False          # a library update is in flight
         self.settings_ok = True
         self.alerts: list[str] = []
 
@@ -54,7 +55,7 @@ saved = {n: getattr(ls, n) for n in ("yacreader_running", "stop_yacreader", "sta
                                      "log", "alert")}
 saved_db = {n: getattr(ls.yacreader_db, n) for n in ("ensure_scan_settings",
                                                      "scan_settings_ok", "activate_app",
-                                                     "index_open")}
+                                                     "index_open", "update_in_progress")}
 saved_time = ls.time.time
 saved_marker = ls.config.YACREADER_REFRESH_MARKER
 TMP = Path(tempfile.mkdtemp(prefix="yac-supervisor-"))
@@ -75,6 +76,7 @@ def wire(fake: Fake) -> None:
     ls.yacreader_db.activate_app = lambda: (setattr(fake, "activations",
                                                     fake.activations + 1), True)[-1]
     ls.yacreader_db.index_open = lambda: fake.index_open
+    ls.yacreader_db.update_in_progress = lambda: fake.updating
 
 
 def state() -> dict:
@@ -118,11 +120,31 @@ try:
     CLOCK[0] += 10
     ls._yacreader_tick(st)
     check("activation is throttled inside the check interval", fake.activations == 1)
-    fake.index_open = True
+    fake.updating = True
     CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
     ls._yacreader_tick(st)
-    check("an open index resets the attempts",
+    check("an update in flight resets the attempts",
           st["yac_activate_attempts"] == 0 and st["yac_activate_alerted"] is False)
+
+    # 3b. An app with an update IN FLIGHT must never be activated: it closes its index
+    #     between operations and I/O-bound scanning can sit at ~1.5% CPU, so the
+    #     transaction's journal (`update_in_progress`) is the signal -- not CPU. Activating
+    #     it can collide a model reload with the transaction and wedge the scan (the
+    #     2026-09-14 ElfQuest wedge): it must be left alone.
+    fake = Fake()
+    fake.running = True
+    fake.index_open = False
+    fake.updating = True
+    wire(fake)
+    st = state()
+    for _ in range(3):
+        CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
+        ls._yacreader_tick(st)
+    check("an app mid-update is never activated", fake.activations == 0)
+    fake.updating = False
+    CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
+    ls._yacreader_tick(st)
+    check("an idle app still gets activated", fake.activations == 1)
 
     # 4. Persistent windowlessness alerts once and keeps trying, not restarting.
     fake = Fake()
@@ -157,7 +179,7 @@ try:
     check("after the backoff it tries again", fake.starts == before + 1)
 
     src = (Path(__file__).resolve().parent.parent / "library_supervisor.py").read_text()
-    for needle in ("yacreader_db.index_open()", "yacreader_db.activate_app()",
+    for needle in ("yacreader_db.update_in_progress()", "yacreader_db.activate_app()",
                    "SUPERVISOR_YAC_CRASH_LIMIT", "ensure_scan_settings()"):
         check(f"source still contains {needle!r}", needle in src)
 finally:

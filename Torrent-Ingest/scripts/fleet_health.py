@@ -27,6 +27,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -39,6 +40,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config      # noqa: E402
+import yacreader_db       # noqa: E402
+import yacreader_index    # noqa: E402
 
 
 # --- tunables ----------------------------------------------------------------
@@ -322,6 +325,96 @@ def check_library() -> list[tuple[str, str]]:
     return []
 
 
+def _yacreader_integrity() -> str:
+    try:
+        con = sqlite3.connect(f"file:{config.YACREADER_DB}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        return f"unopenable: {exc}"
+    try:
+        return con.execute("PRAGMA integrity_check").fetchone()[0]
+    except sqlite3.DatabaseError as exc:
+        return f"malformed: {exc}"
+    finally:
+        con.close()
+
+
+def check_yacreader() -> list[tuple[str, str]]:
+    """Is the reader indexing what the shelf holds?
+
+    YACReader never notices the filesystem on its own: a filed comic is invisible until
+    the APP runs a library update, and on 2026-09-14 every ElfQuest file sat on the shelf
+    and in the pool with BOTH auto-update flags `false` -- the owner's report was simply
+    "it's not showing up". `library_supervisor` owns the repair; this check is the fleet's
+    detector for the states that outlive it:
+
+      * a folder row that SIGSEGVs the app on its next reload (`FolderModel::createModelData`
+        dereferences a missing parent -- scripts/yacreader_index_repair.py),
+      * a damaged index (restore the newest backup that PASSES integrity_check),
+      * the app UP but idle with no library open (a crash restore leaves no window, so
+        `LibrariesUpdateCoordinator::init()` never runs and nothing scans),
+      * auto-update flags off,
+      * shelf files the index does not know about.
+
+    The inventory-only freshness check deliberately skips the FUSE walk (this runs every
+    5 minutes); it can under-report a file that was filed seconds ago and not yet
+    uploaded, never over-report one that is missing.
+    """
+    db = config.YACREADER_DB
+    if not db.exists():
+        return [("ACTION", "no YacReader index exists; the reader cannot show comics "
+                           "(a full rescan rebuilds it)")]
+
+    out: list[tuple[str, str]] = []
+    faults = yacreader_index.load_order_faults(db)
+    if any(f["kind"] == "unreadable" for f in faults):
+        detail = next(f["detail"] for f in faults if f["kind"] == "unreadable")
+        return [("ACTION", f"the YacReader index cannot be read ({detail}); restore the "
+                           f"newest backup that passes integrity_check "
+                           f"(scripts/yacreader_index_health.py)")]
+    if faults:
+        out.append(("ACTION", f"{len(faults)} YacReader folder row(s) will crash the "
+                              f"reader on its next reload -- FolderModel::createModelData "
+                              f"dereferences a missing parent; run "
+                              f"scripts/yacreader_index_repair.py --apply"))
+
+    integ = _yacreader_integrity()
+    if integ != "ok":
+        out.append(("ACTION", f"the YacReader index is damaged ({integ.splitlines()[0]}); "
+                              f"restore the newest backup that PASSES integrity_check "
+                              f"(scripts/yacreader_index_health.py)"))
+
+    running = yacreader_db.app_running()
+    busy = yacreader_db.update_in_progress() if running else False
+
+    if not yacreader_db.scan_settings_ok():
+        out.append(("ACTION", "YacReader's auto-update flags are OFF, so new comics are "
+                              "never indexed (scripts/yacreader_rescan.py --apply)"))
+
+    missing = yacreader_index.unindexed_files(
+        db, config.MEDIA_SYNCER_INVENTORY, config.MEDIAFS_MOUNT / "Comics",
+        include_mount=False)
+    if missing:
+        if busy:
+            out.append(("WARN", f"{len(missing)} comic file(s) on the shelf are not in "
+                                f"the YacReader index yet; an update is running"))
+        elif running:
+            quiet = yacreader_db.index_quiet_sec()
+            if quiet is None or quiet >= config.SUPERVISOR_YAC_STALE_ACTION_SEC:
+                out.append(("ACTION", f"{len(missing)} comic file(s) are on the shelf but "
+                                      f"not in the YacReader index and the reader has "
+                                      f"been idle; run "
+                                      f"scripts/yacreader_rescan.py --apply"))
+            else:
+                out.append(("WARN", f"{len(missing)} comic file(s) on the shelf are not "
+                                    f"in the YacReader index yet; the index changed "
+                                    f"{int(quiet // 60)}m ago, so a scan may be starting"))
+        else:
+            out.append(("WARN", f"{len(missing)} comic file(s) are on the shelf but not "
+                                f"in the YacReader index; the reader is down (the "
+                                f"supervisor starts it with the mount)"))
+    return out
+
+
 
 
 
@@ -456,7 +549,7 @@ def check_acceptance_gate() -> list[tuple[str, str]]:
 def collect(state: dict) -> list[tuple[str, str]]:
     issues: list[tuple[str, str]] = []
     for check in (check_vpn, check_acceptance_gate, check_free_provider, check_disk,
-                  check_mega, check_gdrive, check_library,
+                  check_mega, check_gdrive, check_library, check_yacreader,
                   check_daemons, check_daemons_loaded):
         try:
             issues.extend(check())
@@ -481,7 +574,7 @@ def collect_tagged(state: dict) -> list[tuple[str, str, str]]:
     """
     issues: list[tuple[str, str, str]] = []
     for check in (check_vpn, check_acceptance_gate, check_free_provider, check_disk,
-                  check_mega, check_gdrive, check_library,
+                  check_mega, check_gdrive, check_library, check_yacreader,
                   check_daemons, check_daemons_loaded):
         try:
             for sev, msg in check():

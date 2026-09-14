@@ -54,7 +54,7 @@ Violating any of these has destroyed data or burned a day. They are not style pr
 2. **Never restart the reaper mid-drain.** `pgrep -f 'Torrent-Ingest/reap.py'` — any output
    means leave it alone. A single drain has run for five days.
 3. **`bash Torrent-Ingest/scripts/verify_fleet.sh` must print `ALL CHECKS PASSED` before any
-   deploy.** It is the gate. 46 blocking checks.
+   deploy.** It is the gate. 47 blocking checks.
 4. **Never deploy while an identify run is in flight** — `pgrep -f ai_runner.py`. The run is
    a subprocess of the daemon; a deploy kills it *and* the provider's daily budget with it.
 5. **The model PROPOSES, the harness DISPOSES.** `library.validate_plan` re-derives every
@@ -203,7 +203,7 @@ Every number below was measured, not estimated.
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 46 blocking checks |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 47 blocking checks |
 | `fleet_doctor` | 0 findings |
 | `fleet_health` | all clear (20:42 report) |
 | `media_doctor` | 0 shows flagged, 0 pending human/AI review |
@@ -212,7 +212,7 @@ Every number below was measured, not estimated.
 | Jellyfin | 301 series, 18,395 episodes, 444 movies |
 | Mount | Shows 300, Movies 2,663, Comics 9 — primed and serving |
 | `library.db` | 22,957 owned rows, 22,957 distinct, **0 redundant**. 25 comic/manga norm pairs → 10, all folded to the kind the pool shelves them under; the 10 that remain have no pool files to judge (the reaper now runs this after every purge) |
-| YacReader | scan-at-startup flags **on** with the supervisor enforcing them; the ElfQuest reindex is scanning (pool reads run ~3 MB/s) after the flags were found off and the re-acquisition invisible. The 2026-09-13 `FolderModel::reload` crash was a malformed folder tree -- `yacreader_index.load_order_faults` now names that shape and the repair fixes it |
+| YacReader | scan-at-startup flags **on**, supervisor enforcing them, and `fleet_health` now reports the reader's own state (crash rows, damage, flags, shelf files the index lacks) with `fleet_doctor` remedies for the two safe repairs. The ElfQuest reindex was scanning at hand-off (pool reads ~3 MB/s, 166 shelf files still behind); the 2026-09-13 `FolderModel::reload` crash was a malformed folder tree it had written itself -- `load_order_faults` names that shape, the repair fixes it, and `comic_shelf_audit` now deletes with `PRAGMA foreign_keys=ON` so it cannot be created again |
 | In flight | no identify run at deploy time; reaper running (queue empty); YacReader's startup update scanning. The held full-fleet restart from the 2026-09-13 direct-ingest ship went out with this deploy |
 | Open work | **none queued.** Read §7 before reading that as "nothing is wrong" |
 
