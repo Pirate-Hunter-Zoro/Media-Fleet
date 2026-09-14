@@ -18,6 +18,13 @@ Each cycle:
     watch state. Separately, if Jellyfin is up but its authenticated API goes
     UNANSWERED for long enough (the hang where every api_key request times out
     while unauthenticated ones answer), restart it.
+  * YacReader is held to the same freshness contract as the rest of the fleet: its
+    index only updates when the APP updates it, so this supervisor patches the
+    scan-at-startup flags before every start, bounces a running app whose flags have
+    drifted, and consumes `record_plan`'s refresh marker so comics filed while the
+    app was up are indexed instead of waiting for a random restart. A crashed app
+    (it has crashed on library reloads) is restarted with a backoff instead of a
+    tight loop, and the crash is alerted.
 
 Runs as its own KeepAlive user-agent, a sibling of db_guardian (whose Jellyfin
 control + verified backups it reuses).
@@ -218,6 +225,114 @@ def restore_gutted_jellyfin() -> None:
 
 # --- one cycle ---------------------------------------------------------------
 
+def _start_yacreader_with_scan(state: dict) -> None:
+    """Start the app with the auto-update flags ON -- the only way its index refreshes.
+
+    The flags are an enforced invariant (config.YACREADER_SCAN_SETTINGS): with both off
+    the app runs for days while every newly filed comic stays invisible, which is the
+    2026-09-14 ElfQuest report. The ini is patched while the app is DOWN because
+    YacReader rewrites the file itself on exit.
+    """
+    if yacreader_db.ensure_scan_settings():
+        log("YacReader ini: re-enabled scan-at-startup (auto-update flags had drifted)")
+    log("starting YacReader (mount primed)")
+    start_yacreader()
+    state["yac_started_at"] = time.time()
+    state["yac_stopped_by_us"] = False
+    state["yac_index_checked_at"] = 0        # probe the open index on the next tick
+
+
+def _yacreader_tick(state: dict) -> None:
+    """Mount primed and no tool holds the index lock: enforce freshness + crash policy."""
+    now = time.time()
+
+    if state.get("yac_backoff_until"):
+        if now < state["yac_backoff_until"]:
+            return
+        log("YacReader crash backoff expired; trying it again")
+        state["yac_backoff_until"] = None
+        state["yac_crashes"] = 0
+        state["yac_backoff_alerted"] = False
+
+    if yacreader_running():
+        started = state.get("yac_started_at")
+        if started is None:
+            state["yac_started_at"] = now
+        elif now - started >= config.SUPERVISOR_YAC_CRASH_WINDOW_SEC:
+            state["yac_crashes"] = 0
+        # 1. Drift in the scan flags is the "new comics never appear" fault and the app
+        #    is already up: it must be bounced for the patch AND for the startup scan.
+        if not yacreader_db.scan_settings_ok():
+            log("YacReader auto-update flags are OFF -> restarting it with a scan")
+            state["yac_stopped_by_us"] = True
+            stop_yacreader()
+            _start_yacreader_with_scan(state)
+            state["yac_last_refresh"] = now
+            return
+        # 2. Comics were filed while the app was up (record_plan's marker): bounce once
+        #    per gap, because the startup update is the only thing that indexes them.
+        try:
+            pending = config.YACREADER_REFRESH_MARKER.exists()
+        except OSError:
+            pending = False
+        if pending and (now - state.get("yac_last_refresh", 0)
+                        >= config.SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC):
+            log("comics were filed; restarting YacReader so its scan indexes them")
+            state["yac_stopped_by_us"] = True
+            stop_yacreader()
+            _start_yacreader_with_scan(state)
+            state["yac_last_refresh"] = now
+            return
+        # 3. Up but windowless: no window means `LibrariesUpdateCoordinator::init()`
+        #    never ran, so the startup update never fired and the app scans nothing --
+        #    the state a crash restore leaves. Probe the open index and activate.
+        if now - state.get("yac_index_checked_at", 0) >= config.SUPERVISOR_YAC_INDEX_CHECK_SEC:
+            state["yac_index_checked_at"] = now
+            if yacreader_db.index_open():
+                state["yac_activate_attempts"] = 0
+                state["yac_activate_alerted"] = False
+            else:
+                state["yac_activate_attempts"] = state.get("yac_activate_attempts", 0) + 1
+                log("YacReader is up but has no library open -> activating it so the "
+                    "startup update runs (attempt "
+                    f"{state['yac_activate_attempts']})")
+                yacreader_db.activate_app()
+                if state["yac_activate_attempts"] >= 5 and not state.get("yac_activate_alerted"):
+                    alert("YacReaderLibrary is running but has opened no library; the "
+                          "startup update cannot run and new comics will not be indexed.")
+                    state["yac_activate_alerted"] = True
+        return
+
+    # Down. A start that did not survive the crash window is a crash, not a quit; enough
+    # of them means the scan is crashing the app and restarting it is only thrashing.
+    started = state.get("yac_started_at")
+    if started is not None:
+        if not state.get("yac_stopped_by_us") \
+                and now - started < config.SUPERVISOR_YAC_CRASH_WINDOW_SEC:
+            state["yac_crashes"] = state.get("yac_crashes", 0) + 1
+        else:
+            state["yac_crashes"] = 0
+        state["yac_started_at"] = None
+
+    if state.get("yac_crashes", 0) >= config.SUPERVISOR_YAC_CRASH_LIMIT:
+        alert(f"YacReaderLibrary crashed {state['yac_crashes']} times within "
+              f"{config.SUPERVISOR_YAC_CRASH_WINDOW_SEC}s; holding it down for "
+              f"{config.SUPERVISOR_YAC_BACKOFF_SEC}s instead of restarting it")
+        state["yac_backoff_until"] = now + config.SUPERVISOR_YAC_BACKOFF_SEC
+        state["yac_backoff_alerted"] = True
+        state["yac_crashes"] = 0
+        return
+
+    # On the way up there is nothing to bounce: the startup update IS the refresh. The
+    # marker is consumed here because the scan that is about to run covers it.
+    _start_yacreader_with_scan(state)
+    state["yac_last_refresh"] = now
+    try:
+        config.YACREADER_REFRESH_MARKER.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def tick(state: dict) -> None:
     healthy = mount_healthy()
 
@@ -236,6 +351,7 @@ def tick(state: dict) -> None:
             db_guardian.stop_jellyfin()
         if yacreader_running():
             log("mount not ready -> stopping YacReader (must not read an unmounted library)")
+            state["yac_stopped_by_us"] = True
             stop_yacreader()
         return
 
@@ -319,19 +435,19 @@ def tick(state: dict) -> None:
     if yacreader_db.is_held():
         if yacreader_running():
             log(f"YacReader index lock held ({yacreader_db.holder()}) -> stopping YacReader")
+            state["yac_stopped_by_us"] = True
             stop_yacreader()
         return
 
-    if not yacreader_running():
-        log("starting YacReader (mount primed)")
-        start_yacreader()
+    _yacreader_tick(state)
 
 
 def print_status() -> None:
     print(f"mount:      {config.MEDIAFS_MOUNT} healthy={mount_healthy()} mounted={mount_is_mounted()}")
     print(f"Jellyfin:   {'up' if db_guardian.jellyfin_running() else 'down'} "
           f"episodes={jellyfin_episode_count()}")
-    print(f"YacReader:  {'up' if yacreader_running() else 'down'}")
+    print(f"YacReader:  {'up' if yacreader_running() else 'down'}  "
+          f"scan-at-startup={'on' if yacreader_db.scan_settings_ok() else 'OFF'}")
     held = yacreader_db.is_held()
     print(f"index lock: {'HELD by ' + (yacreader_db.holder() or '?') if held else 'free'}"
           f"{'  (YacReader is held down until it is released)' if held else ''}")
@@ -350,7 +466,12 @@ def main() -> int:
     acquire_lock()
     log("library_supervisor started")
     state = {"ready": 0, "gutted": 0, "unresponsive_since": None,
-             "scan_since": None, "scan_pct": None}
+             "scan_since": None, "scan_pct": None,
+             # YacReader freshness + crash policy (see _yacreader_tick)
+             "yac_started_at": None, "yac_stopped_by_us": False, "yac_crashes": 0,
+             "yac_backoff_until": None, "yac_backoff_alerted": False,
+             "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
+             "yac_activate_attempts": 0, "yac_activate_alerted": False}
     if args.once:
         tick(state)
         return 0

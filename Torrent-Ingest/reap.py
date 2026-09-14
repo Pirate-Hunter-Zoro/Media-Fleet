@@ -811,6 +811,11 @@ def _sweep_library_db(purged: set[str]) -> None:
     Without this a purge leaves its ownership rows behind, and the acceptance gate
     refuses the title's own re-drop as already owned. A DB problem must never fail
     the purge that already succeeded.
+
+    The same window also folds comic/manga kind-splits and supersedes comic rows the
+    pool no longer holds (`dbhook.reconcile_comics`) -- the cleanup that used to be a
+    manual `sqlite3` session. Media-Syncer is still paused here, so the inventory this
+    reads is exactly the pool state the purge just pruned.
     """
     if DRY_RUN or not purged:
         return
@@ -820,6 +825,11 @@ def _sweep_library_db(purged: set[str]) -> None:
         if res["superseded"]:
             log.info("library.db: superseded %d row(s) for %d purged path(s)",
                      res["superseded"], res["paths"])
+        rec = dbhook.reconcile_comics()
+        if rec["folded"] or rec["superseded"] or rec["dropped"]:
+            log.info("library.db comics: folded %d kind-split series, superseded %d "
+                     "absent row(s), dropped %d duplicate(s)",
+                     rec["folded"], rec["superseded"], rec["dropped"])
     except Exception as exc:  # noqa: BLE001
         log.warning("library.db sweep failed (the purge itself is unaffected): %r", exc)
 

@@ -299,6 +299,42 @@ Verified durable: after `Refresh?metadataRefreshMode=FullRefresh&replaceAllMetad
 — the most aggressive refresh Jellyfin offers — all three repaired Mushi-Shi specials
 kept their titles, premiere dates and locks, on disk and in the DB.
 
+## 5c. "I filed comics but YacReader doesn't show them"
+
+The reader never notices the filesystem on its own. A comic exists to it only after the
+APP runs a library update, and the only trigger the fleet relies on is
+`UPDATE_LIBRARIES_AT_STARTUP` in YacReader's own ini. On 2026-09-14 every ElfQuest file
+was filed, on the mount, in the pool — and invisible, because both auto-update flags read
+`false` and the app had been up since before the files landed. The supervisor now owns
+this contract (patches the flags before every start, bounces a drifted app, consumes the
+refresh marker `record_plan` drops when comics are filed, activates a crash-restored app
+that came up with no library window), so the symptom should not come back — but the
+tools exist if it does:
+
+```bash
+python3 scripts/yacreader_rescan.py            # flags + drift report (exit 1 on drift)
+python3 scripts/yacreader_rescan.py --files    # also list shelf files the index lacks
+python3 scripts/yacreader_rescan.py --apply    # lock, patch flags, request a rescan
+python3 scripts/comic_shelf_audit.py           # empty dirs, stale rows, and the same
+                                               # missing-from-index report
+```
+
+**If the reader CRASHES instead of showing nothing**, it is almost always the folder
+tree: `FolderModel::createModelData` dereferences the parent it looks up
+`ORDER BY parentId,name` with no null check, so a dangling parent, a cycle, a missing
+root, or a parent that sorts after its child is a SIGSEGV (`FolderModel::reload`; the
+2026-09-13 crash left the app up for ten hours with a stale index). Check before it
+does:
+
+```bash
+python3 scripts/yacreader_index_repair.py            # read-only: names the crash rows
+python3 scripts/yacreader_index_repair.py --apply    # lock, back up, repair, verify
+python3 scripts/yacreader_index_health.py            # integrity + the backup census
+```
+
+The repair backs the index up under a name that PASSES `integrity_check` and edits under
+the index lock; the supervisor restarts the app when the lock is released.
+
 ---
 
 ## 6. Purging something, correctly
@@ -354,9 +390,11 @@ curl -s -X DELETE -H "X-Emby-Token: $JELLYFIN_API_KEY" "$JELLYFIN_URL/Items/<id>
 **Step 8 is automatic.** The reaper marks the rows for the paths it VERIFIED gone
 `superseded` (never a survivor's: its pool copy still exists) — episodes and films by
 title/item, comics by folder chain then file stem, and a collection only when exactly one
-row could be meant. It is fail-open; a DB error is logged and cannot fail the purge. What
-still needs the reconcile command above: a comic whose folder chain and stem match no
-series, a collection in a series with several, and content absent without a purge.
+row could be meant. The same paused window then folds comic/manga kind splits to the kind
+the pool shelves the files under, and supersedes numbered comic rows the pool no longer
+holds (`dbhook.reconcile_comics`); ambiguous norms are skipped, never guessed. It is
+fail-open; a DB error is logged and cannot fail the purge. What still needs the reconcile
+command above: a collection in a series with several, and content absent without a purge.
 
 **Then, at the start of the next session, run the standing check.** A purge followed by a
 re-download leaves queue lines pointing at live content, and the reaper cannot tell them

@@ -54,7 +54,7 @@ Violating any of these has destroyed data or burned a day. They are not style pr
 2. **Never restart the reaper mid-drain.** `pgrep -f 'Torrent-Ingest/reap.py'` — any output
    means leave it alone. A single drain has run for five days.
 3. **`bash Torrent-Ingest/scripts/verify_fleet.sh` must print `ALL CHECKS PASSED` before any
-   deploy.** It is the gate. 42 blocking checks.
+   deploy.** It is the gate. 46 blocking checks.
 4. **Never deploy while an identify run is in flight** — `pgrep -f ai_runner.py`. The run is
    a subprocess of the daemon; a deploy kills it *and* the provider's daily budget with it.
 5. **The model PROPOSES, the harness DISPOSES.** `library.validate_plan` re-derives every
@@ -197,13 +197,13 @@ code cites these files by section number.
 
 ---
 
-## 6. State, verified 2026-09-13 20:46 CDT
+## 6. State, verified 2026-09-14 06:35 CDT
 
 Every number below was measured, not estimated.
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 42 blocking checks |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 46 blocking checks |
 | `fleet_doctor` | 0 findings |
 | `fleet_health` | all clear (20:42 report) |
 | `media_doctor` | 0 shows flagged, 0 pending human/AI review |
@@ -211,8 +211,9 @@ Every number below was measured, not estimated.
 | Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `47ebd43` |
 | Jellyfin | 301 series, 18,395 episodes, 444 movies |
 | Mount | Shows 300, Movies 2,663, Comics 9 — primed and serving |
-| `library.db` | 22,733 owned rows, 22,733 distinct, **0 redundant** (ElfQuest-family stale rows superseded by hand) |
-| In flight | torrent identify running back-to-back over 8 active records (LOGH, Galaxy Express 999, Harlock, Yamato 3199; Yamato 2199 verified + filed at 20:46); reaper running (queue empty). **The full-fleet restart after the 2026-09-13 direct-ingest ship is HELD while identify runs are in flight (rule 4)** — `directingest` and `directingestbridge` are already on the new code, and the shared `config.py` change they carry is additive/behavior-neutral for the torrent path |
+| `library.db` | 22,957 owned rows, 22,957 distinct, **0 redundant**. 25 comic/manga norm pairs → 10, all folded to the kind the pool shelves them under; the 10 that remain have no pool files to judge (the reaper now runs this after every purge) |
+| YacReader | scan-at-startup flags **on** with the supervisor enforcing them; the ElfQuest reindex is scanning (pool reads run ~3 MB/s) after the flags were found off and the re-acquisition invisible. The 2026-09-13 `FolderModel::reload` crash was a malformed folder tree -- `yacreader_index.load_order_faults` now names that shape and the repair fixes it |
+| In flight | no identify run at deploy time; reaper running (queue empty); YacReader's startup update scanning. The held full-fleet restart from the 2026-09-13 direct-ingest ship went out with this deploy |
 | Open work | **none queued.** Read §7 before reading that as "nothing is wrong" |
 
 ---
@@ -280,6 +281,8 @@ scripts/verify_arc_mapping.py       --show "<Show>"               # arcs beside 
 scripts/audit_provider_disagreement.py [--counts]                 # TVMaze vs TMDB, per season
 scripts/audit_unlocked_specials.py  [--show "<Show>"]             # unlocked Season-0 sidecars
 scripts/reconcile_library_db.py     [--apply] [--include-requested] # library.db; --apply WRITES
+scripts/yacreader_rescan.py         [--files] [--apply]            # reader scan flags + unindexed shelf
+scripts/yacreader_index_repair.py   [--apply]                      # crash rows in the reader index; --apply WRITES
 scripts/identify_capacity.py        --probe                       # which providers can serve
 scripts/audit_free_only.py                                        # the billing invariant
 ```

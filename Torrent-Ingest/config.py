@@ -210,10 +210,14 @@ COMIC_FRANCHISES = [
     # is an ordinary western series root: the Complete ElfQuest v01-v08 volumes sit
     # directly under it with `The Final Quest/` as a subseries, which is the layout the
     # owner asked for ("just a normal comic"). A franchise row would force every member
-    # -- the main run included -- into its own subfolder. Caveat measured that day: the
-    # identify model filed several of those volumes under `Comics/Manga/ElfQuest/`
-    # (ElfQuest is American, not manga) and they had to be moved to the western root by
-    # hand, so a future ElfQuest drop may need the same nudge.
+    # -- the main run included -- into its own subfolder.
+    #
+    # The `Comics/Manga/ElfQuest/` split measured on 2026-09-13 was NOT the model's
+    # judgement: `dbhook` recorded every comic as kind `manga`, so library.db held a
+    # duplicate `manga` ElfQuest series beside the seeded `comic` one and the placement
+    # digest showed both. Fixed at the source 2026-09-14 (`dbhook._plan_kind` reads the
+    # destination), the history is folded by the reaper's `reconcile_comics`, and a
+    # future ElfQuest drop needs no nudge.
     {
         "name": "Attack on Titan",
         "kind": "manga",
@@ -2210,6 +2214,41 @@ YACREADER_STOP_TIMEOUT_SEC = 20
 # How long a tool waits to acquire the index lock before giving up rather than blocking a
 # session forever behind a stuck holder.
 YACREADER_DB_LOCK_TIMEOUT_SEC = 120
+
+# --- YacReader scan-at-startup (the freshness half of the contract) ----------
+# YacReader only ever adds NEW comics to its index when it RUNS a library update; the app
+# never notices the filesystem on its own. On 2026-09-14 the owner's freshly-filed ElfQuest
+# was invisible in the reader because the live ini had BOTH auto-update flags `false`
+# (they were `true` in the July and Sep-05 backups), and the app had been up since before
+# the files landed. So the flags are now a supervised invariant, not a one-time setting:
+# the supervisor patches them before every start and restarts the app if it finds them
+# drifted, and `record_plan` drops the refresh marker below whenever it files comics so a
+# long-running app is bounced once (rate-limited) instead of staying blind for days.
+YACREADER_INI = (Path.home() / "Library" / "Application Support" / "YACReader" /
+                 "YACReaderLibrary" / "YACReaderLibrary.ini")
+YACREADER_SCAN_SETTINGS = {
+    "UPDATE_LIBRARIES_AT_STARTUP": "true",
+    "UPDATE_LIBRARIES_PERIODICALLY": "true",
+}
+# Written by `dbhook.record_plan` when a plan filed anything under Comics/. The supervisor
+# consumes it: app up -> bounce it (at most once per gap) so it scans; app down -> the
+# next start scans anyway, so it just clears the marker.
+YACREADER_REFRESH_MARKER = STATE_DIR / "yacreader_refresh_request"
+SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC = int(
+    os.environ.get("SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC", str(30 * 60)))
+# The app can be up with NO library window (a crash restore), in which case
+# `LibrariesUpdateCoordinator::init()` never runs and neither does the startup update --
+# the app looks healthy and scans nothing. The supervisor probes the open index at most
+# this often and activates the app when it is missing.
+SUPERVISOR_YAC_INDEX_CHECK_SEC = int(os.environ.get("SUPERVISOR_YAC_INDEX_CHECK_SEC", "60"))
+# A YacReader that dies and comes straight back is crashing, not running. Count restarts
+# inside this window; at the limit, stop restarting it, say so, and wait out the backoff
+# instead of thrashing (the app crashed twice on 2026-09-11 and once on 2026-09-13).
+SUPERVISOR_YAC_CRASH_WINDOW_SEC = int(
+    os.environ.get("SUPERVISOR_YAC_CRASH_WINDOW_SEC", "600"))
+SUPERVISOR_YAC_CRASH_LIMIT = int(os.environ.get("SUPERVISOR_YAC_CRASH_LIMIT", "3"))
+SUPERVISOR_YAC_BACKOFF_SEC = int(
+    os.environ.get("SUPERVISOR_YAC_BACKOFF_SEC", str(30 * 60)))
 
 # --- Google Drive supervisor (gdrive_supervisor.py) --------------------------
 # Light novels land in a Google Drive folder, so the Google Drive macOS app must be

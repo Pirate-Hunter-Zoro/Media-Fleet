@@ -91,6 +91,29 @@ run "blocklist orphan verdicts (fixtures)" \
 # a corruption is unrecoverable. Fixture-based, because the live index cannot exercise it.
 run "YacReader backup census (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_yacreader_backup_census.py
+# A filed comic is invisible in YacReader until the APP runs a library update, and the
+# only reliable trigger is `UPDATE_LIBRARIES_AT_STARTUP` in its own ini. On 2026-09-14
+# both auto-update flags read `false` and every ElfQuest file -- on the mount, in the
+# pool -- did not exist to the reader. The supervisor now enforces the flags and consumes
+# a refresh marker `record_plan` drops; this asserts the ini surgery is exact (all other
+# lines survive) and idempotent, and that the production callers patch under the lock.
+run "YacReader scan-at-startup enforced (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_yacreader_scan_config.py
+# The flag alone is not enough: a crash restore leaves YacReader UP WITH NO WINDOW, so
+# `LibrariesUpdateCoordinator::init()` never runs and the startup update never fires —
+# the app looks healthy while scanning nothing (measured 2026-09-14). The supervisor
+# activates it, and backs off with an alert when the app is crash-looping instead of
+# restarting forever. Driven with fake app control and a fake clock, both directions.
+run "YacReader supervisor freshness (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_supervisor_yacreader.py
+# `FolderModel::createModelData` dereferences the parent it looks up `ORDER BY
+# parentId,name` with no null check, so a dangling parent / cycle / missing root / a
+# parent that sorts after its child is a SIGSEGV inside the app -- the FolderModel::reload
+# crash of 2026-09-13 that left the index stale for ten hours. Fixture-based in both
+# directions: each crash shape is named, a healthy tree stays clean, the repair leaves a
+# loadable tree, and the freshness report sees shelf files the index lacks.
+run "YacReader index crash shapes + freshness" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_yacreader_index_shape.py
 # The two AI prompts that choose WHAT TO ACQUIRE are the only remaining open-world paths,
 # §4.146: a repair tool once REPORTED 250 repairs it never made, so the acceptance bar for
 # the guide-first filler is "prove each claimed repair changed a file", never a count. This
@@ -254,6 +277,15 @@ run "library.db upsert + reconcile guards" \
 # stem, and that a collection is dropped only when exactly one row could be meant.
 run "a verified purge supersedes its library.db rows" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_purge_db_sync.py
+# `record_plan` used to file EVERY comic as kind `manga`, so each library-seeded western
+# series acquired a duplicate `manga` twin -- 25 live norm pairs by 2026-09-14, and the
+# reason the identify model split the ElfQuest re-acquisition across `Comics/ElfQuest`
+# and `Comics/Manga/ElfQuest`. The reaper now folds the pairs after every purge; this
+# asserts the fold follows the POOL, never loses ownership in the merge, and REFUSES on
+# ambiguity (no pool files, or files under both roots) -- a false supersede reads as
+# "not owned" and invites a re-download of content already held.
+run "comic kind splits fold + fail open (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_comic_db_reconcile.py
 # The arc->season mapping the harness now COMPUTES, and the two guards that enforce it.
 # This is the acceptance gate's own check: Monogatari failed three runs because nothing
 # married the release's arcs to the provider's seasons, and the counts lined up perfectly
@@ -330,6 +362,19 @@ case $? in
   *) echo "DAMAGED -- see below (does not block shipping)" ;;
 esac
 echo "$yac_out" | sed 's/^/      /'
+
+# ---- advisory: may YacReader update its own library? ------------------------
+# Runtime state again, not a code fault: the flags are enforced by the supervisor, and a
+# drift here is what made every filed comic invisible on 2026-09-14. Printed because this
+# is the command a session runs first.
+echo
+printf '%-46s' "YacReader scan-at-startup (advisory)"
+if rescan_out="$(env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/yacreader_rescan.py 2>&1)"; then
+  echo "OK"
+else
+  echo "DRIFT -- the reader cannot index new comics (does not block shipping)"
+fi
+echo "$rescan_out" | sed 's/^/      /'
 
 echo
 if [ $fail -eq 0 ]; then

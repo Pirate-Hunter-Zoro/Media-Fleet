@@ -13,9 +13,12 @@ normal module, because it is stdlib-only by contract and must never pull a `conf
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
+
+import config
 
 # Load the searcher's stdlib-only `librarydb` by file path, WITHOUT inserting the
 # searcher's directory onto sys.path. Inserting it shadowed this repo's own `ingest`/
@@ -28,7 +31,14 @@ librarydb = _ilu.module_from_spec(_librarydb_spec)
 sys.modules["librarydb"] = librarydb
 _librarydb_spec.loader.exec_module(librarydb)
 
-_KIND = {"show": "anime", "movie": "movie", "comic": "manga",
+# `comic` is deliberately NOT in this map's reach any more. A comic plan's DB kind
+# depends on WHERE it is filed: `Comics/Manga/<Series>/` is a manga, `Comics/<Series>/`
+# is a western comic. The old blanket `"comic": "manga"` created a duplicate `manga`
+# series beside every library-seeded western one -- 25 live norm pairs by 2026-09-14,
+# and the reason the identify model then split the ElfQuest re-acquisition across
+# `Comics/ElfQuest` and `Comics/Manga/ElfQuest`. `_comic_kind()` reads the plan's own
+# destinations instead.
+_KIND = {"show": "anime", "movie": "movie",
          "novel": "lightnovel", "mixed": "anime"}
 
 _EP = re.compile(r"[Ss]\d+[Ee](\d+)")
@@ -280,6 +290,48 @@ def record_purge(relpaths) -> dict:
         conn.close()
 
 
+def _comic_kind(plan: dict) -> str | None:
+    """`manga`/`comic` from where the plan's own files land; None when none are comics.
+
+    The destination is the only witness that survives `apply_plan`: a manga is filed under
+    `Comics/Manga/`, a western comic directly under `Comics/`. Anything mixed falls back to
+    `comic` (the western root), which is the safe side of the ElfQuest split.
+    """
+    rels = [str(f.get("dst_rel") or "") for f in (plan.get("files") or [])]
+    comics = [r for r in rels if r.startswith("Comics/")]
+    if not comics:
+        return None
+    manga = [r for r in comics if r.startswith("Comics/Manga/")]
+    return "manga" if len(manga) == len(comics) else "comic"
+
+
+def _plan_kind(plan: dict) -> str:
+    media_type = plan.get("media_type")
+    if media_type == "comic":
+        return _comic_kind(plan) or "comic"
+    if media_type == "mixed":
+        return _comic_kind(plan) or _KIND.get(media_type, "anime")
+    return _KIND.get(media_type, "anime")
+
+
+def _request_yacreader_refresh(plan: dict) -> None:
+    """Drop the marker `library_supervisor` watches so YacReader re-indexes new comics.
+
+    The app never notices the filesystem on its own, and with a stale index a filed comic
+    simply does not exist to the reader (the 2026-09-14 ElfQuest report). The supervisor
+    consumes this on its next tick. Never raises.
+    """
+    if not any(str(f.get("dst_rel") or "").startswith("Comics/")
+               for f in (plan.get("files") or [])):
+        return
+    try:
+        config.YACREADER_REFRESH_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        config.YACREADER_REFRESH_MARKER.write_text(
+            f"comics filed at {librarydb.now()}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def record_plan(plan: dict) -> None:
     """Mirror a successfully-applied plan into the library DB. Never raises: a DB write
     problem must not undo an already-filed torrent."""
@@ -291,8 +343,7 @@ def record_plan(plan: dict) -> None:
     except Exception:  # noqa: BLE001
         return
     try:
-        sid = librarydb.add_series(conn, title, _KIND.get(plan.get("media_type"), "anime"),
-                                   source="ingest")
+        sid = librarydb.add_series(conn, title, _plan_kind(plan), source="ingest")
         for f in plan.get("files") or []:
             try:
                 _record_file(conn, sid, f)
@@ -304,7 +355,185 @@ def record_plan(plan: dict) -> None:
             except Exception:  # noqa: BLE001
                 continue
         conn.commit()
+        _request_yacreader_refresh(plan)
     except Exception:  # noqa: BLE001
         conn.rollback()
     finally:
         conn.close()
+
+
+# --- comic-kind reconciliation (the reaper's other half) ----------------------
+#
+# WHY THIS EXISTS
+#     `record_plan` used to record EVERY comic as kind `manga`, so each western series
+#     the library had already seeded as kind `comic` acquired a duplicate `manga` twin --
+#     25 live norm pairs by 2026-09-14, and the reason the identify model split the
+#     ElfQuest re-acquisition across `Comics/ElfQuest` and `Comics/Manga/ElfQuest`. The
+#     kind is fixed at the source now, but the history remains: owned rows sit under the
+#     wrong twin, and the twin that owns them can steer a future drop into the wrong root.
+#
+#     The reaper calls `reconcile_comics()` after every verified purge, so a title's
+#     cleanup now includes its DB kind split -- the manual `sqlite3` session the owner
+#     had to ask for (2026-09-14) is not part of the runbook any more.
+#
+# WHAT MAKES THIS SAFE
+#     The only witness used is the POOL, and only when it is unambiguous: a norm whose
+#     files all live under one root is folded to that kind; a norm with files under both
+#     roots, or none at all, is left alone. Item-level supersede needs a numbered series
+#     (a comic filename with no `vNN`/`cNNN` has no key, so `collection` rows are never
+#     judged). Every failure is fail-open: a broken inventory or one odd norm cannot
+#     touch the ledger, and the purge it followed is unaffected.
+
+_COMIC_EXT = tuple(config.COMIC_EXTENSIONS)
+
+
+def comic_inventory(inventory_path=None) -> dict:
+    """`{norm: {"kinds": {...}, "volumes": {...}, "chapters": {...}}}` from the pool.
+
+    Every file is attributed to EVERY folder-chain join candidate -- the same matcher a
+    purge uses -- because a comic series nests at an unpredictable depth
+    (`Comics/Star Wars Comics/Star Wars Modern Era Epic Collection/Darth Vader/...`).
+    """
+    path = Path(inventory_path) if inventory_path else config.MEDIA_SYNCER_INVENTORY
+    try:
+        keys = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out: dict = {}
+    for rel in keys:
+        parts = str(rel).split("/")
+        if len(parts) < 2 or parts[0] != "Comics":
+            continue
+        name = parts[-1]
+        if not name.lower().endswith(_COMIC_EXT):
+            continue
+        root_kind = "manga" if parts[1] == "Manga" else "comic"
+        for cand in _comic_candidates(parts, name):
+            norm = librarydb._normalize(cand)
+            if not norm:
+                continue
+            e = out.setdefault(norm, {"kinds": set(), "volumes": set(), "chapters": set()})
+            e["kinds"].add(root_kind)
+            m = _VOL.search(name)
+            if m:
+                e["volumes"].add(int(m.group(1)))
+                continue
+            m = _CH.search(name) or _C_BARE.search(name) or _HASH.search(name)
+            if m:
+                e["chapters"].add(int(m.group(1)))
+    return out
+
+
+def fold_comic_pairs(conn, inv: dict) -> dict:
+    """Fold each same-norm comic/manga pair into the kind the pool shelves its files under.
+
+    Rows move to the survivor; a row whose item is already recorded there is dropped
+    (never losing ownership: if the survivor's copy was superseded and the loser's is
+    owned, the survivor's row becomes owned first). Torrents and aliases follow. A pair
+    whose norm the inventory cannot place, or places under both roots, is skipped.
+    """
+    res = {"folded": 0, "moved": 0, "dropped": 0, "skipped": 0}
+    groups: dict[str, list] = {}
+    for r in conn.execute("SELECT id,name,norm,kind FROM series "
+                          "WHERE kind IN ('comic','manga') ORDER BY id").fetchall():
+        groups.setdefault(r["norm"], []).append(r)
+    for _norm, group in sorted(groups.items()):
+        if {r["kind"] for r in group} != {"comic", "manga"}:
+            continue
+        entry = inv.get(_norm)
+        if not entry or len(entry["kinds"]) != 1:
+            res["skipped"] += 1
+            continue
+        target_kind = next(iter(entry["kinds"]))
+        target = next(r for r in group if r["kind"] == target_kind)
+        for loser in (r for r in group if r["id"] != target["id"]):
+            for m in conn.execute(
+                    "SELECT id,mtype,season,number,status FROM media WHERE series_id=?",
+                    (loser["id"],)).fetchall():
+                dup = conn.execute(
+                    "SELECT id,status FROM media WHERE series_id=? AND mtype IS ? "
+                    "AND season IS ? AND number IS ? ORDER BY id",
+                    (target["id"], m["mtype"], m["season"], m["number"])).fetchall()
+                if dup:
+                    keep = dup[0]
+                    if m["status"] == "owned" and keep["status"] != "owned":
+                        conn.execute("UPDATE media SET status='owned' WHERE id=?",
+                                     (keep["id"],))
+                    conn.execute("DELETE FROM media WHERE id=?", (m["id"],))
+                    res["dropped"] += 1
+                else:
+                    conn.execute("UPDATE media SET series_id=? WHERE id=?",
+                                 (target["id"], m["id"]))
+                    res["moved"] += 1
+            conn.execute("UPDATE torrents SET series_id=? WHERE series_id=?",
+                         (target["id"], loser["id"]))
+            for alias, anorm in conn.execute(
+                    "SELECT alias,norm FROM series_alias WHERE series_id=?",
+                    (loser["id"],)).fetchall():
+                conn.execute("INSERT OR IGNORE INTO series_alias (series_id,alias,norm) "
+                             "VALUES (?,?,?)", (target["id"], alias, anorm))
+            conn.execute("DELETE FROM series_alias WHERE series_id=?", (loser["id"],))
+            conn.execute("DELETE FROM series WHERE id=?", (loser["id"],))
+            res["folded"] += 1
+    return res
+
+
+def supersede_absent_comics(conn, inv: dict) -> dict:
+    """Supersede numbered comic rows the pool no longer holds. Fail-open by design.
+
+    Only a series the pool places under exactly ONE root and with at least one numbered
+    item is judged. `collection` rows (no marker in the filename) are never touched, and
+    a norm with no pool files is not judged at all -- the unverifiable is skipped, not
+    guessed, which is the rule the manual reconcile already follows.
+    """
+    res = {"superseded": 0, "judged_series": 0}
+    for r in conn.execute("SELECT id,norm FROM series "
+                          "WHERE kind IN ('comic','manga') ORDER BY id").fetchall():
+        entry = inv.get(r["norm"])
+        if not entry or len(entry["kinds"]) != 1:
+            continue
+        if not (entry["volumes"] or entry["chapters"]):
+            continue
+        keys = {librarydb.item_key("volume", None, n) for n in entry["volumes"]}
+        keys |= {librarydb.item_key("chapter", None, n) for n in entry["chapters"]}
+        res["judged_series"] += 1
+        for m in librarydb.owned_media(conn, r["id"]):
+            if m["mtype"] not in ("volume", "chapter"):
+                continue
+            if librarydb.item_key(m["mtype"], m["season"], m["number"]) not in keys:
+                conn.execute("UPDATE media SET status='superseded' WHERE id=?", (m["id"],))
+                res["superseded"] += 1
+    return res
+
+
+def reconcile_comics(conn=None, inventory_path=None) -> dict:
+    """Fold kind-split comic series and supersede absent items on one connection.
+
+    Called by the reaper after every verified purge (`_sweep_library_db`) and by
+    `scripts/reconcile_library_db.py --apply`. Never raises: the purge it follows must
+    not fail because the ledger could not be tidied.
+    """
+    empty = {"folded": 0, "moved": 0, "dropped": 0, "skipped": 0,
+             "superseded": 0, "judged_series": 0}
+    inv = comic_inventory(inventory_path)
+    if not inv:
+        return dict(empty, note="no comic inventory")
+    own = conn is None
+    if own:
+        try:
+            conn = librarydb.connect()
+        except Exception:  # noqa: BLE001
+            return dict(empty, note="library.db unopenable")
+    try:
+        res = fold_comic_pairs(conn, inv)
+        res.update(supersede_absent_comics(conn, inv))
+        if own:
+            conn.commit()
+        return res
+    except Exception:  # noqa: BLE001
+        if own:
+            conn.rollback()
+        return dict(empty, note="reconcile failed")
+    finally:
+        if own:
+            conn.close()

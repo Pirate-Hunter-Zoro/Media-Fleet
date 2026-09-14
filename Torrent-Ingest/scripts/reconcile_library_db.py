@@ -313,11 +313,20 @@ def main() -> int:
 
     if not args.skip_stale:
         res = stale_pass(conn, inv, include_requested=args.include_requested)
+        # Comics get their own pass: their inventory nests at unknown depth and only the
+        # POOL can say which root a series belongs to, so the parser lives in dbhook next
+        # to the purge matcher. It folds comic/manga kind-split pairs (the `record_plan`
+        # bug) and supersedes numbered rows the pool no longer holds. Fail-open.
+        rec = dbhook.reconcile_comics(conn, REMOTE_INVENTORY)
         conn.commit()
         print(f"stale pass: {res['superseded']} row(s) superseded, "
               f"{res['restored']} restored, {res['skipped_series']} series skipped "
               f"(unverifiable kind)"
               + ("  [--include-requested]" if args.include_requested else ""))
+        print(f"comic pass: {rec['folded']} kind-split series folded, "
+              f"{rec['superseded']} absent row(s) superseded, "
+              f"{rec['dropped']} duplicate(s) dropped, {rec['skipped']} pair(s) skipped"
+              + (f"  [{rec['note']}]" if rec.get("note") else ""))
 
     owned_after = conn.execute(
         "SELECT COUNT(*) FROM media WHERE status = 'owned'").fetchone()[0]
