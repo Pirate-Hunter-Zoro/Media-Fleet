@@ -23,5 +23,17 @@
     <string>/Users/mikeyferguson/Library/Logs/DirectIngest.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/mikeyferguson/Library/Logs/DirectIngest.err</string>
+    <!-- Post-ingest Jellyfin rescan for the video half of direct ingest (compiled
+         movies/episodes now land in Shows/Movies just like a torrent's). Without these
+         the daemon skips the nudge and waits on Jellyfin's own scan. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>JELLYFIN_URL</key>
+        <string>http://127.0.0.1:8096</string>
+        <key>JELLYFIN_API_KEY</key>
+        <string>__JELLYFIN_API_KEY__</string>
+    </dict>
 </dict>
 </plist>
