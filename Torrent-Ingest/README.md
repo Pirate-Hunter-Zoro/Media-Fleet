@@ -295,12 +295,21 @@ when the bencode will not parse that filename **is** the hash. So
 `magnet:?xt=urn:btih:<name>` from the filename, lifts the display name and
 announce-list out of the partial bencode (`qbt.salvage_from_truncated_file` — the
 info dict's `name` and the top-level `announce-list` sit before the cut), registers
-it through the normal QUEUED magnet path, and files the dead bytes under `failed/`
-for inspection (the janitor prunes them after its grace). qBittorrent then pulls the
-**real** metadata from the swarm, exactly as it would for a `.magnet` drop, and the
-pipeline proceeds. This is the fallback the searcher used to provide — it wrote a
-sibling `.magnet` whenever a `.torrent` cache served a truncated file — restored to
-ingest itself when the searcher was deleted on 2026-09-10.
+it through the normal QUEUED magnet path, and **removes the dead bytes** — a
+recovered drop must not sit in `failed/` reading as a failure while its torrent is
+queued and downloading. qBittorrent then pulls the **real** metadata from the swarm,
+exactly as it would for a `.magnet` drop, and the pipeline proceeds. This is the
+fallback the searcher used to provide — it wrote a sibling `.magnet` whenever a
+`.torrent` cache served a truncated file — restored to ingest itself when the
+searcher was deleted on 2026-09-10.
+
+**A repeat drop of the dead bytes is discarded, not recovered again.** The bytes are
+only a retry signal for a hash with no live record; when the hash is already
+queued/downloading, `_recover_truncated_torrent` sees it and unlinks the duplicate,
+logged `Removed dead truncated .torrent … is already <status> in the journal`. A
+duplicate `.magnet` for a live hash is filed beside its record instead of stranding
+at the top of the watch folder. Only a terminal record (COMPLETED/FAILED/REFUSED) is
+re-queued from a re-drop, per the normal re-drop rule.
 
 **Without a hash in the name there is nothing to recover.** That drop is moved into
 `failed/` and logged `Filed unreadable .torrent under failed/`. Filing is
@@ -309,9 +318,8 @@ bytes, so lifting it back into the watch folder re-runs the same parse and it la
 back in `failed/` within a cycle. A `.torrent` that keeps returning to `failed/` is
 truncated and cannot be recovered: **replace the file, do not re-drop it.** Re-drop
 is the retry signal for a torrent that failed *downstream* of parsing; there is
-nothing to retry here. (A hash-named file that keeps returning has a different
-problem: its magnet never resolved — see the `MAGNET_METADATA_ABANDON_SEC` failure
-on the record.)
+nothing to retry here. (A hash-named file that keeps returning is not this case —
+its recovery discards the duplicate and says so in the log.)
 
 `config.UNPARSEABLE_GRACE_SEC` (120 s) keeps that from catching a drop mid-flight.
 A file iCloud is still materializing can be readable-but-incomplete for a few
@@ -1451,10 +1459,10 @@ its id; this is not a way to skip the lookup.
 
 ---
 
-## Placement guards: the season ceiling and the franchise namespace
+## Placement guards: the season ceiling, the same-episode collision, and the franchise namespace
 
-Two deterministic guards in `library.validate_plan`. Both are free — no AI call, no paid
-API — and both were narrowed against the whole history before shipping, because the first
+Three deterministic guards in `library.validate_plan`. All are free — no AI call, no paid
+API — and all were narrowed against the whole history before shipping, because the first
 draft of each rejected work the library had accepted correctly.
 
 ### The season ceiling (`_reject_season_gap`)
@@ -1481,6 +1489,26 @@ Verified by replaying all 748 historical plans (`scripts/test_placement_guards.p
 accepted, 2 rejected, and both rejections are known-wrong plans. An earlier, broader version
 of the same rule rejected 55 — 54 of them false positives — which is why the replay is a
 checked-in test and should be run before any change here.
+
+### The same-episode collision (`_reject_same_episode`)
+
+**Two distinct video files may not claim one `SxxEyy` of one show in a regular season.**
+Jellyfin resolves one episode per number, so the second file is either a duplicate or a
+misnumbering. On 2026-09-15 it was the misnumbering: the release names every part of a
+serial `Doctor Who - S01E05 (005) - The Keys of Marinus (1..6) - …`, and the model copied
+the **serial** number onto all six parts instead of continuing the library's per-part run
+(An Unearthly Child Parts 1-4 were already E01-E04). Every later wave then shifted to fit
+around the collision, so the whole season was corrupt by the time `library_health` flagged
+it.
+
+The guard is keyed by SHOW, not season+episode: a multi-show pack (Steins;Gate + Steins;Gate
+0) legitimately files the same episode number into two different show folders. Season 00 is
+exempt — a special split across `- part1`/`- part2` is accepted content here (Kaguya-sama
+S00E06), and every multi-part *regular* episode already in the library (The Office, The Bad
+Batch, Star Wars Rebels) is numbered consecutively, which is exactly what the refusal asks
+the next provider to do. Replayed over all 820 accepted journal plans: 0 rejected; the
+Doctor Who wave that caused the repair is rejected. `scripts/test_placement_guards.py`
+carries both directions.
 
 ### The franchise namespace (`_reject_comic_at_franchise_root`)
 

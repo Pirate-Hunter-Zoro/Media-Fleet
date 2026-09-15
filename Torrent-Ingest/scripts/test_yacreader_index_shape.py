@@ -16,6 +16,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -182,6 +183,49 @@ no_inv = yacreader_index.unindexed_files(fresh, TMP / "missing-inventory.json", 
 check("an unreadable inventory degrades to the mount, never raises",
       "ElfQuest/ElfQuest v03.cbr" in no_inv
       and "ElfQuest/ElfQuest v02.cbr" not in no_inv)
+
+print()
+print("=== freshness: NFC/NFD paths are the same file ===")
+
+# The index stores COMPOSED paths (Qt writes them), while APFS/FUSE and the pool
+# inventory hand out DECOMPOSED ones. Raw set comparison reported an already-indexed
+# `Nausicaä v01.cbr` as missing forever -- which drove fleet_doctor to bounce the reader
+# every 15 minutes and the supervisor to activate it every minute (2026-09-15).
+nfc = "Manga/Nausicaä of the Valley of the Wind/Nausicaä of the Valley of the Wind v01.cbr"
+nfd = unicodedata.normalize("NFD", nfc)
+check("the fixture really is composed vs decomposed", nfc != nfd)
+empty_mount = TMP / "empty-mount"
+
+nfc_db = build("nfc-index.ydb", [
+    (1, 1, "root", "/"),
+    (2, 1, "Manga", "/Manga"),
+], comics=[(1, 2, 1, "v01.cbr", "/" + nfc)])
+
+
+def _inv(name, *paths):
+    p = TMP / name
+    p.write_text(json.dumps({f"Comics/{x}": {} for x in paths}))
+    return p
+
+
+check("NFC index vs NFD shelf is NOT reported missing",
+      yacreader_index.unindexed_files(nfc_db, _inv("nfd.json", nfd), empty_mount,
+                                      include_mount=False) == [])
+
+nfd_db = build("nfd-index.ydb", [
+    (1, 1, "root", "/"),
+    (2, 1, "Manga", "/Manga"),
+], comics=[(1, 2, 1, "v01.cbr", "/" + nfd)])
+check("NFD index vs NFC shelf is NOT reported missing (both ways)",
+      yacreader_index.unindexed_files(nfd_db, _inv("nfc.json", nfc), empty_mount,
+                                      include_mount=False) == [])
+
+check("a genuinely missing file is still reported",
+      yacreader_index.unindexed_files(
+          nfc_db, _inv("other.json", "Manga/Some Series/Some Series v01.cbz"),
+          empty_mount, include_mount=False) == ["Manga/Some Series/Some Series v01.cbz"])
+check("index_names normalizes to NFC",
+      all(unicodedata.is_normalized("NFC", n) for n in yacreader_index.index_names(nfd_db)))
 
 print()
 if failures:

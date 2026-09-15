@@ -20,12 +20,18 @@ adrift on DHT alone.
 
 **Part 2 -- the recovery end to end.** Through `register_new_torrents`, in a temp tree:
 the drop becomes a QUEUED magnet record, its URI parses to the filename's hash, the dead
-bytes land under failed/, and nothing is left at the top of the watch folder.
+bytes are REMOVED (a recovered drop must not sit in `failed/` looking like a failure),
+and nothing is left at the top of the watch folder.
 
 **Part 3 -- the negatives that keep it from eating work.** A drop still inside the iCloud
 sync grace is left for the next cycle; a truncated drop with no hash in its name still
 takes the old failed/ path; and a HEALTHY hash-named `.torrent` is still registered as a
 `.torrent` -- the recovery must not hijack every drop whose name looks like a hash.
+
+**Part 4 -- repeat drops.** Re-dropping the dead bytes once the hash is live discards the
+duplicate instead of registering the torrent twice, and a duplicate `.magnet` for a live
+hash is filed beside its record instead of stranding at the top of the watch folder --
+both observed on 2026-09-14/15, both of which make a working torrent look failed.
 
     python3 scripts/test_truncated_torrent_recovery.py
 
@@ -253,8 +259,8 @@ def part2(src, info_hash, name, trackers):
 
     magnet = dirs["queued"] / f"{info_hash.upper()}.magnet"
     check("magnet filed under queued/", magnet.exists(), True)
-    check("dead .torrent filed under failed/",
-          (dirs["failed"] / drop.name).exists(), True)
+    check("dead bytes removed, not filed under failed/",
+          (drop.exists(), (dirs["failed"] / drop.name).exists()), (False, False))
     check("watch folder top is clear", drop.exists(), False)
     check("a record was registered under the filename hash", list(records), [info_hash])
     rec = records.get(info_hash) or {}
@@ -337,6 +343,70 @@ def part3(src, info_hash):
           (bool(rec), "magnet" in rec), (True, False))
 
 
+# --------------------------------------------------------------------------------------
+# Part 4: repeat drops of dead bytes, and duplicate magnets for a live hash
+# --------------------------------------------------------------------------------------
+
+def _stage_recovered(dirs, src, info_hash, loglines):
+    """Run one recovery in a fresh tree and return the records dict it produced."""
+    unpatch, _ = _patched(dirs, loglines)
+    drop = dirs["torrents"] / f"{info_hash}.torrent"
+    drop.write_bytes(src[:-64])
+    old = time.time() - config.UNPARSEABLE_GRACE_SEC - 60
+    os.utime(drop, (old, old))
+    records: dict = {}
+    try:
+        ingest.register_new_torrents(records)
+    finally:
+        unpatch()
+    return records, drop
+
+
+def part4(src, info_hash):
+    print("Part 4: repeat drops of a recovered torrent")
+
+    # The owner re-drops the dead .torrent while the hash is live. It must be discarded,
+    # not recovered again, not registered twice, and not left in failed/.
+    base = Path(tempfile.mkdtemp(prefix="trunc-redrop-"))
+    dirs = _make_tree(base)
+    loglines: list[str] = []
+    records, drop = _stage_recovered(dirs, src, info_hash, loglines)
+    drop.write_bytes(src[:-64])
+    old = time.time() - config.UNPARSEABLE_GRACE_SEC - 60
+    os.utime(drop, (old, old))
+    unpatch, _ = _patched(dirs, loglines)
+    try:
+        ingest.register_new_torrents(records)             # the re-drop
+    finally:
+        unpatch()
+    check("re-dropped dead bytes are removed",
+          (drop.exists(), (dirs["failed"] / drop.name).exists()), (False, False))
+    check("re-drop does not register the hash twice", len(records), 1)
+    check("re-drop writes no second magnet",
+          sorted(p.name for p in dirs["queued"].iterdir()), [f"{info_hash}.magnet"])
+    check("re-drop says re-dropping changes nothing",
+          any("re-dropping the dead bytes changes nothing" in line for line in loglines),
+          True)
+
+    # A duplicate `.magnet` for a live hash -- the shape the 2026-09-14 second recovery
+    # left stranded at the top of the watch folder. It must be filed beside the record.
+    base = Path(tempfile.mkdtemp(prefix="trunc-dupmagnet-"))
+    dirs = _make_tree(base)
+    loglines = []
+    records, _ = _stage_recovered(dirs, src, info_hash, loglines)
+    dup = dirs["torrents"] / f"{info_hash}.magnet"
+    dup.write_text(f"magnet:?xt=urn:btih:{info_hash}\n", encoding="utf-8")
+    unpatch, _ = _patched(dirs, loglines)
+    try:
+        ingest.register_new_torrents(records)
+    finally:
+        unpatch()
+    check("duplicate .magnet is filed, not stranded at the top", dup.exists(), False)
+    check("duplicate .magnet does not register the hash twice", len(records), 1)
+    check("one magnet remains under queued/",
+          sorted(p.name for p in dirs["queued"].iterdir()), [f"{info_hash}.magnet"])
+
+
 def main() -> int:
     print("=== truncated-drop recovery ===")
     picked = _pick_source()
@@ -344,6 +414,7 @@ def main() -> int:
     if src is not None:
         part2(src, info_hash, name, picked[4])
         part3(src, info_hash)
+        part4(src, info_hash)
     for p in _TEMP_FILES:
         p.unlink(missing_ok=True)
     print()

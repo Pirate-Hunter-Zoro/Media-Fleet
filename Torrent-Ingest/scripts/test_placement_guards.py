@@ -168,7 +168,74 @@ def test_comics() -> int:
     return 1 if bad else 0
 
 
+def test_same_episode() -> int:
+    """The same-episode guard: catches the serial collapse, allows every accepted shape."""
+    def entry(show, season, episode, name):
+        return {"dst_rel": f"Shows/{show}/Season {season:02d}/{name}",
+                "season": season, "episode": episode, "src": f"/dl/{name}"}
+
+    # The 2026-09-15 Doctor Who (1963) shape, compressed: six parts of one serial, all
+    # filed under the release's serial number.
+    dw = [entry("Doctor Who (1963)", 1, 5,
+                f"Doctor Who (1963) - S01E05 - The Keys of Marinus ({i}) - part.avi")
+          for i in range(1, 7)]
+    try:
+        library._reject_same_episode({}, dw)
+        print("  FAIL: a serial collapsed onto one episode was accepted")
+        return 1
+    except library.PlanError:
+        print("  ok  a multi-part serial collapsed onto one episode is rejected")
+
+    # The same episode number in two different SHOWS is a multi-show pack, not a collision.
+    multi = [entry("Steins;Gate (2011)", 1, 1, "Steins;Gate (2011) - S01E01.mkv"),
+             entry("Steins;Gate 0 (2018)", 1, 1, "Steins;Gate 0 (2018) - S01E01.mkv")]
+    try:
+        library._reject_same_episode({}, multi)
+        print("  ok  one episode number in two different shows is allowed")
+    except library.PlanError as exc:
+        print(f"  FAIL: a multi-show pack was rejected: {exc}")
+        return 1
+
+    # A split special in Season 00 is accepted content (Kaguya-sama S00E06, in the library).
+    special = [entry("Kaguya-sama - Love Is War (2019)", 0, 6,
+                     "Kaguya-sama - Love Is War (2019) - S00E06-Stairway to Adulthood - part1.mkv"),
+               entry("Kaguya-sama - Love Is War (2019)", 0, 6,
+                     "Kaguya-sama - Love Is War (2019) - S00E06-Stairway to Adulthood - part2.mkv")]
+    try:
+        library._reject_same_episode({}, special)
+        print("  ok  a two-part Season-00 special is allowed")
+    except library.PlanError as exc:
+        print(f"  FAIL: an accepted Season-00 special shape was rejected: {exc}")
+        return 1
+
+    # The library's own convention for regular multi-parters: consecutive numbers.
+    consecutive = [entry("The Office (US) (2005)", 5, 14, "S05E14 - Lecture Circuit (1).mkv"),
+                   entry("The Office (US) (2005)", 5, 15, "S05E15 - Lecture Circuit (2).mkv")]
+    try:
+        library._reject_same_episode({}, consecutive)
+        print("  ok  consecutively numbered parts pass")
+    except library.PlanError:
+        print("  FAIL: consecutively numbered parts were rejected")
+        return 1
+
+    # False-positive half: no plan the library accepted may now be rejected.
+    total = rejected = 0
+    for _ih, r in _journal_plans().items():
+        plan = r.get("plan")
+        if not isinstance(plan, dict) or not (plan.get("files") or []):
+            continue
+        total += 1
+        try:
+            library._reject_same_episode(plan, plan["files"])
+        except library.PlanError:
+            rejected += 1
+    print(f"\nsame-episode guard: {total} accepted plans replayed, {rejected} rejected")
+    if rejected:
+        print("  FAIL: plan(s) the library accepted are now rejected")
+    return 1 if rejected else 0
+
+
 if __name__ == "__main__":
-    rc = test_known_bad() | test_seasons() | test_comics()
+    rc = test_known_bad() | test_seasons() | test_comics() | test_same_episode()
     print("\nPASS" if rc == 0 else "\nFAIL")
     raise SystemExit(rc)

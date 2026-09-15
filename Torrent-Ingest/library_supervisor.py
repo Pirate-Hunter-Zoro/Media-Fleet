@@ -157,7 +157,11 @@ stop_yacreader = yacreader_db.stop_app
 
 
 def start_yacreader() -> None:
-    subprocess.run(["/usr/bin/open", "-a", config.YACREADER_APP_NAME], capture_output=True)
+    # `-g` launches WITHOUT bringing the app to the foreground. The scan does not need
+    # the window to exist (the startup update was observed running windowless), and the
+    # owner does not want a reader he did not open covering whatever he was doing.
+    subprocess.run(["/usr/bin/open", "-g", "-a", config.YACREADER_APP_NAME],
+                   capture_output=True)
 
 
 def jellyfin_episode_count() -> int | None:
@@ -291,6 +295,16 @@ def _yacreader_tick(state: dict) -> None:
         #    one through this filesystem. Activating mid-update must never happen -- the
         #    index flickers closed between operations and a model reload can collide
         #    with the update transaction (the 2026-09-14 wedge).
+        #
+        #    Activation is BOUNDED, not repeated: it steals focus, and the app it is
+        #    "repairing" may simply have nothing to scan. On 2026-09-15 a stale-index
+        #    false positive (the NFC/NFD comparison in yacreader_index, since fixed) had
+        #    the doctor bouncing the reader every 15 minutes while this branch activated
+        #    it every 60s for hours -- attempt 89 and counting -- so the owner's screen
+        #    was repeatedly taken over by a reader with nothing wrong with it. Two
+        #    attempts are enough for a genuine crash restore to get its window; after
+        #    that the alert stands and the supervisor leaves the app alone until its
+        #    next start.
         if now - state.get("yac_index_checked_at", 0) >= config.SUPERVISOR_YAC_INDEX_CHECK_SEC:
             state["yac_index_checked_at"] = now
             if yacreader_db.update_in_progress():
@@ -298,13 +312,14 @@ def _yacreader_tick(state: dict) -> None:
                 state["yac_activate_alerted"] = False
             elif started is not None \
                     and now - started <= config.SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC:
-                state["yac_activate_attempts"] = \
-                    state.get("yac_activate_attempts", 0) + 1
-                log("YacReader just started and no update is running -> activating it so "
-                    "the library window (and its startup update) exist (attempt "
-                    f"{state['yac_activate_attempts']})")
-                yacreader_db.activate_app()
-                if state["yac_activate_attempts"] >= 5 \
+                attempts = state.get("yac_activate_attempts", 0)
+                if attempts < config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS:
+                    state["yac_activate_attempts"] = attempts + 1
+                    log("YacReader just started and no update is running -> activating it "
+                        "so the library window (and its startup update) exist (attempt "
+                        f"{state['yac_activate_attempts']})")
+                    yacreader_db.activate_app()
+                if state["yac_activate_attempts"] >= config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS \
                         and not state.get("yac_activate_alerted"):
                     alert("YacReaderLibrary started but has opened no library; the "
                           "startup update cannot run and new comics will not be "

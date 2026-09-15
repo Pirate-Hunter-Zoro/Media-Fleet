@@ -28,6 +28,16 @@ can `ListDir`/`Read` it). If it does:
   in one continuous `Season 01` (e.g. Jujutsu Kaisen has ~47 episodes as
   S01E01–S01E47), then a torrent labelled "S03E01" is the *next* episode in that
   one season — continue the numbering (S01E48, …), do **not** create a Season 03.
+- **A repeated SxxEyy with a `(1)`/`(2)`/`Part N` suffix is a STORY number, not an
+  episode number.** Multi-part serials (classic Doctor Who, old ITV/ABC dramas,
+  many anime OVAs) ship every part named `... S01E05 - The Keys of Marinus (1) …
+  (2) … (6)`, where `S01E05` is the release's *serial* index. Do **not** copy that
+  number onto every part, and do not treat the parts as one episode: give each part
+  its own CONSECUTIVE episode number, continuing the library's own run, exactly as
+  the library already numbers its other multi-parters (e.g. An Unearthly Child
+  Parts 1-4 = S01E01-S01E04, so The Keys of Marinus Parts 1-6 = S01E05-S01E10).
+  Two distinct video files may never share one `SxxEyy` of a show in a regular
+  season; the harness rejects such a plan and hands you this message back.
 - **The library's season NUMBER is ground truth, not the torrent's label — and the
   season count PER SEASON tells you which scheme it uses.** The digest lists each
   existing season with its episode count (e.g. `Season 01 (20 eps), Season 02

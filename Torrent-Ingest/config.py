@@ -2246,6 +2246,13 @@ SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC = int(
 SUPERVISOR_YAC_INDEX_CHECK_SEC = int(os.environ.get("SUPERVISOR_YAC_INDEX_CHECK_SEC", "60"))
 SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC = int(
     os.environ.get("SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC", "600"))
+# Activation itself is BOUNDED: it brings the reader to the front, and the app it is
+# "repairing" may simply have nothing to scan (on 2026-09-15 a stale-index false positive
+# kept this branch firing every 60s for hours -- attempt 89 -- stealing the owner's
+# screen). Two attempts are enough for a genuine crash restore to get its window; after
+# that the alert stands and nothing else touches the app until its next start.
+SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS = int(
+    os.environ.get("SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS", "2"))
 # How long the index may sit unchanged with shelf files missing and no update running
 # before fleet_health escalates it from a warning to an ACTION (and the doctor may
 # request a rescan). Long on purpose: a pool-backed scan can spend many minutes reading

@@ -21,9 +21,22 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 from pathlib import Path
 
 import config
+
+
+def _nfc(s: str) -> str:
+    """Comparison form for a comic path. NFC, because the two sides are written by
+    different producers and neither is wrong: the YacReader index stores COMPOSED
+    names (`Nausicaä` = U+00E4, written by the Qt app) while APFS/FUSE and the pool
+    inventory hand out DECOMPOSED ones (`a` + U+0308). Comparing the raw strings
+    reports `Nausicaä of the Valley of the Wind v01.cbr` as missing from an index
+    that lists it, forever -- which is a false positive that bounced the reader
+    every 15 minutes (fleet_doctor kept "fixing" a shelf that was already indexed).
+    Same normalization and same reason as `ingest._path_key`."""
+    return unicodedata.normalize("NFC", s)
 
 
 def load_order_faults(db: Path | str) -> list[dict]:
@@ -104,7 +117,7 @@ def index_names(db: Path | str) -> set[str]:
         return set()
     finally:
         con.close()
-    return {str(r[0]).lstrip("/") for r in rows if r[0]}
+    return {_nfc(str(r[0]).lstrip("/")) for r in rows if r[0]}
 
 
 def shelf_names(inventory_path: Path | str, mount_root: Path | str,
@@ -130,7 +143,7 @@ def shelf_names(inventory_path: Path | str, mount_root: Path | str,
         for rel in pool:
             parts = str(rel).split("/")
             if len(parts) >= 3 and parts[0] == "Comics" and parts[-1].lower().endswith(exts):
-                out.add("/".join(parts[1:]))
+                out.add(_nfc("/".join(parts[1:])))
     if not include_mount:
         return out
     root = Path(mount_root)
@@ -138,7 +151,7 @@ def shelf_names(inventory_path: Path | str, mount_root: Path | str,
         for p in root.rglob("*"):
             if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in exts:
                 try:
-                    out.add(str(p.relative_to(root)))
+                    out.add(_nfc(str(p.relative_to(root))))
                 except ValueError:
                     continue
     except OSError:

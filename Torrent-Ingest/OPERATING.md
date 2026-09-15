@@ -52,8 +52,9 @@ you do not have to work for: every drop is named with its 40-character info hash
 (`04CFA…C2.torrent`), and when the bencode will not parse that filename is all a magnet
 needs. Those are recovered **automatically** — the drop becomes a QUEUED magnet,
 qBittorrent fetches the real metadata from the swarm, and you will see it in `queued/`
-as a `.magnet`. Its dead bytes still appear under `failed/` for inspection (the janitor
-clears them after a week); no action is needed. A `.torrent` with a normal name in
+as a `.magnet`. The dead `.torrent` is then removed, so it will not keep reappearing in
+`failed/` while the torrent it stands for is queued and downloading; re-dropping it
+later just removes it again. No action is needed. A `.torrent` with a normal name in
 `failed/` has no hash to recover from and must be replaced.
 
 Two other inboxes still work:

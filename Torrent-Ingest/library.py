@@ -1226,6 +1226,10 @@ def validate_plan(plan, content_root, sibling_seasons=None):
         files = deduped
         plan["files"] = deduped
 
+    # Two distinct video files on one episode of one show is a misnumbering (or a
+    # duplicate); see `_reject_same_episode` for why the replay allows the shapes it does.
+    _reject_same_episode(plan, files)
+
     # Show identity guard (the movie guard's sibling). A plan that places show video(s)
     # into a show folder that does NOT yet exist (a NEW show, not a match against the
     # library) must pin a TMDB/TVDB id, or Jellyfin cannot identify the series: it ships
@@ -1975,6 +1979,59 @@ def _reject_comic_at_franchise_root(files):
                 f"shared '{fr['name']} vNN' namespace that belongs to no series, where it "
                 f"collides with unrelated books. Put it in the sub-folder for the series "
                 f"it actually is, creating a new one if this series has none yet.")
+
+
+def _reject_same_episode(plan, files):
+    """Refuse a plan that puts two distinct video files on one episode of one show.
+
+    One episode number resolves to one episode in Jellyfin, so a second file sharing the
+    number is either a duplicate or a misnumbering -- and in the 2026-09-15 Doctor Who
+    (1963) case it was the latter: six parts of The Keys of Marinus all filed as `S01E05`,
+    because the model copied the release's SERIAL number instead of numbering the parts
+    consecutively the way the library already numbered An Unearthly Child's four parts
+    (E01-E04). Every later wave then shifted to fit around the collision, corrupting the
+    whole season. The refusal message pushes the next provider to the consecutive scheme.
+
+    Keyed by SHOW, not just season+episode: a multi-show pack (Steins;Gate + Steins;Gate 0)
+    legitimately files the same episode number into two different show folders. The replay
+    over the journal's 820 accepted plans rejected zero of them keyed this way.
+
+    Two exemptions, both from accepted library content rather than theory:
+
+      * SEASON 00 -- a special split across `- part1.mkv`/`- part2.mkv` is a real shape in
+        this library (Kaguya-sama S00E06); the serial collapse this stops was in a regular
+        season, and every multi-part REGULAR episode already in the library (The Office,
+        The Bad Batch, Star Wars Rebels) is numbered consecutively.
+      * no numeric season/episode on the entry -- nothing to compare.
+
+    Deliberately not keyed on `episode_title` or `(1)`/`(2)` markers: the Doctor Who parts
+    and a legitimately-split special carry the same shape, and only the library's
+    established scheme tells them apart. That is precisely what the refusal asks for.
+    """
+    seen = {}
+    for f in files:
+        rel = Path(f.get("dst_rel") or "")
+        if len(rel.parts) < 2 or rel.parts[0] != "Shows" \
+                or rel.suffix.lower() not in config.VIDEO_EXTENSIONS:
+            continue
+        try:
+            season, episode = int(f.get("season")), int(f.get("episode"))
+        except (TypeError, ValueError):
+            continue
+        if season < 1:
+            continue
+        key = (rel.parts[1], season, episode)
+        prev = seen.get(key)
+        if prev:
+            raise PlanError(
+                f"two video files both claim S{season:02d}E{episode:02d} of "
+                f"{rel.parts[1]!r}: {prev!r} and {rel.name!r}. One episode number resolves "
+                f"to one episode: if these are consecutive PARTS of a story/serial, give "
+                f"each part its OWN consecutive episode number, continuing the library's "
+                f"existing run (its other multi-parters are numbered that way); if one is "
+                f"an alternate cut, drop it or give it its own destination. Never repeat "
+                f"one episode number across a regular season.")
+        seen[key] = rel.name
 
 
 def _reject_season_gap(plan, files, sibling_seasons=None):

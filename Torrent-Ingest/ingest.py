@@ -349,7 +349,14 @@ def _register_magnet(path, records):
             return
         dest = (config.INGESTING_DIR if rec.get("status") in ACTIVE
                 else config.QUEUED_DIR)
-        _file_torrent(rec, dest, "ingesting" if dest == config.INGESTING_DIR else "queued")
+        dest_label = "ingesting" if dest == config.INGESTING_DIR else "queued"
+        _file_torrent(rec, dest, dest_label)
+        # A SECOND source for a hash already registered -- iCloud surfaces "X.magnet" and
+        # "X 2.magnet" for one drop, and a re-dropped recovery magnet lands beside the
+        # copy already filed. File the extra copy too; left alone it strands at the top
+        # of the watch folder and is re-scanned on every registration pass.
+        if Path(path).exists() and str(path) != str(rec.get("torrent_path") or ""):
+            _file_torrent({"torrent_path": str(path)}, dest, dest_label)
         if not rec.get("magnet"):
             rec["magnet"] = magnet_uri
             journal.write_record(rec)
@@ -379,6 +386,24 @@ def _magnet_uri_from_truncated(path, info_hash):
     return "&".join(parts)
 
 
+def _discard_dead_torrent(path, why) -> bool:
+    """Remove a truncated `.torrent` whose bytes are dead and fully accounted for.
+
+    Its hash, name and trackers now live on the magnet record, so the bytes are one
+    thing only: a file in `failed/` that reads as "this failed" on a phone while the
+    torrent is in fact queued and downloading. Returns True once it is gone; False if it
+    could not be removed, which tells the caller to fall back to filing it under failed/
+    so it at least cannot linger at the top of the watch folder.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        log(f"Could not remove dead .torrent {path.name}: {exc}")
+        return False
+    log(f"Removed dead truncated .torrent {path.name} ({why}).")
+    return True
+
+
 def _recover_truncated_torrent(path, records) -> bool:
     """Recover a truncated `.torrent` as a magnet, instead of condemning it.
 
@@ -392,9 +417,19 @@ def _recover_truncated_torrent(path, records) -> bool:
 
     A drop is only recovered once it is past `UNPARSEABLE_GRACE_SEC` untouched -- the
     same rule as `_file_unparseable_torrent`, so a torrent iCloud is still writing is
-    left to the next cycle rather than converted from an incomplete read. Returns True
-    when a magnet record was registered; the dead bytes are then filed under failed/ for
-    inspection (the janitor prunes them) and the caller must not also file them.
+    left to the next cycle rather than converted from an incomplete read.
+
+    Two outcomes, both of which REMOVE the dead bytes so they cannot keep reappearing in
+    a queue that reads as failed:
+
+      * the hash already has a live record -- the owner re-dropped the dead file, or
+        iCloud surfaced a second copy. Nothing to recover; discard the duplicate.
+      * otherwise, register the recovered magnet. The record is live either way, so a
+        non-terminal duplicate resolves to the first branch on its next appearance.
+
+    Returns True when the drop was handled (the caller must not also file it under
+    failed/), False when there is nothing to recover from or the bytes could not be
+    removed.
     """
     if not _INFO_HASH_NAME_RE.match(path.stem):
         return False
@@ -405,6 +440,12 @@ def _recover_truncated_torrent(path, records) -> bool:
     if age < config.UNPARSEABLE_GRACE_SEC:
         return False                                     # still syncing; retry next cycle
     info_hash = path.stem.lower()
+    rec = records.get(info_hash)
+    if rec is not None and rec.get("status") not in (journal.COMPLETED, journal.FAILED,
+                                                     journal.REFUSED):
+        return _discard_dead_torrent(
+            path, f"{rec.get('name') or info_hash[:12]} is already {rec.get('status')} "
+                  f"in the journal, so re-dropping the dead bytes changes nothing")
     magnet_path = path.with_suffix(".magnet")
     try:
         magnet_path.write_text(_magnet_uri_from_truncated(path, info_hash),
@@ -413,11 +454,9 @@ def _recover_truncated_torrent(path, records) -> bool:
         log(f"Could not write the recovery magnet for truncated {path.name}: {exc}")
         return False
     _register_magnet(magnet_path, records)
-    _file_torrent({"torrent_path": str(path)}, config.FAILED_DIR, "failed")
     log(f"Recovered truncated .torrent {path.name} as a magnet ({info_hash[:12]}); "
-        f"qBittorrent will fetch its metadata from the swarm. Dead bytes kept under "
-        f"failed/ for inspection.")
-    return True
+        f"qBittorrent will fetch its metadata from the swarm.")
+    return _discard_dead_torrent(path, "superseded by the recovered magnet")
 
 
 def register_new_torrents(records):

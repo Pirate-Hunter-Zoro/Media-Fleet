@@ -8,7 +8,9 @@ Three failure modes, all measured on 2026-09-14:
   * the app is up but its flags drifted -> bounce it, or nothing ever scans again;
   * the app is up but has NO library open (a crash restore: no window means
     `LibrariesUpdateCoordinator::init()` never runs) -> activate it, because it looks
-    healthy while scanning nothing. That is the state ElfQuest sat invisible in.
+    healthy while scanning nothing. That is the state ElfQuest sat invisible in. The
+    activation is BOUNDED (two tries, then one alert): it steals focus, and a reader
+    with nothing to scan is not repaired by being brought to the front every minute.
 
 And the anti-thrash policy: a app that dies and comes straight back is crashing, so the
 supervisor backs off and alerts instead of restarting forever.
@@ -146,7 +148,10 @@ try:
     ls._yacreader_tick(st)
     check("an idle app still gets activated", fake.activations == 1)
 
-    # 4. Persistent windowlessness alerts once and keeps trying, not restarting.
+    # 4. Persistent windowlessness alerts once and stops activating: activation steals
+    #    focus, and a reader that has nothing to scan is not repaired by being brought
+    #    to the front every minute (the 2026-09-15 stale-index false positive had this
+    #    firing for hours).
     fake = Fake()
     fake.running = True
     fake.index_open = False
@@ -155,7 +160,8 @@ try:
     for _ in range(6):
         CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
         ls._yacreader_tick(st)
-    check("activation persists", fake.activations == 6)
+    check("activation is bounded, not repeated",
+          fake.activations == config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS)
     check("it never restarts for a missing window", fake.starts == 0)
     check("the owner is alerted once", len(fake.alerts) == 1)
 
@@ -180,7 +186,8 @@ try:
 
     src = (Path(__file__).resolve().parent.parent / "library_supervisor.py").read_text()
     for needle in ("yacreader_db.update_in_progress()", "yacreader_db.activate_app()",
-                   "SUPERVISOR_YAC_CRASH_LIMIT", "ensure_scan_settings()"):
+                   "SUPERVISOR_YAC_CRASH_LIMIT", "ensure_scan_settings()",
+                   '"/usr/bin/open", "-g"'):
         check(f"source still contains {needle!r}", needle in src)
 finally:
     for n, v in saved.items():
