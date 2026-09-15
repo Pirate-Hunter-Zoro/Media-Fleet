@@ -1510,6 +1510,17 @@ the next provider to do. Replayed over all 820 accepted journal plans: 0 rejecte
 Doctor Who wave that caused the repair is rejected. `scripts/test_placement_guards.py`
 carries both directions.
 
+**Why this guard had to come before the existing-episode collapse.** The wrong numbers were
+not merely filed — they were *silently deleted*. `_collapse_existing_episode_collisions`
+drops a planned file whose (season, episode) already holds a differently-named library
+video, on the assumption that the two are the same episode. The serial's parts were planned
+at the serial numbers (Daleks `E02`, Edge `E03`, Marco Polo `E04`), each colliding with the
+already-filed An Unearthly Child parts at those slots, so seventeen downloaded parts were
+dropped from the plan and the chunked wave then freed their bytes as "not in plan (junk)".
+The plan-on-disk still named them; the validator had already pruned them. Rejecting the
+collapsed plan up front is what stops the loss: a retried plan numbers the parts at
+E05+ where nothing exists, so no part is dropped and no byte is freed.
+
 ### The franchise namespace (`_reject_comic_at_franchise_root`)
 
 **No comic file may be filed directly into a franchise master folder.** A master
