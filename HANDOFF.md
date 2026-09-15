@@ -197,24 +197,53 @@ code cites these files by section number.
 
 ---
 
-## 6. State, verified 2026-09-14 06:35 CDT
+## 6. State, verified 2026-09-15 08:35 CDT
 
-Every number below was measured, not estimated.
+Every number below was measured, not estimated, except the `library.db` row (marked).
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 47 blocking checks |
-| `fleet_doctor` | 0 findings |
-| `fleet_health` | all clear (20:42 report) |
-| `media_doctor` | 0 shows flagged, 0 pending human/AI review |
-| `library_health.txt` | "All shows healthy. Nothing to fix." (19:33) |
-| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `47ebd43` |
-| Jellyfin | 301 series, 18,395 episodes, 444 movies |
-| Mount | Shows 300, Movies 2,663, Comics 9 — primed and serving |
-| `library.db` | 22,957 owned rows, 22,957 distinct, **0 redundant**. 25 comic/manga norm pairs → 10, all folded to the kind the pool shelves them under; the 10 that remain have no pool files to judge (the reaper now runs this after every purge) |
-| YacReader | scan-at-startup flags **on**, supervisor enforcing them, and `fleet_health` now reports the reader's own state (crash rows, damage, flags, shelf files the index lacks) with `fleet_doctor` remedies for the two safe repairs. The ElfQuest reindex was scanning at hand-off (pool reads ~3 MB/s, 166 shelf files still behind); the 2026-09-13 `FolderModel::reload` crash was a malformed folder tree it had written itself -- `load_order_faults` names that shape, the repair fixes it, and `comic_shelf_audit` now deletes with `PRAGMA foreign_keys=ON` so it cannot be created again |
-| In flight | no identify run at deploy time; reaper running (queue empty); YacReader's startup update scanning. The held full-fleet restart from the 2026-09-13 direct-ingest ship went out with this deploy |
-| Open work | **none queued.** Read §7 before reading that as "nothing is wrong" |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 48 blocking checks |
+| `fleet_doctor` | 1 finding: the 7-item curation warning below; **no YacReader finding** (08:21 report) |
+| `fleet_health` | 1 warning (7 library items need review; no action) (08:26 report) |
+| `media_doctor` | 1 show flagged: Doctor Who (1963), 7 misfiled items; 0 pending human/AI review (07:57) |
+| `library_health.txt` | 7 placement faults in Doctor Who (1963) -- the misfiled Marinus/Aztecs sets. The check now says "believe the `.nfo`", and each fault names the file's true slot (07:57) |
+| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `ca45307` + the commit that carries this section |
+| Jellyfin | 308 series, 18,852 episodes, 446 movies |
+| Mount | Shows 307, Movies 2,673, Comics 9 — primed and serving |
+| `library.db` | 23,146 owned rows at 08:35 (not re-audited this session; the 2026-09-14 redundant-norm audit stands) |
+| YacReader | scan-at-startup flags **on**, supervisor enforcing them. The 2026-09-15 pop-up loop was a **false positive in our comparison, not the app**: the index stores NFC (`Nausicaä` = U+00E4) while APFS/FUSE and the pool inventory hand out NFD, so `unindexed_files` reported two already-indexed volumes forever; `fleet_doctor` then bounced the app every 15 min and the supervisor activated its window every 60 s (attempt 89). Both sides now compare in NFC, activation is capped at 2 per start, and the app is launched with `open -g` (no focus theft) -- both-ways tests are in `test_yacreader_index_shape.py` / `test_supervisor_yacreader.py` |
+| In flight | chunked **Doctor Who (1963)** pack (`e099421feeda`) **stuck on wave 104** in a provider walk (empty text / rate limit / loop breaker) -- the model cannot reconcile the release's serial numbers with the corrupted library; chunk_done 106, active [104-135]. **Smallville (2001)** (`04cf0a35`) downloading its early waves; the recovered magnet is working. Reaper running (check idle before bouncing). No identify run should be killed except deliberately (see below) |
+| Open work | **the Doctor Who (1963) renumber + missing-part re-fetch — see the subsection below.** Everything else is clear -- read §7 before reading that as "nothing is wrong" |
+
+### Open work — renumber Doctor Who (1963) and re-fetch the dropped parts (`e099421feeda`)
+
+**What went wrong.** The 26-seasons XVID pack names its parts `Doctor Who - S01E05 (005) - The Keys of Marinus (1) …`, where `S01E05` is the release's **serial** number. The identify runs copied those numbers instead of continuing the library's per-part run (An Unearthly Child Parts 1-4 were already E01-E04), so all six Marinus parts were planned at `S01E05`, all seven Daleks at `S01E02`, and so on. Worse, `library._collapse_existing_episode_collisions` then dropped every planned part whose wrong number collided with an already-filed episode, and `_advance_chunked` freed their bytes as "not in plan (junk)": **17 downloaded parts (Daleks 7, Edge of Destruction 2, Marco Polo 7, plus the Marinus bonus) were deleted unfiled.** Later waves then numbered around the collision, shifting the rest of the run.
+
+**Already fixed — do not re-fix.** `library._reject_same_episode` now refuses a plan that puts two distinct video files on one episode of one show in a regular season (keyed by show, Season 00 exempt); the identify prompt gained the "a repeated `SxxEyy` with `(1)/(2)/Part N` is a STORY number" rule; the replay over 820 accepted journal plans rejects zero of them. Shipped `355ce43`/`ca45307`, with the mechanism written up in README § Placement guards.
+
+**The target state (TheTVDB's part-sequential numbering, confirmed by Jellyfin's own scrape: `S01E07` = The Escape, `S01E18` = Rider from Shang Tu, `S01E31` = Strangers in Space):**
+
+| now on disk | really | action |
+|---|---|---|
+| `S01E01-E04` An Unearthly Child | S01E01-E04 | correct, leave |
+| `S01E05` x6 The Keys of Marinus | S01E21-E26 | re-file to the sidecar's `<episode>` (each `.nfo` already says 21-26) |
+| `S01E06` x3 The Aztecs | S01E27-E29 | re-file; check whether part 4 (`The Day of Darkness`) was dropped too |
+| `S01E07-E12` The Sensorites | S01E31-E36 | re-file |
+| `S01E13-E20` The Reign of Terror (incl. intro/outro) | S01E37-E42 (intro/outro are extras) | re-file; decide the two extras |
+| `S01E21-E23` Planet of Giants | **S02E01-E03** | cross-season re-file |
+| `S01E24-E29` Dalek Invasion of Earth | **S02E04-E09** | cross-season re-file |
+| `S01E30-E31` The Rescue | **S02E10-E11** | cross-season re-file |
+| `S02E12-E30` (The Romans onward) | S02E12+ | correct (verified `S02E12` = The Slave Traders), leave |
+| missing: Daleks E05-E11, Edge E12-E13, Marco Polo E14-E20 | | clear their indices and re-fetch from the still-registered torrent |
+
+**Why this is a reviewed operation, not a shell loop.**
+* The files are replicated to MEGA (`remote_inventory.json` has 188 Doctor Who lines), so a local rename desyncs the pool. `scripts/refile_season.py` is the reviewed precedent: the move set comes from the record/plan evidence, sidecars are deleted (Jellyfin regenerates them), and it is resumable and verifiable. Per-file renumbering has no tool yet; extending that one is the intended path.
+* The record's bookkeeping must be edited in step with the bytes: `chunk_filed` maps 64 indices to library paths, `chunk_done` is 106, `chunk_dropped` is 42. A missing part will never be re-fetched while its index sits in `chunk_done`/`chunk_dropped` — `_carry_chunk_progress` carries those as proven. Clear and re-arm exactly the indices being re-fetched.
+* **Park the torrent before touching the library.** Wave 104's identify is currently spinning; repairing underneath it races the next wave. Stop the daemon or use the chunked park path, and never bounce the reaper mid-drain (`pgrep -f 'Torrent-Ingest/reap.py'`).
+* After: `media_doctor`/`library_health.txt` must show zero placement faults, then unpark and let the remaining waves file under the new guard + prompt.
+
+**Related hazard, not yet actioned:** `_collapse_existing_episode_collisions` drops silently and the wave then deletes the bytes; that is only safe when the existing file really is the same episode. The new guard removes the observed trigger, but the drop path still has no content check. If a future run sees a same-slot drop with a different `episode_title`, treat it as a placement fault and fail the plan rather than dropping it.
 
 ---
 
