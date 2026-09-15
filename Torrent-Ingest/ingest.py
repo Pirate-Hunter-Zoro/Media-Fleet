@@ -1934,6 +1934,12 @@ def _identify_wave(record, t, save_path, by_index, pending):
         dst = _path_key(config.MEDIA_ROOT / Path(f.get("dst_rel") or ""))
         if dst in verified_dsts:
             filed[src_key] = dst
+    # The wave's own verify pass is what authorizes the cleanup below, so it is also the
+    # moment a verified manga volume may retire its covered chapters. Cache-only; never
+    # blocks the wave.
+    if any(str(f.get("dst_rel") or "").startswith("Comics/Manga/")
+           for f in plan.get("files") or []):
+        _manga_chapter_reconcile(plan)
     return True, filed, planned
 
 
@@ -2688,10 +2694,32 @@ def _advance_verify(record, client):
     record["status"] = journal.VERIFIED
     journal.write_record(record)
     log(f"Verified {record['name']} present in library. Safe to clean up.")
+    # A verified manga volume is the deterministic moment to retire the chapters the
+    # cached volume map covers. Best-effort and cache-only; it never blocks on a network
+    # call and never fails the ingest.
+    _manga_chapter_reconcile(record.get("plan") or {})
     # Cascade straight into cleanup so the local copy is deleted NOW, in the same
     # pass — not deferred to a later cycle. Freeing this torrent's disk the moment
     # it is safe is what lets the next queued torrent start immediately.
     _advance_cleanup(record, client)
+
+
+def _manga_chapter_reconcile(plan):
+    """Hook: reconcile the manga series a just-verified plan filed a volume into.
+
+    The module lives under `scripts/`, which is not on sys.path for the daemon; import it
+    lazily so a missing/broken tool can never stop the ingest at module load. Every
+    failure is swallowed with a log line -- reconciliation is bookkeeping, the filing is
+    the point.
+    """
+    try:
+        scripts = str(config.PROJECT_ROOT / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import chapter_volume_reconcile
+        chapter_volume_reconcile.after_plan(plan, log_fn=log)
+    except Exception as exc:                                              # noqa: BLE001
+        log(f"manga chapter reconcile skipped: {exc}")
 
 
 def _advance_cleanup(record, client):

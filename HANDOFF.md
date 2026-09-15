@@ -203,69 +203,71 @@ Every number below was measured, not estimated, except the `library.db` row (mar
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 48 blocking checks |
-| `fleet_doctor` | 1 finding: the 7-item curation warning below; **no YacReader finding** (08:21 report) |
-| `fleet_health` | 1 warning (7 library items need review; no action) (08:26 report) |
-| `media_doctor` | 1 show flagged: Doctor Who (1963), 7 misfiled items; 0 pending human/AI review (07:57) |
-| `library_health.txt` | 7 placement faults in Doctor Who (1963) -- the misfiled Marinus/Aztecs sets. The check now says "believe the `.nfo`", and each fault names the file's true slot (07:57) |
-| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `ca45307` + the commit that carries this section |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 49 blocking checks |
+| `fleet_doctor` | the 7-item curation warning WAS the Doctor Who misfiles; the reports refresh on their own schedule |
+| `fleet_health` | same warning, no action |
+| `media_doctor` | Doctor Who (1963): **zero placement faults** after the repair; only title-quality items (bare names awaiting Jellyfin's scrape / the revert-guard) |
+| `library_health.txt` | the 07:57 copy still lists the misfiles until the next `mediadoctor` pass; the faults it names are repaired |
+| Repo | **one monorepo** at `~/Developer/Media-Fleet`, pushed to `Pirate-Hunter-Zoro/Media-Fleet`; clean @ `33bb287` + the 2026-09-15 changes being shipped |
 | Jellyfin | 308 series, 18,852 episodes, 446 movies |
 | Mount | Shows 307, Movies 2,673, Comics 9 — primed and serving |
-| `library.db` | 23,146 owned rows at 08:35 (not re-audited this session; the 2026-09-14 redundant-norm audit stands) |
-| YacReader | scan-at-startup flags **on**, supervisor enforcing them. The 2026-09-15 pop-up loop was a **false positive in our comparison, not the app**: the index stores NFC (`Nausicaä` = U+00E4) while APFS/FUSE and the pool inventory hand out NFD, so `unindexed_files` reported two already-indexed volumes forever; `fleet_doctor` then bounced the app every 15 min and the supervisor activated its window every 60 s (attempt 89). Both sides now compare in NFC, activation is capped at 2 per start, and the app is launched with `open -g` (no focus theft) -- both-ways tests are in `test_yacreader_index_shape.py` / `test_supervisor_yacreader.py` |
-| In flight | chunked **Doctor Who (1963)** pack (`e099421feeda`) **stuck on wave 104** in a provider walk (empty text / rate limit / loop breaker) -- the model cannot reconcile the release's serial numbers with the corrupted library; chunk_done 106, active [104-135]. **Smallville (2001)** (`04cf0a35`) downloading its early waves; the recovered magnet is working. Reaper running (check idle before bouncing). No identify run should be killed except deliberately (see below) |
-| Open work | **two tasks queued: (1) the Doctor Who (1963) renumber + missing-part re-fetch, and (2) individual manga chapters + volume coverage reconciliation — both spelled out below.** Everything else is clear -- read §7 before reading that as "nothing is wrong" |
+| `library.db` | 23,153 owned rows at 09:50 (the repair superseded 15 wrong-slot rows and recorded 34 corrected files) |
+| YacReader | scan-at-startup flags **on**, supervisor enforcing them; the NFC false positive was fixed 2026-09-15 (`test_yacreader_index_shape.py` / `test_supervisor_yacreader.py`) |
+| In flight | chunked **Doctor Who (1963)** pack repaired: 34 wrong-slot files re-filed, 17 lost indices re-armed; wave 104 re-identifying under the new prompt + guard, the 17 missing parts re-fetch in later waves. **Smallville (2001)** (`04cf0a35`) downloading its early waves. Reaper running (check idle before bouncing) |
+| Open work | **none from the 2026-09-15 list — both queued tasks shipped** (below). Everything else is clear — read §7 before reading that as "nothing is wrong" |
 
-### Open work — renumber Doctor Who (1963) and re-fetch the dropped parts (`e099421feeda`)
+### Shipped 2026-09-15 — the two queued tasks
 
-**What went wrong.** The 26-seasons XVID pack names its parts `Doctor Who - S01E05 (005) - The Keys of Marinus (1) …`, where `S01E05` is the release's **serial** number. The identify runs copied those numbers instead of continuing the library's per-part run (An Unearthly Child Parts 1-4 were already E01-E04), so all six Marinus parts were planned at `S01E05`, all seven Daleks at `S01E02`, and so on. Worse, `library._collapse_existing_episode_collisions` then dropped every planned part whose wrong number collided with an already-filed episode, and `_advance_chunked` freed their bytes as "not in plan (junk)": **17 downloaded parts (Daleks 7, Edge of Destruction 2, Marco Polo 7, plus the Marinus bonus) were deleted unfiled.** Later waves then numbered around the collision, shifting the rest of the run.
+**1. Doctor Who (1963) renumber + missing-part re-fetch (`e099421feeda`).** The 26-season
+XVID pack names its parts by the release's *serial* number, so `_reject_same_episode` and
+the collapse saw every part of a story claiming one slot; 17 downloaded parts were dropped
+unfiled and the rest shifted. The repair **computed** each file's true broadcast number
+from the release's own serial structure (accumulated parts per season — the exact numbers
+TheTVDB/Jellyfin use: `S01E07` The Escape, `S01E18` Rider from Shang Tu, `S01E31`
+Strangers in Space), and `refile_season.py --mapping` moved 34 files to their slots
+(Marinus E21-26, Aztecs E27-29, Sensorites E31-36, Reign E37-42 with its Intro/Outro to
+`S00E07`/`S00E08`, Planet of Giants/Dalek Invasion/The Rescue cross-season into S02E01-11),
+deleted their stale sidecars, rewrote `remote_inventory.json`/`sync_state.json`, corrected
+`chunk_filed`/`applied` in the journal, re-armed the 17 lost indices (5-11, 13-14, 18-24,
+39), and fixed `library.db`. Verified: no old paths remain, `media_doctor` shows zero
+placement faults.
 
-**Already fixed — do not re-fix.** `library._reject_same_episode` now refuses a plan that puts two distinct video files on one episode of one show in a regular season (keyed by show, Season 00 exempt); the identify prompt gained the "a repeated `SxxEyy` with `(1)/(2)/Part N` is a STORY number" rule; the replay over 820 accepted journal plans rejects zero of them. Shipped `355ce43`/`ca45307`, with the mechanism written up in README § Placement guards.
+Two lessons now in README, both hit live: Media-Syncer's in-memory inventory is written
+back every ~30s and **resurrected the old keys** after the tool's rewrite (pause it with
+`state/reap_ms_paused` + bootout first, and re-verify both files after); and chained moves
+(`S01E07→S01E31` while `S01E31→S02E11`) need a two-phase transform, not sequential
+pop-then-set.
 
-**The target state (TheTVDB's part-sequential numbering, confirmed by Jellyfin's own scrape: `S01E07` = The Escape, `S01E18` = Rider from Shang Tu, `S01E31` = Strangers in Space):**
+**2. Individual manga chapters + volume coverage reconciliation.** Chapters are first-class
+drops (they already filed as `cNNNN.cbz` with `chapter` rows — 298 journal plan files; the
+gate keys chapters independently, now asserted in the test). The new work is the
+deterministic coverage half:
 
-| now on disk | really | action |
-|---|---|---|
-| `S01E01-E04` An Unearthly Child | S01E01-E04 | correct, leave |
-| `S01E05` x6 The Keys of Marinus | S01E21-E26 | re-file to the sidecar's `<episode>` (each `.nfo` already says 21-26) |
-| `S01E06` x3 The Aztecs | S01E27-E29 | re-file; check whether part 4 (`The Day of Darkness`) was dropped too |
-| `S01E07-E12` The Sensorites | S01E31-E36 | re-file |
-| `S01E13-E20` The Reign of Terror (incl. intro/outro) | S01E37-E42 (intro/outro are extras) | re-file; decide the two extras |
-| `S01E21-E23` Planet of Giants | **S02E01-E03** | cross-season re-file |
-| `S01E24-E29` Dalek Invasion of Earth | **S02E04-E09** | cross-season re-file |
-| `S01E30-E31` The Rescue | **S02E10-E11** | cross-season re-file |
-| `S02E12-E30` (The Romans onward) | S02E12+ | correct (verified `S02E12` = The Slave Traders), leave |
-| missing: Daleks E05-E11, Edge E12-E13, Marco Polo E14-E20 | | clear their indices and re-fetch from the still-registered torrent |
+* `scripts/manga_volume_map.py` + `state/manga_volume_map.json` — AniList identity,
+  MangaDex aggregate (unfiltered: scanlations carry no volume tags), per-volume chapter
+  **sets**, folder-chain identity, AI fallback once per series with a confidence marker,
+  75-day TTL, fail-open and a one-day retry park.
+* `scripts/chapter_volume_reconcile.py` + daemon `com.mikeyferguson.chapterreconcile`
+  (6 h) — enumerates the shelf, applies `library.supersede_paths` (the same path
+  `apply_plan` Phase 4 now calls) and `dbhook.record_purge`, gated by
+  volume-present + authoritative-map + chapter-in-set + keep rule + no colored author.
+  Keeps and reports everything else, logs to `decisions.log`.
+* Ingest hooks after every verified plan (`ingest._advance_verify`, the chunked wave's
+  verify, direct ingest) use the **cache only**; a miss queues a refresh.
+* `scripts/audit_volume_chapter_coverage.py` is the read-only census; it shares the
+  reconciler's decision function so its `leftovers` cannot disagree with an apply.
+* `state/manga_chapter_policy.json` keep rules; Runbook write-up in OPERATING §5d
+  ("a chapter vanished — why").
+* Live census after the map build: 4 two-tier series, **0 leftovers**, 46 volumes (14
+  mapped), 31 chapters — and one caught false positive: `Rurouni Kenshin - Restoration
+  c0001.cbz` would have been purged as Restoration ch. 1, but its pages are the "To Rule
+  Flame" one-shot; the series is now `keep_chapters` and the chain-identity fix that
+  exposed it is pinned by the test.
 
-**Why this is a reviewed operation, not a shell loop.**
-* The files are replicated to MEGA (`remote_inventory.json` has 188 Doctor Who lines), so a local rename desyncs the pool. `scripts/refile_season.py` is the reviewed precedent: the move set comes from the record/plan evidence, sidecars are deleted (Jellyfin regenerates them), and it is resumable and verifiable. Per-file renumbering has no tool yet; extending that one is the intended path.
-* The record's bookkeeping must be edited in step with the bytes: `chunk_filed` maps 64 indices to library paths, `chunk_done` is 106, `chunk_dropped` is 42. A missing part will never be re-fetched while its index sits in `chunk_done`/`chunk_dropped` — `_carry_chunk_progress` carries those as proven. Clear and re-arm exactly the indices being re-fetched.
-* **Park the torrent before touching the library.** Wave 104's identify is currently spinning; repairing underneath it races the next wave. Stop the daemon or use the chunked park path, and never bounce the reaper mid-drain (`pgrep -f 'Torrent-Ingest/reap.py'`).
-* After: `media_doctor`/`library_health.txt` must show zero placement faults, then unpark and let the remaining waves file under the new guard + prompt.
-
-**Related hazard, not yet actioned:** `_collapse_existing_episode_collisions` drops silently and the wave then deletes the bytes; that is only safe when the existing file really is the same episode. The new guard removes the observed trigger, but the drop path still has no content check. If a future run sees a same-slot drop with a different `episode_title`, treat it as a placement fault and fail the plan rather than dropping it.
-
-### Open work — individual manga chapters, then reconcile them against volumes
-
-**The ask (owner, 2026-09-15).** Individual manga chapters must be first-class drops: hand-drop/download one, and the fleet files it into its series folder as a chapter. (There is still **no discovery** — this is about files the owner drops, or one title `find.txt` points Title-Scout at; do not build a chapter searcher.) When a volume containing chapters we already hold shows up — in the same drop or years later — **purge those chapters in deference to the volume**, files *and* database rows. Neither the chapter run nor the volume run may re-derive coverage from whatever snapshot the library happened to be in: the volume→chapter mapping has to be **computed and cached per series**, with the free AI used only as a last, token-cheap fallback. Add an **intermittent scan** that reconciles the whole manga shelf. Do this even if part of it already works — verify the whole path rather than assuming.
-
-**What already exists — do not rebuild it.**
-* Three tiers are already policy — **colored volume > B/W volume > chapter** — chapter destinations are `Comics/Manga/<Series>/<Series> cNNNN.cbz` (western issues: `Comics/<Series>/<Series> cNNNN.cbz`), and loose page folders package into `.cbz` themselves. `prompts/identify.md` (~lines 108-275) states all of this.
-* `plan.supersedes` is plumbed end to end: `library.apply_plan` Phase 4 (~line 2849) deletes each superseded file locally and appends its library-relative path to `MEDIAFS_DELETIONS_QUEUE` via `_queue_deletion`; the **reaper** drains that to purge the MEGA copy; `dbhook._record_supersede` marks the library.db rows `superseded` in the same transaction as the plan; `dbhook.supersede_absent_comics` catches pool-absent rows after a reaper purge.
-* The library digest lists each series' volumes and chapter range (`library.py` `_comics_coverage`, ~line 624); the identify prompt already tells a run to list contained chapters in `supersedes`, and never to supersede a different collection format (Epic vs Omnibus).
-* So the **actual gaps** are: (1) the coverage call is made by the identify model per run from an arbitrary library snapshot — README § "Volumes supersede chapters…" names this fingerprint outright; (2) nothing revisits chapters when a volume lands without listing them, or when the mapping only becomes known later; (3) confirm a chapter-only drop is actually admitted end-to-end, because the owner believes it is not.
-
-**Design — do it this way.**
-1. **`scripts/manga_volume_map.py` + `state/manga_volume_map.json`.** Resolve each series once; AniList is already used in-repo and key-less (`scripts/build_comic_franchises.py`), MangaDex is the range source (`/manga?title=` then `/manga/{id}/aggregate`). Store per series: provider ids, `fetched_at`, and **per-volume chapter SETS** — not just min/max, because manga numbering has gaps and misnumbered chapters. Also store `unmapped_volumes` and the source string. Cache TTL ~60-90 days. Any network failure means no update and **no purge** — fail open, per the network rule.
-2. **AI fallback only where the provider is silent**: one tiny prompt per series asking for the missing volume's chapter list, answer cached with a confidence marker; reuse the live free chain (`ai_models.py`), cap the prompt size, and if every provider fails, keep everything. **Never ask per chapter and never re-ask per run** — steady-state AI cost is zero.
-3. **`scripts/chapter_volume_reconcile.py`** (dry-run by default, `--apply` to write): for each manga series that owns both a volume and chapters, intersect the cached map with the owned chapters and supersede the covered ones through the **same path `apply_plan` uses** — factor a shared `library.supersede_paths(paths)` out of Phase 4 rather than writing a second deletion implementation (local unlink + `_queue_deletion`, and the `dbhook` supersede or the reaper's `reconcile_comics` for the rows). Idempotent, resumable, logged to `state/decisions.log`.
-4. **Triggers.** (a) After a plan files a volume, the ingest cycle asks the reconciler for that one series using the cached map only; a cache miss enqueues a refresh and never blocks the filing on the network. (b) A periodic launchd one-shot (`StartInterval`, e.g. 6 h) refreshes only stale maps for series that hold both tiers, then reconciles. That is the "intermittent scanning".
-5. **Keep rules.** `state/manga_chapter_policy.json` per series (`keep_all`, `keep_chapters`, `keep_volumes`) so the owner can preserve a better scan. A chapter is purged **only** when all four hold: the covering volume's file is verified present in the library; the mapping is provider-backed (or AI-cached with its confidence flag); the chapter number is in that volume's set; no keep rule applies. Anything else → keep, and say why in the report. **v1 is manga only** — western `issue` rows stay model-judged, because Epic/Omnibus coverage is not 1:1.
-6. **Never touch `state/blocklist.json` for a supersede.** The blocklist is for owner purges; adding a series there would make `_blocked_keys` refuse its future drops. A chapter downgrade is a deletion queue entry, nothing else.
-7. **Audit + tests.** Read-only `scripts/audit_volume_chapter_coverage.py`: per series, owned volumes, mapped ranges, owned chapters, and leftovers (the census). `scripts/test_manga_chapter_reconcile.py`, registered in `verify_fleet.sh`, fixtures both ways: purges covered chapters; keeps uncovered, unknown, unmapped, and volume-absent ones; colored-vs-B/W ordering; keep-list honored; the provider parser against an independent oracle. Run the census over the live shelf and review the counts before ever using `--apply`.
-8. **Prove the ingest path first.** A chapter `.cbz` and a loose-pages folder dropped via DirectIngest must land as `cNNNN.cbz` with a `chapter` row in `library.db`; then a volume arriving must remove the covered ones. If a chapter-only drop is refused anywhere, find and fix that gate — the acceptance gate keys chapters independently (`librarybrain/acceptance.py`), so read the actual refusal in the logs before assuming which layer blocked it.
-
-**Acceptance:** a chapter-only drop files cleanly; a volume purges its covered chapters (files + pool queue + DB rows) with **zero AI calls**; uncovered/unknown chapters survive every scan; a provider outage purges nothing; the census reports zero leftovers and `library_health` shows no volume+chapter fingerprint; README and OPERATING get the write-up, including "a chapter vanished — why".
+**Still open, deliberately (unchanged):** `_collapse_existing_episode_collisions` still has
+no content check. If a future run sees a same-slot drop with a different `episode_title`,
+fail the plan rather than dropping the file (the new guard removes the trigger seen so
+far, not the hazard).
 
 ---
 
@@ -332,6 +334,11 @@ scripts/verify_arc_mapping.py       --show "<Show>"               # arcs beside 
 scripts/audit_provider_disagreement.py [--counts]                 # TVMaze vs TMDB, per season
 scripts/audit_unlocked_specials.py  [--show "<Show>"]             # unlocked Season-0 sidecars
 scripts/reconcile_library_db.py     [--apply] [--include-requested] # library.db; --apply WRITES
+scripts/audit_volume_chapter_coverage.py [--series X] [--refresh]  # manga chapter/volume census
+scripts/chapter_volume_reconcile.py  [--series X] [--apply]        # reconciler (dry by default)
+scripts/manga_volume_map.py          --series X [--refresh] [--all] # cached volume->chapter map
+scripts/refile_season.py             --mapping <json> [--record <ih>] [--rearm i,j] [--apply]
+                                                                   # reviewed per-file episode refile
 scripts/yacreader_rescan.py         [--files] [--apply]            # reader scan flags + unindexed shelf
 scripts/yacreader_index_repair.py   [--apply]                      # crash rows in the reader index; --apply WRITES
 scripts/identify_capacity.py        --probe                       # which providers can serve

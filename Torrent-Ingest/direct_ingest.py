@@ -444,6 +444,14 @@ def process(p: Path) -> bool:
         _relocate(p, FAILED_DIR)
         return False
 
+    # A verified manga volume retires the chapters its cached map covers. Best-effort,
+    # cache-only, and never able to fail the filing (ingest._manga_chapter_reconcile
+    # swallows every failure into a log line).
+    try:
+        ingest._manga_chapter_reconcile(plan)
+    except Exception:                                              # noqa: BLE001
+        pass
+
     dsts = [a.get("dst") for a in applied]
     log(f"  filed {p.name} -> {', '.join(str(d) for d in dsts)}")
     # Comics go to YACReader (its own scan) and novels to Google Drive — neither needs a

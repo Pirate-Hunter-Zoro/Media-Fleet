@@ -76,6 +76,7 @@ LABELS=(
 PERIODIC=(
   mediasyncstatebackup                        # hourly inventory/state backup
   playlistcurator playlistautobuild           # 3-hourly playlist builds
+  chapterreconcile                            # 6-hourly manga chapter/volume reconcile
   artifactjanitor                             # 03:00 + 15:00 failed-artifact sweep
   torrentmetadata                             # nightly .nfo/artwork backup
   purgesweeper                                # purge sweeper (see the note below)

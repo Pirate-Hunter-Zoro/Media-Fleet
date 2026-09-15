@@ -26,7 +26,7 @@ thing to do.
 On the Mac itself, the one command that answers "is the code sound?":
 
 ```bash
-bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh      # 42 blocking checks
+bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh      # 49 blocking checks
 ```
 
 It must print `ALL CHECKS PASSED`. If it does not, do not deploy anything.
@@ -355,6 +355,48 @@ python3 scripts/yacreader_index_health.py            # integrity + the backup ce
 The repair backs the index up under a name that PASSES `integrity_check` and edits under
 the index lock; the supervisor restarts the app when the lock is released.
 
+## 5d. "A chapter vanished — why?"
+
+Because a volume that contains it was verified present. Chapters and volumes are both
+shelved (`Comics/Manga/<Series>/<Series> cNNNN.cbz` and `... vNN.cbz`), and when a volume
+lands, the chapters it covers are retired on purpose — files first, then the MEGA copy
+(the reaper drains the deletion queue), then the `library.db` rows. Nothing else deletes
+a chapter.
+
+The retirement is gated, and every gate fails toward keeping the chapter:
+
+* the volume's file has to be verified present in the shelf enumeration;
+* the volume→chapter map has to be authoritative — from MangaDex, or an AI answer cached
+  at high confidence; an unknown volume covers nothing;
+* the chapter number has to be in that volume's exact chapter SET;
+* a keep rule must not apply (`state/manga_chapter_policy.json`; `keep_chapters` preserves
+  a series' chapters, `keep_all` both tiers);
+* a colored volume never authors a chapter purge — it may supersede a same-numbered grey
+  volume instead.
+
+**What to do when a chapter disappears and you want it back:** check
+`state/decisions.log` (the reconciler logs the series, the volume and the paths it
+purged), then `library_health.txt`. The volume holds the content, so there is normally
+nothing to restore. If the volume should NOT have covered it, put the series on
+`keep_chapters`:
+
+```json
+{"version": 1, "series": {"<series norm>": {"mode": "keep_chapters"}}}
+```
+
+and re-fetch the chapter (re-drop the release or drop the file into DirectIngest). A
+chapter the fleet never had is not re-downloaded automatically — there is no discovery.
+
+**To inspect before anything is deleted:** `scripts/audit_volume_chapter_coverage.py` is
+the read-only census. It uses the reconciler's own enumeration and decision function, so
+its `leftovers` count is exactly what `--apply` would remove. The 6-hourly
+`chapterreconcile` daemon runs the same pass. `state/manga_volume_map.json` is the cached
+map; delete a series' entry to force a re-fetch.
+
+The pool side of a supersede is the ordinary deletion queue. Do NOT add a series to
+`state/blocklist.json` to stop a supersede — the blocklist is for owner purges and
+refuses the series' future drops.
+
 ---
 
 ## 6. Purging something, correctly
@@ -458,7 +500,7 @@ mistaken for a single project's property, and it now has history.
 error there surfaces only when you next try to deploy — run `bash -n ~/Developer/Media-Fleet/ship-fleet.sh`
 after editing it.
 
-Before you ship: `verify_fleet.sh` must pass all 42. After you ship: check the daemon got a
+Before you ship: `verify_fleet.sh` must pass all 49. After you ship: check the daemon got a
 new PID and no NEW traceback appeared — check the log's modification time first, because
 `DirectIngest.err` holds 2,176 stale ones from August.
 

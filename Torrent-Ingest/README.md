@@ -3202,6 +3202,13 @@ rm ~/Library/LaunchAgents/com.mikeyferguson.torrentingest.plist
 - `state/reap_ms_paused` — crash-safe marker present only while the reaper has
   Media-Syncer paused for a purge; a lingering one at cycle start tells the reaper
   a prior run died mid-purge, so it resumes Media-Syncer.
+- `state/manga_volume_map.json` — `{series_norm: {provider ids, fetched_at, source,
+  confidence, volumes {n: [chapter ints]}, ai_volumes, unmapped_volumes}}`, the cached
+  bibliographic volume→chapter map (`scripts/manga_volume_map.py`).
+- `state/manga_chapter_policy.json` — per-series keep rules for the chapter reconciler
+  (`keep_volumes` default, `keep_chapters`, `keep_all`).
+- `state/manga_map_refresh_request.json` — series whose volume map an ingest hook found
+  missing/stale; drained by the 6-hourly reconciler.
 - `torrent_ingest.log` — engine log. launchd stdout/err at
   `~/Library/Logs/TorrentIngest.log` / `.err`. Metadata launch agent logs at
   `~/Library/Logs/TorrentMetadata.log` / `.err`.
@@ -3669,6 +3676,15 @@ and to chunk it immediately. Without it a retry re-serves the full `CHUNK_AFTER_
 deferral it has already served — two hours in which a retry that looked instantaneous produces no
 downloading at all.
 
+#### Re-filing a misnumbered pack (`scripts/refile_season.py --mapping`)
+
+The season mode moves a whole season folder; a pack like the classic Doctor Who collection needs **per-file** renumbering — its filenames carry the release's *serial* number (`S01E05 (005) - The Keys of Marinus (1)`), so all six parts of a story claim one slot, the model copied that number, and `_collapse_existing_episode_collisions` then dropped the colliding files the wave freed as junk. `--mapping state/<file>.json` takes a reviewed `[{old, new}]` list as the evidence and does the whole repair in step with the bytes:
+
+* **Chained destinations are ordered, not raced.** The move set can contain `S01E07 -> S01E31` while `S01E31 -> S02E11`; a `moveto` onto a live destination would clobber it, so `_order_moves` runs a move only once nothing that is itself moving sits on its destination. The preflight allows an existing destination only when the occupant is part of the same mapping.
+* **Remote first, then local**, per file; sidecars for moved files are deleted (Jellyfin regenerates), per-file so correctly-filed neighbours keep theirs; `remote_inventory.json` and `sync_state.json` are rewritten with `.bak-remap` backups; `--record` rewrites `chunk_filed`/`applied`; `--rearm` clears indices from `chunk_done`/`chunk_dropped` so the bytes that were freed unfiled are **re-fetched**; and `library.db` gets the old rows superseded plus the corrected files recorded.
+* **Park the daemon first.** A wave's identify subprocess races the moves and can refile from a half-moved library. Stop `torrentingest`, kill the in-flight `ai_runner`, apply, then bootstrap.
+* **Pause Media-Syncer too, and check its state after.** Media-Syncer's in-memory inventory is written back every ~30s, so it can resurrect the OLD keys and clobber the NEW ones after the tool rewrites them — measured live on 2026-09-15. Hold it down with the reaper's own pause marker (`state/reap_ms_paused`, which `mediasync_watchdog` respects), `launchctl bootout gui/501/com.mikeyferguson.mediasync`, apply, then verify the inventory has every `new` key and no old ones before removing the marker and bootstrapping it back. **Chained moves need a two-phase transform** (read all new values from the original map, then remove old keys, then set new ones) — a sequential pop-then-set corrupts any destination that is also a later source.
+
 ### Direct ingest (`direct_ingest.py`, daemon `com.mikeyferguson.directingest`)
 
 Not everything comes from a torrent. Comics from GetComics.com (and anywhere else), light novels / e-books from LibGen / the Internet Archive / Anna's Archive, and — since 2026-09-13 — **raw video** (a movie or episode downloaded directly) arrive as loose files or folders. The owner drops them into **`~/Downloads/DirectIngest/`** (a *local* folder, not iCloud) or into the iCloud mirror **`Torrents/DirectIngest/`**, which `direct_ingest_bridge.py` moves onto the local folder first (below). This daemon files them with a headless AI run matching the existing library's conventions, landing them through the torrent pipeline wholesale (`identify.run_identify → library.validate_plan → apply_plan → verify_applied`). **Four destinations, one pipeline:** video (`.mkv`/`.mp4`/`.avi`/`.m4v`/`.mov`) lands in `Shows/` or `Movies/` exactly like a torrent's files (with the same `.nfo` handling, and a Jellyfin rescan); comics land under `Comics/` in `config.MEDIA_ROOT` (YACReader, uploaded to the MEGA pool); novels (`.epub`, and `.pdf` planned as a novel) land in the Google Drive `Novels` folder via the `Novels/` top-dir. A dropped **directory** is one identify run over the whole tree — a season folder or a loose-pages comic folder — just like a torrent's download directory, because that is the shape identify reads best. **No format conversion** (`.cbr`/`.cbz`/`.pdf`/`.epub` file as-is; a plain `.zip` comic archive is renamed to `.cbz`). Failures park in `DirectIngest/.failed/` with a `.error.txt`; processed sources are deleted once verified. Install via `startup.sh` (or `launchctl bootstrap` the plist).
@@ -3743,6 +3759,35 @@ The rule is now a **three-tier hierarchy** — **colored volume > black-and-whit
 `prompts/identify.md` states the tiers for **both** traditions (manga volume vs chapter; western TPB/`Compendium` vs issue), gives the vocabulary that marks each, and — the part that makes it reproducible — **anchors the supersede decision to the library**: only supersede files the run is confident the new file genuinely contains, and never anything outside `Comics/`. It also warns that a relaunch is a *separate* series sharing a name, each with its own #1.
 
 Two traps that decide these calls, both settled by reading the archive rather than the filename: a collection runs several times the page count of a single issue (a 153-page `v01` against a 27-page issue), and the **internal page names** disambiguate a relaunch when the filename cannot (`Guarding the Globe v2 001-007.jpg` marks the second series).
+
+#### The volume→chapter map is computed once and cached (`scripts/manga_volume_map.py`)
+
+The supersede call above has one input no filename can supply: **which chapters a volume actually contains**. Asking the identify model per run made that a judgment about an arbitrary library snapshot instead of a bibliographic fact. `manga_volume_map.py` resolves each series **once** and caches the answer in `state/manga_volume_map.json`:
+
+* **AniList** (same free, key-less API as `build_comic_franchises.py`) resolves the series identity and canonical title; **MangaDex's `/manga/{id}/aggregate`** supplies the chapters each volume contains. The aggregate is deliberately fetched **without** the English language filter — scanlation chapters routinely carry no volume tag, so the English view of a series is often `none`-only while the full aggregate has the tankoubon volumes, and chapter numbers are language-independent.
+* Chapter numbers are stored as **SETS, never min/max**: manga numbering has gaps, and a range would claim a chapter the volume does not hold. Fractional keys (`12.5`) are dropped — a library chapter is filed as an integer `cNNNN`, so a fractional key can prove nothing.
+* **The identity is the folder CHAIN, not the leaf** (`series_label_for_rel`). Measured on the live shelf: the leaf folder `Restoration` resolved on MangaDex to an unrelated manga named *Restoration* whose v01 contains chapter 1 — which would have purged `Rurouni Kenshin - Restoration c0001.cbz` on evidence about a different series.
+* **The AI is the last resort, once per series** (`ai_models`' free chain via `ai_client.complete`), asked only for volumes the providers are silent about *and the shelf actually owns*, and cached with its own confidence marker. It runs in a **kill-bounded subprocess** — `ai_client._post` may pace a rolling rate-limit window for minutes, and an in-process call can wedge a scheduled daemon on a provider's clock.
+* **Fail-open everywhere**: any network failure writes nothing and the reconciler purges nothing; a totally failed lookup parks itself for a day (`retry_at`) so an outage neither becomes per-tick AI spend nor freezes the series for the full TTL. TTL is 75 days.
+
+#### Chapters yield to volumes on a schedule (`scripts/chapter_volume_reconcile.py`, daemon `com.mikeyferguson.chapterreconcile`)
+
+The deterministic half of the hierarchy. It enumerates the manga shelf (pool inventory + mount — both unreadable means *nothing is judged*), intersects the cached chapter sets with owned volumes, and calls the **same** `library.supersede_paths` `apply_plan` Phase 4 uses: local unlink through `MEDIA_ROOT` plus a `mediafs_deletions.jsonl` line for the reaper, then `dbhook.record_purge` for the rows. A second deletion implementation is how one path ends up purging the pool and the other doesn't.
+
+A chapter is purged **only when all five hold**:
+
+1. the covering volume's file is verified present (both tiers come from the same enumeration);
+2. that volume's map is authoritative — MangaDex directly, or an AI set at/above `AI_MIN_CONFIDENCE`;
+3. the chapter number is in that volume's set;
+4. no keep rule applies (`state/manga_chapter_policy.json`, per series: `keep_volumes` default, `keep_chapters`, `keep_all`);
+5. a **colored volume never authors a chapter purge** (colored editions number differently); it may supersede a same-numbered grey volume instead.
+
+Everything else keeps and reports why. `scripts/audit_volume_chapter_coverage.py` is the read-only census — same enumeration, same `plan_decisions`, so its numbers cannot disagree with an apply — and it prints `leftovers` (covered chapters still on the shelf), `unmapped` volumes, and `uncovered` chapters. **Run the census before any `--apply`.**
+
+Two triggers, and neither blocks an ingest on the network:
+
+* **After a plan files a manga volume**, `ingest._advance_verify` (and the chunked wave's per-entry verify, and direct ingest) calls `after_plan`, which reconciles that one series from the **cache only**. A miss/stale map queues a refresh in `state/manga_map_refresh_request.json` and returns.
+* **The 6-hourly launchd one-shot** (`--scheduled`) drains queued refreshes, refreshes stale maps for series holding both tiers, then applies. That is the intermittent scan.
 
 #### The watch folder is a local scratch area
 

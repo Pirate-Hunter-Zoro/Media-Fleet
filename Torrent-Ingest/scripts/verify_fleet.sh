@@ -302,6 +302,14 @@ run "a verified purge supersedes its library.db rows" \
 # "not owned" and invites a re-download of content already held.
 run "comic kind splits fold + fail open (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_comic_db_reconcile.py
+# The chapter/volume reconciler deletes files a volume already contains, so every rule has
+# both directions: covered chapters go, uncovered/unknown/volume-absent/keep-listed ones
+# stay. It also pins the two live mistakes this feature already made -- the leaf-folder
+# name "Restoration" matching an unrelated manga (the identity is the folder chain) and the
+# in-process AI call pacing a rate-limit window for minutes (it is a kill-bounded
+# subprocess now).
+run "manga chapters yield to volumes (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_manga_chapter_reconcile.py
 # The arc->season mapping the harness now COMPUTES, and the two guards that enforce it.
 # This is the acceptance gate's own check: Monogatari failed three runs because nothing
 # married the release's arcs to the provider's seasons, and the counts lined up perfectly

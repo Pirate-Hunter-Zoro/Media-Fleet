@@ -2605,6 +2605,34 @@ def _queue_deletion(dst_rel):
               f"will not be purged.", flush=True)
 
 
+def supersede_paths(paths):
+    """Delete already-filed comic files locally and queue their remote purge.
+
+    This is the ONE supersede implementation: `apply_plan` Phase 4 calls it for a plan's
+    `supersedes`, and `scripts/chapter_volume_reconcile.py` calls it for the chapters a
+    cached volume map proves dead. Both need the identical two steps -- an unlink through
+    MEDIA_ROOT (missing_ok: the file may already be evicted to the pool) and a
+    `_queue_deletion` line, because the reaper is the only thing that purges the MEGA
+    copy and it drains that queue. A second copy of this loop is how a deletion becomes
+    real locally while the pool keeps the file forever.
+
+    Idempotent: re-running re-queues the same deletion, and the reaper dedupes by path.
+    Returns the number of paths acted on. Never raises -- an OSError on one path must
+    not stop the rest of the set.
+    """
+    n = 0
+    for sp in paths or ():
+        sp_abs = config.MEDIA_ROOT / Path(sp)
+        try:
+            sp_abs.unlink(missing_ok=True)
+        except OSError:
+            pass
+        _queue_deletion(sp)
+        print(f"[supersede] deleted locally + queued remote purge: {sp}", flush=True)
+        n += 1
+    return n
+
+
 def _natural_sort_key(s):
     """Split on digit runs so 'page 9' sorts before 'page 10' (lexicographic sort
     would put '10' first). Used to order loose page images into a readable book.
@@ -2847,19 +2875,11 @@ def apply_plan(plan, info_hash):
         if placed:
             _write_movie_nfo(plan, placed)
         # Phase 4: manga supersede — a new volume that makes previously-filed chapters
-        # redundant (or a colored volume that covers a B/W one). Delete each superseded
-        # file locally (missing_ok: it may already be evicted to the pool) and queue its
-        # remote purge; the reaper drains the deletions queue. Idempotent: re-running a
-        # wave re-queues the same deletion, and the reaper dedupes by path.
-        for sp in plan.get("supersedes") or []:
-            sp_abs = config.MEDIA_ROOT / Path(sp)
-            try:
-                sp_abs.unlink(missing_ok=True)
-            except OSError:
-                pass
-            _queue_deletion(sp)
-            print(f"[apply_plan] superseded (deleted locally + queued remote purge): {sp}",
-                  flush=True)
+        # redundant (or a colored volume that covers a B/W one). The shared
+        # `supersede_paths` does the local unlink and the remote-purge queue line; the
+        # reaper drains it. Idempotent: re-running a wave re-queues the same deletion,
+        # and the reaper dedupes by path.
+        supersede_paths(plan.get("supersedes") or [])
     finally:
         shutil.rmtree(staging_base, ignore_errors=True)
         _prune_empty(config.MEDIA_ROOT / config.STAGING_DIRNAME)

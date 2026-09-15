@@ -76,6 +76,7 @@ AGENTS=(
     onepacethumbs        # generates episode thumbnails for shows with no image provider (One Pace)
     playlistcurator      # universal curated-playlist builder
     playlistautobuild    # session-independent playlist backfill (every 3h, no-ops when done)
+    chapterreconcile     # 6-hourly manga chapter/volume reconcile (cached volume maps)
     gdrivesupervisor     # keeps the Google Drive app up so light novels can be placed
     librarysupervisor    # starts/stops Jellyfin + YacReader on mount readiness -- keep LAST
 )
