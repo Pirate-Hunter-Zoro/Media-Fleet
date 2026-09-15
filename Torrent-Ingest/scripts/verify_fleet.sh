@@ -66,6 +66,15 @@ run "acceptance gate, .torrent path (both ways)" \
 # ways: every hostile shape refused, AND every real `.torrent` on disk still accepted.
 run "hostile .torrent metadata refused (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_torrent_metadata_safety.py
+# A cache can serve a `.torrent` cut short. The searcher used to notice and write a
+# sibling `.magnet`, and the searcher is gone, so a hash-named truncated drop must now
+# recover itself: the filename IS the info hash, and qBittorrent can pull the real
+# metadata from the swarm. Both ways, because a recovery that fires on every hash-named
+# drop -- or on a drop still syncing from iCloud -- would trade a dead file for a dead
+# magnet and call it a fix. The salvage is checked against a real torrent used as its
+# own oracle, with its name and trackers cut away in the middle.
+run "truncated .torrent recovers as a magnet (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_truncated_torrent_recovery.py
 # The duplicate-provider-id check is a check that reports NOTHING almost all the time, so
 # it must be able to prove it CAN report something (§ diagnosis 7). Fixture-based: two
 # series stamped with one key are found, a clean library is not.

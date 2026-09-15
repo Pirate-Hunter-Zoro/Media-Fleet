@@ -276,26 +276,42 @@ redownload without hand-editing the journal. Now the rule is simple and file-bas
   pipeline when *you* lift it back to the top. The journal is progress state, not a
   permanent block on re-downloading.
 
-### An unreadable `.torrent` is filed to `failed/`, and stays there
+### A truncated `.torrent`: recovered as a magnet, or filed to `failed/`
 
 A `.torrent` whose bencode will not parse has **no info hash**, so it can never get
-a journal record — the journal is keyed by that hash. It is therefore the one input
-the state machine above cannot represent, and it is handled entirely on the
-filesystem: `register_new_torrents` moves it into `failed/` and logs
-`Filed unreadable .torrent under failed/`.
+a journal record — the journal is keyed by that hash. It is the one input the state
+machine above cannot represent directly, and it gets one of two handlings, both on
+the filesystem.
 
 The cause is essentially always **truncation** — an interrupted download, or an
 iCloud sync that stopped short — which shows up as a parse error at a byte offset
-*past the end of the file* (`bad bencode at byte 41099` on a 40,960-byte file). A
+*past the end of the file* (`bad bencode at byte 471292` on a 471,040-byte file). A
 truncated file is missing the tail of its `pieces` blob, so its name and file list
 often still read fine while the torrent as a whole is unusable.
 
-**Filing is idempotent, and that is the diagnostic.** Nothing about moving the file
-changes its bytes, so lifting it back into the watch folder re-runs the same parse
-and it lands back in `failed/` within a cycle. A `.torrent` that keeps returning to
-`failed/` is truncated: **replace the file, do not re-drop it.** Re-drop is the
-retry signal for a torrent that failed *downstream* of parsing; there is nothing to
-retry here.
+**Every drop here is named with its 40-hex info hash** (`04CFA…C2.torrent`), and
+when the bencode will not parse that filename **is** the hash. So
+`_recover_truncated_torrent` rebuilds the drop as a magnet: it synthesizes
+`magnet:?xt=urn:btih:<name>` from the filename, lifts the display name and
+announce-list out of the partial bencode (`qbt.salvage_from_truncated_file` — the
+info dict's `name` and the top-level `announce-list` sit before the cut), registers
+it through the normal QUEUED magnet path, and files the dead bytes under `failed/`
+for inspection (the janitor prunes them after its grace). qBittorrent then pulls the
+**real** metadata from the swarm, exactly as it would for a `.magnet` drop, and the
+pipeline proceeds. This is the fallback the searcher used to provide — it wrote a
+sibling `.magnet` whenever a `.torrent` cache served a truncated file — restored to
+ingest itself when the searcher was deleted on 2026-09-10.
+
+**Without a hash in the name there is nothing to recover.** That drop is moved into
+`failed/` and logged `Filed unreadable .torrent under failed/`. Filing is
+idempotent, and that is the diagnostic: nothing about moving the file changes its
+bytes, so lifting it back into the watch folder re-runs the same parse and it lands
+back in `failed/` within a cycle. A `.torrent` that keeps returning to `failed/` is
+truncated and cannot be recovered: **replace the file, do not re-drop it.** Re-drop
+is the retry signal for a torrent that failed *downstream* of parsing; there is
+nothing to retry here. (A hash-named file that keeps returning has a different
+problem: its magnet never resolved — see the `MAGNET_METADATA_ABANDON_SEC` failure
+on the record.)
 
 `config.UNPARSEABLE_GRACE_SEC` (120 s) keeps that from catching a drop mid-flight.
 A file iCloud is still materializing can be readable-but-incomplete for a few
@@ -2486,7 +2502,7 @@ is not stranded in the watch folder. The searcher now also strips leading/traili
 dots from the filenames it writes, so such titles drop as visible files in the
 first place. A file that materializes only **partially** parses as broken bencode; it
 is filed to `failed/` once it has been untouched for `UNPARSEABLE_GRACE_SEC`
-(§ An unreadable `.torrent` is filed to `failed/`). On completion the `.torrent` is **moved into the `finished/` subfolder**
+(§ A truncated `.torrent`: recovered as a magnet, or filed to `failed/`). On completion the `.torrent` is **moved into the `finished/` subfolder**
 (via `os.replace`, same iCloud volume) rather than deleted, so it disappears from
 the watch folder on all devices — freeing the folder — but stays in iCloud as a
 re-droppable record. Because the watch-folder scan reads only the top level,
@@ -3026,7 +3042,7 @@ rm ~/Library/LaunchAgents/com.mikeyferguson.torrentingest.plist
 | --- | --- |
 | `TORRENTS_DIR` | iCloud watch folder for `.torrent` files. |
 | `FINISHED_DIR` | Subfolder of the watch folder (`finished/`) where fully-ingested `.torrent` files are filed instead of deleted; not scanned for new work, but re-droppable. |
-| `FAILED_DIR` | Subfolder of the watch folder (`failed/`) where a FAILED torrent's source `.torrent` is filed, so a dead torrent leaves the watch folder instead of looking queued; not scanned for new work, re-droppable. Also takes `.torrent` files that will not parse at all (§ An unreadable `.torrent` is filed to `failed/`). |
+| `FAILED_DIR` | Subfolder of the watch folder (`failed/`) where a FAILED torrent's source `.torrent` is filed, so a dead torrent leaves the watch folder instead of looking queued; not scanned for new work, re-droppable. Also takes `.torrent` files that will not parse at all and carry no recoverable hash (§ A truncated `.torrent`: recovered as a magnet, or filed to `failed/`). |
 | `UNPARSEABLE_GRACE_SEC` | How long a `.torrent` whose bencode will not parse must sit untouched (120 s) before it is filed to `failed/` as truncated. Covers the window where iCloud has materialized only part of a drop. |
 | `DOWNLOADS_DIR` / `INCOMING_DIR` | Local download volume; the dedicated dot-subdir torrents land in. |
 | `LIBRARY_INCOMING_DIR` | **Vestigial.** Was the overflow download dir on the library drive for oversized torrents; the torrent client now never writes to the SSD library root (oversized torrents are refused — § Torrents too large for the SSD). Kept only so cleanup can sweep any legacy leftovers. |

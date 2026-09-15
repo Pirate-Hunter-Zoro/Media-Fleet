@@ -95,6 +95,63 @@ def torrent_name_from_file(torrent_path):
         return ""
 
 
+def salvage_from_truncated_file(torrent_path):
+    """Best-effort `(name, trackers)` from a `.torrent` whose bencode is truncated.
+
+    A truncated drop still carries its top-level keys intact -- `announce` and
+    `announce-list` sit before `info` -- and the info dict's `name` precedes the giant
+    `pieces` blob the cut almost always runs through. That is enough to rebuild the drop
+    as a magnet: the info hash comes from the filename (the naming convention here), so
+    ingest only needs the display name and whatever trackers survive to give qBittorrent
+    the best chance of pulling the real metadata from the swarm.
+
+    Never raises: a missing name or empty tracker list is a valid salvage, and a dropped
+    error here would take down registration for every following drop.
+    """
+    try:
+        data = torrent_path.read_bytes()
+    except OSError:
+        return None, []
+    if data[:1] != b"d":
+        return None, []
+    name = None
+    trackers = []
+    try:
+        i = 1
+        while i < len(data) and data[i:i + 1] != b"e":
+            key, i = _bdecode(data, i)
+            if key == b"info":
+                i += 1                              # step INTO the info dict
+                while i < len(data) and data[i:i + 1] != b"e":
+                    ik, i = _bdecode(data, i)
+                    if ik == b"pieces":
+                        # Do not decode the value: it is the part the cut runs through,
+                        # and a length prefix past EOF would poison every following step.
+                        break
+                    val, i = _bdecode(data, i)
+                    if ik == b"name" and isinstance(val, bytes):
+                        name = val.decode("utf-8", "replace")
+                break
+            val, i = _bdecode(data, i)
+            if key == b"announce" and isinstance(val, bytes):
+                trackers.insert(0, val.decode("utf-8", "replace"))
+            elif key == b"announce-list" and isinstance(val, list):
+                for tier in val:
+                    for url in (tier if isinstance(tier, list) else []):
+                        if isinstance(url, bytes):
+                            trackers.append(url.decode("utf-8", "replace"))
+    except (ValueError, IndexError, TypeError, UnicodeDecodeError):
+        pass
+    seen = set()
+    unique = []
+    for url in trackers:
+        if url not in seen and url.startswith(("http://", "https://", "udp://",
+                                                "ws://", "wss://")):
+            seen.add(url)
+            unique.append(url)
+    return name, unique
+
+
 def total_size_from_file(torrent_path):
     """Total payload size in bytes from the .torrent metadata (v1 fields).
 

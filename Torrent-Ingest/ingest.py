@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Torrent-Ingest daemon.
 
-Watches the iCloud Torrents folder and drives each `.torrent` (or `.magnet` link —
-the searcher records a `.magnet` when a `.torrent` cache serves it truncated) through a
-disk-budgeted state machine. Downloads run in parallel (qBittorrent fetches as
+Watches the iCloud Torrents folder and drives each `.torrent` (or `.magnet` link — the
+searcher records a `.magnet` when a `.torrent` cache serves it truncated; with the
+searcher gone, `_recover_truncated_torrent` synthesizes that magnet itself for a
+hash-named drop whose bencode will not parse) through a disk-budgeted state machine.
+Downloads run in parallel (qBittorrent fetches as
 many as fit the local disk budget); each one, once complete, is processed
 independently through:
 
@@ -360,6 +362,64 @@ def _register_magnet(path, records):
     log(f"Registered new magnet: {name} ({h[:12]})")
 
 
+# A `.torrent` named with its 40-hex info hash -- the convention every drop on this
+# machine uses, so the filename IS the hash when the bencode will not parse.
+_INFO_HASH_NAME_RE = re.compile(r"\A[0-9a-fA-F]{40}\Z")
+
+
+def _magnet_uri_from_truncated(path, info_hash):
+    """The magnet a truncated hash-named drop stands for: the filename supplies the
+    info hash, the partial bencode whatever display name and trackers survived."""
+    name, trackers = qbt.salvage_from_truncated_file(path)
+    parts = [f"magnet:?xt=urn:btih:{info_hash}"]
+    if name:
+        parts.append("dn=" + urllib.parse.quote(name))
+    for url in trackers:
+        parts.append("tr=" + urllib.parse.quote(url, safe=""))
+    return "&".join(parts)
+
+
+def _recover_truncated_torrent(path, records) -> bool:
+    """Recover a truncated `.torrent` as a magnet, instead of condemning it.
+
+    A `.torrent` cache can serve its file cut short; the searcher used to notice that and
+    write a sibling `.magnet`, but the searcher was deleted on 2026-09-10, so a truncated
+    hand-drop now loops through failed/ forever with advice -- "replace the file" -- the
+    owner has no way to follow. Every drop here is named with its 40-hex info hash, and a
+    hash is all a magnet needs: qBittorrent fetches the real metadata from the swarm and
+    the normal pipeline takes over. The partial bytes also still carry the display name
+    and the announce-list, so both ride along on the synthesized URI.
+
+    A drop is only recovered once it is past `UNPARSEABLE_GRACE_SEC` untouched -- the
+    same rule as `_file_unparseable_torrent`, so a torrent iCloud is still writing is
+    left to the next cycle rather than converted from an incomplete read. Returns True
+    when a magnet record was registered; the dead bytes are then filed under failed/ for
+    inspection (the janitor prunes them) and the caller must not also file them.
+    """
+    if not _INFO_HASH_NAME_RE.match(path.stem):
+        return False
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return False                                     # vanished mid-scan
+    if age < config.UNPARSEABLE_GRACE_SEC:
+        return False                                     # still syncing; retry next cycle
+    info_hash = path.stem.lower()
+    magnet_path = path.with_suffix(".magnet")
+    try:
+        magnet_path.write_text(_magnet_uri_from_truncated(path, info_hash),
+                               encoding="utf-8")
+    except OSError as exc:
+        log(f"Could not write the recovery magnet for truncated {path.name}: {exc}")
+        return False
+    _register_magnet(magnet_path, records)
+    _file_torrent({"torrent_path": str(path)}, config.FAILED_DIR, "failed")
+    log(f"Recovered truncated .torrent {path.name} as a magnet ({info_hash[:12]}); "
+        f"qBittorrent will fetch its metadata from the swarm. Dead bytes kept under "
+        f"failed/ for inspection.")
+    return True
+
+
 def register_new_torrents(records):
     for path in find_drop_files():
         if path.suffix.lower() == ".magnet":
@@ -371,7 +431,8 @@ def register_new_torrents(records):
         try:
             h = qbt.info_hash_from_file(path)
         except Exception as exc:                                          # noqa: BLE001
-            _file_unparseable_torrent(path, exc)
+            if not _recover_truncated_torrent(path, records):
+                _file_unparseable_torrent(path, exc)
             continue
         _mirror_source(path, h)
         if h in records:
@@ -2833,9 +2894,15 @@ def _file_unparseable_torrent(path, exc):
 
     The cause is almost always a truncated file (an interrupted download or a
     partial iCloud sync), so the parse fails at a byte offset past the end of the
-    file. That is not transiently recoverable: moving the file back into the watch
-    folder re-runs the same parse and it lands back in failed/. A torrent that
-    keeps returning to failed/ is truncated -- replace the file, do not re-drop it.
+    file. That is not transiently recoverable by re-dropping: moving the file back
+    into the watch folder re-runs the same parse and it lands back in failed/. A
+    torrent that keeps returning to failed/ is truncated -- replace the file rather
+    than re-drop it.
+
+    Hash-named drops never reach here: the filename IS the info hash, so
+    `_recover_truncated_torrent` rebuilds the drop as a magnet and lets qBittorrent
+    fetch the real metadata from the swarm. What lands in failed/ by this path is a
+    truncated drop with no hash to recover from.
 
     A drop iCloud is still writing is exempt: parsing is only judged final once the
     file has been untouched for config.UNPARSEABLE_GRACE_SEC.
@@ -2853,7 +2920,8 @@ def _file_unparseable_torrent(path, exc):
         dest = config.FAILED_DIR / path.name
         os.replace(path, dest)       # same iCloud volume; atomically overwrites any prior copy
         log(f"Filed unreadable .torrent under failed/: {path.name} ({exc}). "
-            f"The file is truncated or corrupt -- replace it rather than re-dropping it.")
+            f"The file is truncated or corrupt and carries no hash-named recovery "
+            f"path -- replace it rather than re-dropping it.")
     except OSError as os_exc:
         log(f"Warning: could not file unreadable .torrent {path.name} under failed/: {os_exc}")
 

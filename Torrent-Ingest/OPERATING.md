@@ -46,6 +46,16 @@ progress from Finder or your phone:
 
 Re-dropping a `.torrent` from `finished/` or `failed/` back to the top level retries it.
 
+**A `.torrent` that lands in `failed/` on its own is truncated** — the download or the
+iCloud sync stopped short, and re-dropping it changes nothing. There is one exception
+you do not have to work for: every drop is named with its 40-character info hash
+(`04CFA…C2.torrent`), and when the bencode will not parse that filename is all a magnet
+needs. Those are recovered **automatically** — the drop becomes a QUEUED magnet,
+qBittorrent fetches the real metadata from the swarm, and you will see it in `queued/`
+as a `.magnet`. Its dead bytes still appear under `failed/` for inspection (the janitor
+clears them after a week); no action is needed. A `.torrent` with a normal name in
+`failed/` has no hash to recover from and must be replaced.
+
 Two other inboxes still work:
 
 * `~/Downloads/DirectIngest/` — drop a loose file OR folder here and it is filed: video

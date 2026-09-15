@@ -13,8 +13,15 @@ dark) with the traffic already shifted.
 
 **Both directions, because a filter that can never be true reads exactly like a clean
 result (§4.5).** Part 1 proves it REFUSES each hostile shape. Part 2 proves it ACCEPTS
-every real `.torrent` on disk -- if it refused those too it would be "safe" and useless,
-and the fleet would stop admitting anything the owner dropped.
+every real `.torrent` on the ADMISSION paths -- if it refused those too it would be
+"safe" and useless, and the fleet would stop admitting anything the owner dropped.
+
+`failed/` is deliberately NOT one of those paths. It is where the state machine parks a
+`.torrent` it has already proven unreadable, and the safety gate is consulted on the way
+IN -- so scanning it here would assert that a dead file must pass the gate that the
+state machine already rejected, and the check would go red every time the owner drops a
+truncated file. The gate's real corpus is the watch-folder top level (a fresh drop,
+before filing), the three live subfolders, and the local source mirror.
 
     python3 scripts/test_torrent_metadata_safety.py
 
@@ -28,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import acceptance_gate                                           # noqa: E402
+import config                                                    # noqa: E402
 
 failures = []
 
@@ -100,21 +108,22 @@ with tempfile.TemporaryDirectory() as td:
         f.write_bytes(_torrent(paths))
         check(label, acceptance_gate.metadata_is_safe(f), True)
 
-# Every real .torrent the fleet has kept must still be admissible. This is the half that
-# proves the gate is not simply refusing everything.
+# Every real .torrent on an ADMISSION path must still be admissible. This is the half
+# that proves the gate is not simply refusing everything. `failed/` is excluded on
+# purpose -- see the module docstring.
 real = []
-for d in (Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/Torrents",
-          Path.home() / "Downloads"):
+for d in (config.TORRENTS_DIR, config.QUEUED_DIR, config.INGESTING_DIR,
+          config.FINISHED_DIR, config.TORRENT_SOURCE_MIRROR):
     if d.exists():
-        real.extend(sorted(d.rglob("*.torrent"))[:200])
-print(f"\n  {len(real)} real .torrent file(s) on disk")
+        real.extend(sorted(d.glob("*.torrent")))
+print(f"\n  {len(real)} real .torrent file(s) on the admission paths")
 refused = [t for t in real if not acceptance_gate.metadata_is_safe(t)]
 if refused:
     for t in refused:
         print(f"  FAIL real torrent refused: {t}")
     failures.append(f"{len(refused)} real .torrent(s) refused by the safety gate")
 else:
-    print("  ok   every real .torrent on disk is accepted")
+    print("  ok   every real .torrent on the admission paths is accepted")
 
 print()
 if failures:
