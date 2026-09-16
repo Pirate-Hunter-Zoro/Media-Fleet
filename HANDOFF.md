@@ -292,6 +292,20 @@ different `episode_title` can still be filed alongside an evicted episode. The n
 to make the collision check consult the mount (or an owned inventory) and to fail the plan
 on a title mismatch instead of dropping.
 
+**Recovery note (2026-09-15 21:36-21:37, self-inflicted).** The serial-numbering commit
+was authored while the daemon was already executing the working tree; an intermediate edit
+referenced a helper by the wrong name for ~40 minutes, and every identify call in that
+window died with `NameError: _serial_numbering_block`. Three packs lost files to the
+per-file "giving up, freeing bytes UNFILED" path: Doctor Who (1963) 32 indices, Smallville
+25, the new-Who pack 18 (it FAILED and its `.torrent` went to `failed/`). All three are
+recoverable from their torrents and were repaired the same hour: the failed lists and
+attempt counters were cleared so the active waves re-fetch and re-file, and the new-Who
+`.torrent` was moved from `failed/` back to the watch root (it re-adopted at "160/178
+already filed" and is fetching the rest). The lesson is the deploy rule's mirror image:
+**the working tree is live the instant it is saved, so an edit is a deploy** — after any
+change to `identify.py`/`library.py` under a running daemon, `verify_fleet.sh` before the
+daemon next reaches that code path, not before the commit.
+
 ---
 
 ## 7. What is known-broken, accepted, and NOT on anyone's to-do list
