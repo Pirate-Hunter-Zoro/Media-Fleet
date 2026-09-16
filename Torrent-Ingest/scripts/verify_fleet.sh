@@ -310,6 +310,15 @@ run "comic kind splits fold + fail open (both ways)" \
 # subprocess now).
 run "manga chapters yield to volumes (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_manga_chapter_reconcile.py
+# A release that names every part of a story with the same `SxxEyy` (the SERIAL) was
+# misfiled twice by two different models: once on the original ingest, then again on the
+# re-fetch waves (28 files). The harness now COMPUTES the broadcast numbers from the
+# release's folder ranges and makes them binding in validate_plan. This asserts the
+# arithmetic against the handoff's independently confirmed slots, the real filename
+# shapes from later seasons, and both directions of the guard -- an ordinary release
+# produces no map, so the guard cannot touch normal plans.
+run "serial-numbered releases compute their numbering" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_serial_release_numbering.py
 # The arc->season mapping the harness now COMPUTES, and the two guards that enforce it.
 # This is the acceptance gate's own check: Monogatari failed three runs because nothing
 # married the release's arcs to the provider's seasons, and the counts lined up perfectly

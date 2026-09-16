@@ -1106,12 +1106,16 @@ def _reroute_novel_archives(plan, content_root):
     return plan
 
 
-def validate_plan(plan, content_root, sibling_seasons=None):
+def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None):
     """Raise PlanError if the plan is unsafe or malformed. Returns normalized plan.
 
     `sibling_seasons` is the set of season numbers the SOURCE the plan was cut from
     also carries outside this plan's slice of it — a chunked torrent's remaining
     waves. It only feeds the season-gap guard; see `_reject_season_gap`.
+
+    `serial_map` is `identify.serial_release_map` over the whole release, and it makes
+    the computed broadcast numbering BINDING for a pack that names its files by serial
+    (see the guard below). Optional: None simply disables that check.
 
     Guarantees before any file is touched:
       * media_type is show|movie|comic|mixed,
@@ -1488,6 +1492,32 @@ def validate_plan(plan, content_root, sibling_seasons=None):
                 raise PlanError(f"supersedes[{idx}] is not a comic file: {sp}")
             if str(sp_abs) in writing:
                 raise PlanError(f"supersedes[{idx}] is also being written by this plan: {sp}")
+
+    # --- serial-numbered releases: the numbering is arithmetic --------------------
+    # A pack whose files are named `S01E05 (005) - The Keys of Marinus (1)` uses the
+    # release's SERIAL as `SxxEyy`, so every part of a story advertises the same episode.
+    # `serial_map` is `identify.serial_release_map` over the WHOLE release (folder,
+    # basename) -> computed broadcast slot. A plan that files a mapped file anywhere else
+    # is contradicting arithmetic, so it is refused here -- the model gets the computed
+    # numbers in its prompt, and this is the backstop that makes them binding. Fail-open
+    # for BOTH sides: no map, or a file the map does not name (an extra, a movie), is
+    # simply not checked.
+    if serial_map:
+        for idx, f in enumerate(files):
+            src_p = Path(f.get("src") or "")
+            exp = serial_map.get((src_p.parent.name, src_p.name))
+            if not exp:
+                continue
+            m = re.search(r"[Ss](\d{1,3})[Ee](\d{1,4})", Path(f.get("dst_rel") or "").name)
+            got = (int(m.group(1)), int(m.group(2))) if m else None
+            if got != (exp["season"], exp["episode"]):
+                raise PlanError(
+                    f"file[{idx}] {src_p.name!r} is {exp['story']!r} part {exp['part']} "
+                    f"of a SERIAL-NUMBERED release: its computed broadcast slot is "
+                    f"S{exp['season']:02d}E{exp['episode']:02d}, but the plan files it at "
+                    f"{f.get('dst_rel')!r}. The `SxxEyy` in the release filename is a "
+                    f"SERIAL number, not the episode -- do not copy it onto the "
+                    f"destination. File it at the computed slot.")
 
     _reject_comic_at_franchise_root(files)
     _reject_absolute_run_split(files)

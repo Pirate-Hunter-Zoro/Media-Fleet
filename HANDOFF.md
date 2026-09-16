@@ -203,7 +203,7 @@ Every number below was measured, not estimated, except the `library.db` row (mar
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 49 blocking checks |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 50 blocking checks |
 | `fleet_doctor` | the 7-item curation warning WAS the Doctor Who misfiles; the reports refresh on their own schedule |
 | `fleet_health` | same warning, no action |
 | `media_doctor` | Doctor Who (1963): **zero placement faults** after the repair; only title-quality items (bare names awaiting Jellyfin's scrape / the revert-guard) |
@@ -213,7 +213,7 @@ Every number below was measured, not estimated, except the `library.db` row (mar
 | Mount | Shows 307, Movies 2,673, Comics 9 — primed and serving |
 | `library.db` | 23,153 owned rows at 09:50 (the repair superseded 15 wrong-slot rows and recorded 34 corrected files) |
 | YacReader | scan-at-startup flags **on**, supervisor enforcing them; the NFC false positive was fixed 2026-09-15 (`test_yacreader_index_shape.py` / `test_supervisor_yacreader.py`) |
-| In flight | chunked **Doctor Who (1963)** pack repaired: 34 wrong-slot files re-filed, 17 lost indices re-armed; wave 104 re-identifying under the new prompt + guard, the 17 missing parts re-fetch in later waves. **Smallville (2001)** (`04cf0a35`) downloading its early waves. Reaper running (check idle before bouncing) |
+| In flight | chunked **Doctor Who (1963)** pack repaired twice: 34 wrong-slot files re-filed, the re-fetch misfiles cleaned (0 wrong placements now), 8 indices re-armed for re-fetch, and the serial-numbering guard now binding on every plan. Wave 184 re-identifies when `torrentingest` is next started. **Smallville (2001)** (`04cf0a35`) downloading its early waves. Reaper running (check idle before bouncing) |
 | Open work | **none from the 2026-09-15 list — both queued tasks shipped** (below). Everything else is clear — read §7 before reading that as "nothing is wrong" |
 
 ### Shipped 2026-09-15 — the two queued tasks
@@ -268,6 +268,29 @@ deterministic coverage half:
 no content check. If a future run sees a same-slot drop with a different `episode_title`,
 fail the plan rather than dropping the file (the new guard removes the trigger seen so
 far, not the hazard).
+
+**3. The serial-release guard (follow-up to the Doctor Who re-fetch, same day).** The
+re-fetch waves misfiled **28 more files** by copying the release's serial numbers again:
+the plan put The Daleks (1) at `S01E02`, and a truncated 6MB copy was filed there because
+`_collapse_existing_episode_collisions` scans `MEDIA_ROOT` and the correct An Unearthly
+Child part 2 was **evicted to the pool** — invisible to the collision check. The fix is
+the handoff's own rule, "compute the answer": `identify.serial_release_map` computes the
+broadcast numbers from the release's folder `Parts N-M` ranges (accrued per season),
+`serial_numbering_block` states them in the prompt, and `library.validate_plan(serial_map=…)`
+now **refuses** a plan that contradicts them. Both sides fail open for ordinary releases.
+`test_serial_release_numbering.py` (registered, check #50) pins the arithmetic against the
+independently confirmed slots and both guard directions. The 28 misfiles were cleaned:
+18 real parts moved to their computed slots (chain-ordered, `.bak-remap-1` state backups),
+10 misfiled copies superseded (partial 6MB copies, redundant copies of owned mkvs, 4
+intros/outros occupying episode slots), and 8 indices re-armed for re-fetch
+(5, 18, 39, 146-150). A path-level damage scan now reports **0 wrong placements** against
+the computed map.
+
+**Still open from that class (general, not serial-specific):** the episode-collision
+collapse is blind to episodes that are **pool-only**; a future same-slot drop with a
+different `episode_title` can still be filed alongside an evicted episode. The next fix is
+to make the collision check consult the mount (or an owned inventory) and to fail the plan
+on a title mismatch instead of dropping.
 
 ---
 

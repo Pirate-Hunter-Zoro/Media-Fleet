@@ -1905,7 +1905,8 @@ def _identify_wave(record, t, save_path, by_index, pending):
                 f"dropping the wave cleanly.")
             return True, {}, set()
         library.validate_plan(plan, str(content_root),
-                              sibling_seasons=_torrent_seasons(by_index))
+                              sibling_seasons=_torrent_seasons(by_index),
+                              serial_map=identify.serial_release_map(release_files))
         applied = library.apply_plan(plan, wave_id)
     except identify.IdentifyUnavailable:
         raise
@@ -2650,7 +2651,8 @@ def _advance_identify(record, client):
                 f"or extras); treated as success, filed under finished/.")
             _advance_stage(record, client)
             return
-        library.validate_plan(plan, content)
+        library.validate_plan(plan, content,
+                              serial_map=identify.serial_release_map_for_content(content))
     except identify.IdentifyUnavailable as exc:
         # The CLI could not run -- usage window exhausted, or no usable credential. Either
         # way the plan was never attempted. _fail() here would file the .torrent into

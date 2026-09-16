@@ -1521,6 +1521,33 @@ The plan-on-disk still named them; the validator had already pruned them. Reject
 collapsed plan up front is what stops the loss: a retried plan numbers the parts at
 E05+ where nothing exists, so no part is dropped and no byte is freed.
 
+### The serial-release numbering guard (`identify.serial_release_map`, `validate_plan`)
+
+**A release whose `SxxEyy` is a serial number looks exactly like a correctly-named one.**
+The classic Doctor Who pack names every part of a story `S01E05 (005) - The Keys of
+Marinus (1) …`: six files advertise `S01E05`, the `(1)` is the part, and the folder says
+`Parts 1-6`. Two different models copied the serial onto the destination — once on the
+original ingest, and again on the 2026-09-15 re-fetch waves, which misfiled 28 files
+(three as truncated copies) because the correct existing episode had been **evicted to
+the pool**, so `_collapse_existing_episode_collisions` — which scans `MEDIA_ROOT` —
+could not see it.
+
+The numbering is arithmetic, so the harness computes it. `identify.serial_release_map`
+parses the folder's `Parts N-M` range and accumulates ranges per season by serial; it
+handles the shapes real later seasons use — `S04E01(028)` with no space, a story split
+across folders (`Parts 5-8`), a whole season packed into one folder (`Parts 1-14`, the
+files inside carrying different serials), and it refuses Bonus/Intro/Outro clips, which
+are not episodes. The computed numbers are:
+
+* **stated in the prompt** (`serial_numbering_block`, wave files only) as facts, and
+* **binding in `validate_plan(serial_map=…)`** — a plan that files a mapped file anywhere
+  but its computed slot is refused with the computed slot named. Both sides fail open:
+  no map (an ordinary release) or an unmapped file (an extra) is simply not checked.
+
+`test_serial_release_numbering.py` pins the arithmetic against the handoff's independently
+confirmed slots (`S01E07` = The Escape, `S01E18` = Rider from Shang Tu, `S01E31` =
+Strangers in Space) and both directions of the guard.
+
 ### The franchise namespace (`_reject_comic_at_franchise_root`)
 
 **No comic file may be filed directly into a franchise master folder.** A master

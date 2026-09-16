@@ -530,6 +530,165 @@ def _parse_release_name(stem):
     return label, int(m.group("num"))
 
 
+# --- serial-numbered releases: the numbering is arithmetic ----------------------
+#
+# Doctor Who (1963) classic pack, 2026-09-15. The release names its files
+# `S01E05 (005) - The Keys of Marinus (1) - …` where `S01E05` is the SERIAL number
+# (season 1, story 5) and the part is in the `(1)`. Every part of a story therefore
+# advertises the SAME season+episode, and a model that trusts the filename files all
+# six parts at `S01E05`. The repair moved the parts to the accumulated broadcast
+# slots, and the re-fetch waves then re-filed them by serial number AGAIN -- twice,
+# because nothing in the harness could tell that the release's numbering is serial.
+#
+# It can. `SxxEyy (NNN)`, a folder that says `Parts 1-N`, and the order of the serial
+# numbers make the broadcast number pure arithmetic: episode = sum(parts of earlier
+# stories in the season) + part. The map below is that arithmetic, computed from the
+# release's own file list; `_serial_numbering_block` states it to the model and
+# `library.validate_plan` rejects a plan that contradicts it. This is the arcmap rule
+# (§5 of the handoff): if a step is arithmetic, do the arithmetic.
+
+_SERIAL_FILE = re.compile(
+    r"S(?P<season>\d{1,2})E(?P<serial>\d{1,3})\s*\((?P<num>\d{1,4})\)"
+    r"(?P<rest>.*?)(?P<ext>\.[A-Za-z0-9]{2,5})$")
+_SERIAL_FOLDER = re.compile(
+    r"S(?P<season>\d{1,2})E(?P<serial>\d{1,3})\s*\((?P<num>\d{1,4})\)\s*-\s*"
+    r"(?P<story>.+?)\s*-\s*Parts (?P<start>\d{1,3})-(?P<end>\d{1,3})")
+
+
+def serialize_parse(dirname, basename):
+    """(folder_key, part, start, end, story) for one release file, or None.
+
+    `folder_key` is `(release_season, folder_serial)` -- the FOLDER is the story, and its
+    `Parts N-M` range says which episode numbers it holds. The file's own `SxxEyy` is
+    deliberately not trusted for the episode: a story split across folders or a season
+    packed into one folder (the 14-part Trial of a Time Lord) carries file serials that do
+    not match the folder's, and the part number plus the folder's range is enough.
+    Bonus files, Intros/Outros and summary clips return None: they are not episodes and
+    no arithmetic maps them.
+    """
+    if " Bonus - " in basename:
+        return None
+    if re.search(r"\bintro\b|\boutro\b", basename, re.IGNORECASE):
+        # A clip labeled with a part number but named Intro/Outro (`(3) - Intro for E3`)
+        # is still not the episode; claiming it would put an extra in an episode's slot.
+        return None
+    fm = _SERIAL_FOLDER.search(dirname)
+    if not fm:
+        return None
+    bm = _SERIAL_FILE.search(basename)
+    if not bm:
+        return None
+    if fm.group("season") != bm.group("season"):
+        return None                       # folder and file are different seasons: no
+    pm = re.search(r"\((\d{1,2})\)(?=[\s.)]|$)", bm.group("rest"))
+    if not pm:
+        return None                       # Intro/Outro/summary shapes are not parts
+    part = int(pm.group(1))
+    start, end = int(fm.group("start")), int(fm.group("end"))
+    if not (start <= part <= end):
+        return None
+    return ((int(fm.group("season")), int(fm.group("serial"))),
+            part, start, end, fm.group("story").strip())
+
+
+def serial_release_map(release_files, content_root=None):
+    """`{(parent_folder, basename): {"season", "episode", "story", "part"}}` or {}.
+
+    `release_files` are release-relative paths (torrent names or a content walk). Empty
+    for any release that is not serial-numbered.
+
+    The arithmetic: within each release season, folders are ordered by their serial
+    number and their part RANGES accumulate; a file's episode is its folder's offset plus
+    `part - start + 1`. A story split across folders (`Parts 5-8`) or a season packed
+    into one folder (`Parts 1-14`) both land correctly because the range carries where it
+    starts.
+    """
+    parsed = {}
+    for rel in release_files or ():
+        rel_s = str(rel).replace("\\", "/")
+        parts_ = rel_s.split("/")
+        if len(parts_) < 2:
+            continue
+        dirname, basename = parts_[-2], parts_[-1]
+        got = serialize_parse(dirname, basename)
+        if got:
+            parsed[(dirname, basename)] = got
+    if not parsed:
+        return {}
+
+    # Folder spans per release season, then the running offset per folder.
+    folder_span = {}
+    for _key, (folder_key, _part, start, end, _story) in parsed.items():
+        folder_span[folder_key] = (start, end)
+    offsets = {}
+    for season in {s for s, _ in folder_span}:
+        off = 0
+        for serial in sorted(ser for se, ser in folder_span if se == season):
+            offsets[(season, serial)] = off
+            start, end = folder_span[(season, serial)]
+            off += (end - start + 1)
+
+    out = {}
+    for key, (folder_key, part, start, _end, story) in parsed.items():
+        out[key] = {"season": folder_key[0],
+                    "episode": offsets[folder_key] + (part - start) + 1,
+                    "story": story, "part": part}
+    return out
+
+
+def serial_release_map_for_content(content_path):
+    """The serial map from a content-root walk, or {} (direct/whole-torrent drops)."""
+    from pathlib import Path as _P
+    root = _P(content_path)
+    if not root.is_dir():
+        return {}
+    rels = []
+    for f in root.rglob("*"):
+        if f.is_file() and f.suffix.lower() in config.MEDIA_EXTENSIONS:
+            try:
+                rels.append(str(f.relative_to(root)))
+            except ValueError:
+                continue
+    return serial_release_map(rels, content_root=root)
+
+
+def serial_numbering_block(content_root, release_files=None, wave_names=None):
+    """The computed serial->broadcast numbering, stated to the model as fact.
+
+    Only the wave's files are printed when `wave_names` is given (a chunked wave is <=
+    ~32 files; the whole release can be 1,000+ and its other stories' numbers are noise
+    on this call). Returns "" when the release is not serial-numbered.
+    """
+    if release_files:
+        rels = [str(r).replace("\\", "/") for r in release_files]
+        smap = serial_release_map(rels)
+    else:
+        rels, smap = [], serial_release_map_for_content(content_root)
+    if not smap:
+        return ""
+    wanted = set()
+    if wave_names:
+        wanted = {str(n).replace("\\", "/").split("/")[-1] for n in wave_names}
+    rows = []
+    for (dirname, basename), exp in sorted(smap.items(),
+                                           key=lambda kv: (kv[1]["season"], kv[1]["episode"])):
+        if wanted and basename not in wanted:
+            continue
+        rows.append(f"  {basename[:60]:62s} =>  Season {exp['season']:02d}, "
+                    f"Episode {exp['episode']:02d}   ({exp['story']}, part {exp['part']})")
+    if not rows:
+        return ""
+    return ("======================================================================\n"
+            "SERIAL-NUMBERED RELEASE -- COMPUTED BROADCAST NUMBERING\n"
+            "======================================================================\n"
+            "This release's `SxxEyy` is its SERIAL number, not the episode: every part of\n"
+            "a story repeats the same `SxxEyy`, and the part is in the `(N)` after the\n"
+            "story name. The harness accumulated the parts per season, so the numbers\n"
+            "below are what each file IS. File each file at the computed slot; do NOT\n"
+            "copy `SxxEyy` onto the destination.\n\n"
+            + "\n".join(rows) + "\n")
+
+
 def _release_structure_block(content_path, release_files=None):
     """A factual summary of how the release is laid out, plus any split/numbering conflict.
 
@@ -839,6 +998,8 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
     settled = _settled_block(stored_plan)
     failure = _failure_context_block(failure_context or [])
     structure = _release_structure_block(content_path, release_files)
+    serial = serial_numbering_block(content_path, release_files,
+                                    wave_names=_listing_names(file_listing))
     provider = _provider_season_block(content_path, release_files)
     arcs = _arc_season_block(content_path, release_files)
     specials = _specials_metadata_block(content_path, release_files,
@@ -858,6 +1019,7 @@ Files in the download (relative to that path):
 
 {settled}
 {structure}
+{serial}
 {provider}
 {arcs}
 {specials}
@@ -1211,6 +1373,11 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
     # Computed once for the whole chain: every provider sees the same mapping, and the
     # lookup behind it is a cached provider call we should not repeat per attempt.
     arc_title, arc_proposal = _arc_proposal(content_path, release_files)
+    # Serial-numbered releases (classic Doctor Who, 2026-09-15): computed once, stated to
+    # every provider, and passed to validate_plan so a serial-copied destination is
+    # refused rather than filed.
+    serial_map = (serial_release_map(release_files) if release_files
+                  else serial_release_map_for_content(content_path))
 
     if settled:
         tools = "Read,Write,Glob,Grep,Probe,ListDir"
@@ -1468,7 +1635,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                 return plan, rationale
             try:
                 library.validate_plan(plan, str(content_path),
-                                      sibling_seasons=sibling_seasons)
+                                      sibling_seasons=sibling_seasons,
+                                      serial_map=serial_map)
                 globals()["_UNAVAILABLE_UNTIL"] = 0.0
                 _clear_rejections(info_hash)      # it finally landed; the lesson is spent
                 return plan, rationale
