@@ -90,7 +90,9 @@ def state() -> dict:
     return {"yac_started_at": None, "yac_stopped_by_us": False, "yac_crashes": 0,
             "yac_backoff_until": None, "yac_backoff_alerted": False,
             "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
-            "yac_activate_attempts": 0, "yac_activate_alerted": False}
+            "yac_activate_attempts": 0, "yac_activate_alerted": False,
+            "yac_bounced_after_alert": False,
+            "yac_hide_until": 0.0}
 
 
 try:
@@ -163,6 +165,8 @@ try:
     ls._yacreader_tick(st)
     check("an update in flight resets the attempts",
           st["yac_activate_attempts"] == 0 and st["yac_activate_alerted"] is False)
+    check("...and re-arms the alert bounce",
+          st["yac_bounced_after_alert"] is False)
 
     # 3b. An app with an update IN FLIGHT must never be activated: it closes its index
     #     between operations and I/O-bound scanning can sit at ~1.5% CPU, so the
@@ -197,8 +201,9 @@ try:
         CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
         ls._yacreader_tick(st)
     check("activation is bounded, not repeated",
-          fake.activations == config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS)
-    check("it never restarts for a missing window", fake.starts == 0)
+          fake.activations == 2 * config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS)
+    check("a persistently windowless app is bounced exactly once", fake.starts == 1)
+    check("...and not stopped a second time", fake.stops == 1)
     check("the owner is alerted once", len(fake.alerts) == 1)
 
     # 5. Crash loop -> backoff, no thrash.

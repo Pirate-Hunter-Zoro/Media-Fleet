@@ -260,6 +260,15 @@ hides an already-visible reader for that window (covers login auto-relaunch). Gu
 `test_yacreader_hide.py` (check #53, route order + fail-soft) and the extended
 `test_supervisor_yacreader.py`. Hiding does not stop the library update.
 
+**And a windowless reader it cannot activate is bounced once.** Every deploy restarts
+mediafs moments before the supervisor starts YacReader, and an app that comes up during
+the re-prime can end with no library opened at all — `activate` and `open` are both
+no-ops on that process (measured 2026-09-19: 0 windows, five consecutive deploy-time
+alerts). After the existing two activation attempts and the alert, the supervisor now
+stops and starts it exactly ONCE; a fresh process after the mount has settled re-opens
+its library, and a second failure stands as the alert with the crash policy owning it.
+Bounded by `yac_bounced_after_alert`, re-armed only when an update is seen.
+
 **Replay results (printed by `test_plan_coverage.py`, in the commit message).** 177
 whole-torrent historical plans still have their `.torrent` mirror. The coverage contract
 would have parked 5 — the Smurfs (365 files, the incident), **Yamato 2202 (26 REAL

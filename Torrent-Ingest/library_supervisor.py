@@ -337,6 +337,7 @@ def _yacreader_tick(state: dict) -> None:
             if yacreader_db.update_in_progress():
                 state["yac_activate_attempts"] = 0
                 state["yac_activate_alerted"] = False
+                state["yac_bounced_after_alert"] = False
             elif started is not None \
                     and now - started <= config.SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC:
                 attempts = state.get("yac_activate_attempts", 0)
@@ -353,6 +354,22 @@ def _yacreader_tick(state: dict) -> None:
                           "startup update cannot run and new comics will not be "
                           "indexed.")
                     state["yac_activate_alerted"] = True
+                    # Activation does not always reach it. Every deploy restarts mediafs
+                    # moments before the supervisor starts the reader, and an app that
+                    # comes up while the mount is still re-priming can end with no library
+                    # opened at all -- neither `activate` nor `open` makes it try again
+                    # (measured 2026-09-19: 0 windows, activation a no-op, five consecutive
+                    # deploy-time alerts). A FRESH process after the mount has settled
+                    # does, so bounce it exactly ONCE; then the alert stands and the crash
+                    # policy owns whatever happens next.
+                    if not state.get("yac_bounced_after_alert"):
+                        state["yac_bounced_after_alert"] = True
+                        log("windowless YacReader did not answer activation; bouncing it "
+                            "once so it re-opens its library")
+                        state["yac_stopped_by_us"] = True
+                        stop_yacreader()
+                        state["yac_activate_attempts"] = 0
+                        _start_yacreader_with_scan(state)
         return
 
     # Down. A start that did not survive the crash window is a crash, not a quit; enough
@@ -524,6 +541,7 @@ def main() -> int:
              "yac_backoff_until": None, "yac_backoff_alerted": False,
              "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
              "yac_activate_attempts": 0, "yac_activate_alerted": False,
+             "yac_bounced_after_alert": False,
              # Hide a reader that was already up and visible when this supervisor
              # (re)started -- a login auto-relaunch, or a deploy. Bounded to the same
              # window as a fleet start, so an owner who opens the reader right after a
