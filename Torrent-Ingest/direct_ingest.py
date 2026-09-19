@@ -73,11 +73,42 @@ import config                                                          # noqa: E
 import identify                                                        # noqa: E402
 import ingest                                                          # noqa: E402  (Jellyfin rescan + proofs)
 import library                                                         # noqa: E402
+import plan_coverage                                                   # noqa: E402
 
 
 WATCH_DIR = config.DIRECT_INGEST_DIR
 FAILED_DIR = WATCH_DIR / ".failed"
 SKIPPED_DIR = WATCH_DIR / ".skipped"
+
+
+def _coverage_gaps(p: Path, plan: dict, content_root: Path):
+    """Drop files the plan neither names nor provably accounts for.
+
+    The direct path already removes only PLANNED sources and parks leftovers, so it
+    never had the Smurfs failure. This makes it hold the same contract as the torrent
+    path anyway -- a partial plan fails here too, so the three admission routes cannot
+    drift apart (HANDOFF 10.1). Fail open when the walk fails.
+    """
+    try:
+        if p.is_file():
+            release = [(p.name, p.stat().st_size)]
+        else:
+            release = []
+            for f in p.rglob("*"):
+                if f.is_file():
+                    try:
+                        release.append((str(f.relative_to(p)), f.stat().st_size))
+                    except (OSError, ValueError):
+                        continue
+    except OSError:
+        return []
+    if not release:
+        return []
+    resolved = [d.get("src") for d in (plan.get("_deduped_dropped") or [])
+                if isinstance(d, dict)]
+    unresolved, _accounted = plan_coverage.release_gaps(
+        release, plan.get("files") or [], content_root, resolved_srcs=resolved)
+    return unresolved
 
 # True DELETES an ARCHIVE the identify step judged to have no library media in it (a
 # single issue already inside a shelved collection, a variant-cover-only rip). A skipped
@@ -381,7 +412,13 @@ def process(p: Path) -> bool:
         # `files`, or write `files: []`) -- `run_identify` returns those unvalidated.
         if not plan.get("files"):
             raise library.PlanError("plan.files must be a non-empty list")
-        library.validate_plan(plan, str(content_root))
+        library.validate_plan(plan, str(content_root), release_name=p.name)
+        gaps = _coverage_gaps(p, plan, content_root)
+        if gaps:
+            raise library.PlanError(
+                f"plan leaves {len(gaps)} file(s) in this drop unaccounted for "
+                f"(e.g. {', '.join(str(g) for g in gaps[:3])}); a partial plan is not "
+                f"permission to file or delete the rest")
     except identify.IdentifyUnavailable:
         # The API could not run. Nothing is wrong with this file, so it is NOT relocated —
         # it stays in the watch folder and the caller idles the scan until the window

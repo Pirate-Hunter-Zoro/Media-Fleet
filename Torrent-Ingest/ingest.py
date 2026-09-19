@@ -56,6 +56,7 @@ import config
 import identify
 import journal
 import library
+import plan_coverage
 import qbt
 import reconcile
 
@@ -353,10 +354,10 @@ def _register_magnet(path, records):
         _file_torrent(rec, dest, dest_label)
         # A SECOND source for a hash already registered -- iCloud surfaces "X.magnet" and
         # "X 2.magnet" for one drop, and a re-dropped recovery magnet lands beside the
-        # copy already filed. File the extra copy too; left alone it strands at the top
-        # of the watch folder and is re-scanned on every registration pass.
+        # copy already filed. It is byte-identical to the source we track, so filing it
+        # into queued/ just makes an orphan nothing scans; it goes to finished/ instead.
         if Path(path).exists() and str(path) != str(rec.get("torrent_path") or ""):
-            _file_torrent({"torrent_path": str(path)}, dest, dest_label)
+            _file_duplicate_source(path, records, h)
         if not rec.get("magnet"):
             rec["magnet"] = magnet_uri
             journal.write_record(rec)
@@ -459,6 +460,109 @@ def _recover_truncated_torrent(path, records) -> bool:
     return _discard_dead_torrent(path, "superseded by the recovered magnet")
 
 
+def _file_duplicate_source(path, records, info_hash):
+    """File a second copy of an already-tracked drop out of the watch subfolders.
+
+    iCloud surfaces `X.torrent` and `X 2.torrent` for one drop, and a second source
+    can land beside a recovered one. It is byte-identical to the source the record
+    tracks, so it goes to finished/ (or failed/, for a record already there): visible,
+    out of the pipeline, and re-droppable by hand. The old code filed it into queued/,
+    where `find_drop_files` never looks -- which is how two One Piece files sat in
+    queued/ for a month (HANDOFF 10.6). Never deleted.
+    """
+    dest = (config.FAILED_DIR
+            if (records.get(info_hash) or {}).get("status") in (journal.FAILED,
+                                                                journal.REFUSED)
+            else config.FINISHED_DIR)
+    label = "failed" if dest == config.FAILED_DIR else "finished"
+    if _file_torrent({"torrent_path": str(path)}, dest, label):
+        log(f"Filed duplicate source {path.name} under {label}/ "
+            f"(already tracked as {info_hash[:12]}).")
+
+
+def _source_hash(path):
+    """The info hash a `.torrent`/`.magnet` in a state folder stands for, or None.
+
+    None means "cannot tell" (a truncated or still-syncing drop), and every caller
+    treats it as leave-it-alone: the sweep must never guess about bytes it cannot
+    identify.
+    """
+    try:
+        if path.suffix.lower() == ".magnet":
+            h, _name, _uri = _read_magnet(path)
+            return h
+        return qbt.info_hash_from_file(path)
+    except Exception:                                                     # noqa: BLE001
+        return None
+
+
+def sweep_orphan_sources(records):
+    """File every terminal or duplicate source out of queued/ and ingesting/.
+
+    `find_drop_files` reads only the watch root's TOP LEVEL, so a `.torrent` that
+    ends up in `queued/` is never looked at again by anything. The tracked source
+    belongs there while the record is live, but a terminal record's file (a purge
+    left the record completed and the source behind) or an iCloud `" 2"` duplicate
+    has no reason to stay and no path out -- two One Piece files sat there forever
+    (HANDOFF 10.6). This sweep resolves each source's info hash and:
+      * a TERMINAL record -> finished/ (completed) or failed/ (failed/refused);
+      * a live record whose recorded source still exists -> finished/ as a duplicate;
+      * a live record whose recorded source is GONE -> adopt this copy as the source
+        (it is the only survivor, and without this a chunked pack could not resume);
+      * no record at all -> back to the watch root, where registration picks it up.
+    Never deletes, never touches a source it cannot parse.
+    """
+    moved = 0
+    for folder, label in ((config.QUEUED_DIR, "queued"),
+                          (config.INGESTING_DIR, "ingesting")):
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.iterdir()):
+            if path.suffix.lower() not in (".torrent", ".magnet"):
+                continue
+            h = _source_hash(path)
+            if not h:
+                continue
+            rec = records.get(h)
+            if rec is None:
+                try:
+                    os.replace(path, config.TORRENTS_DIR / path.name)
+                    log(f"Orphaned source {path.name} in {label}/ has no journal record; "
+                        f"returned to the watch root for registration.")
+                except OSError as exc:
+                    log(f"Could not return orphaned {path.name} to the watch root: {exc}")
+                continue
+            status = rec.get("status")
+            if status in journal.TERMINAL:
+                dest = (config.FAILED_DIR if status in (journal.FAILED, journal.REFUSED)
+                        else config.FINISHED_DIR)
+                if _file_torrent({"torrent_path": str(path)}, dest,
+                                 "failed" if dest == config.FAILED_DIR else "finished"):
+                    log(f"Filed terminal source {path.name} out of {label}/ "
+                        f"(record is {status}).")
+                    moved += 1
+                continue
+            recorded = Path(rec.get("torrent_path") or "")
+            try:
+                live = recorded.exists()
+            except OSError:
+                live = False
+            if live and _path_key(recorded) != _path_key(path):
+                if _file_torrent({"torrent_path": str(path)}, config.FINISHED_DIR,
+                                 "finished"):
+                    log(f"Filed duplicate source {path.name} out of {label}/ "
+                        f"(already tracked as {h[:12]}).")
+                    moved += 1
+            elif not live:
+                rec["torrent_path"] = str(path)
+                journal.write_record(rec)
+                log(f"Adopted {path.name} in {label}/ as the live source for {h[:12]} "
+                    f"(the recorded copy is gone).")
+    if moved:
+        log(f"Swept {moved} orphaned source(s) from queued//ingesting/.")
+    return moved
+
+
 def register_new_torrents(records):
     for path in find_drop_files():
         if path.suffix.lower() == ".magnet":
@@ -515,7 +619,10 @@ def register_new_torrents(records):
                 rec["torrent_path"] = str(path)
             moved = _file_torrent(rec, dest, dest_label)
             if not moved and Path(path).exists() and str(path) != rec.get("torrent_path"):
-                _file_torrent({"torrent_path": str(path)}, dest, dest_label)
+                # A second iCloud copy of a drop already tracked ("X 2.torrent").
+                # Filing it into queued/ creates an orphan nothing scans; it goes to
+                # finished/ as the duplicate it is (HANDOFF 10.6).
+                _file_duplicate_source(path, records, h)
             if moved or recorded != rec.get("torrent_path"):
                 journal.write_record(rec)
             continue
@@ -1716,6 +1823,11 @@ def _readopt_chunked(record, client, tmap=None):
 # is dropped cleanly rather than filed. Distinct from [] (a genuine failure whose
 # bytes are kept for retry) and from a non-empty applied list.
 _NO_HOME = object()
+# A file whose only destination collides with an episode already on disk under a
+# different name. Distinct from _NO_HOME on purpose: _NO_HOME is a clean drop (the bytes
+# are freed), _PARK must never free them -- the collision is an unresolved question, and
+# the release parks with the bytes intact (HANDOFF 10.2).
+_PARK = object()
 
 
 # A no-library-home EXTRA, as opposed to a real episode: a creditless or standalone
@@ -1723,24 +1835,21 @@ _NO_HOME = object()
 # manga chapters are — the bytes are freed, never renamed and never a failure. Used to
 # keep the dual-audio exception honest: a dual-audio torrent's opening is not a
 # dual-audio *upgrade*, so it must be dropped cleanly rather than failed.
-_NO_HOME_EXTRA_RE = re.compile(
-    r"creditless|\bncop\d*\b|\bnced\d*\b|\bplaceholder\b|\bcm\d*\b|\bop\d*\b|\bed\d*\b"
-    r"|\btrailer\d*\b|\bpv\d*\b|\bpreview\b|\bsample\b|\bteaser\b|\bmenu\b|\bpromo\b",
-    re.IGNORECASE)
-
-
+#
+# The token list now lives in `plan_coverage`, which the coverage contract also consults,
+# so the wave cleanup and the plan-coverage verdict can never disagree about what an
+# extra is.
 def _looks_like_no_home_extra(name):
-    t = re.sub(r"[\[\]\(\)_.]+", " ", (name or "").lower())
-    t = re.sub(r"\s+", " ", t).strip()
-    return bool(_NO_HOME_EXTRA_RE.search(t))
+    return plan_coverage.looks_like_no_home_extra(name)
 
 
 def _ingest_one_file(record, file_abs, sub_id, sibling_seasons=None):
     """Run the normal identify -> validate -> apply -> verify pipeline on a SINGLE completed
     file from a chunked torrent, filing it into the library. Returns applied entries, []
-    on a genuine failure (bytes kept for retry), or _NO_HOME when the file is media with no
-    library home and is dropped cleanly. Media-Syncer uploads what lands, then frees the
-    local library copy."""
+    on a genuine failure (bytes kept for retry), _NO_HOME when the file is media with no
+    library home and is dropped cleanly, or _PARK when its only slot collides with an
+    existing episode and the release must park rather than free it. Media-Syncer uploads
+    what lands, then frees the local library copy."""
     try:
         stored = identify.load_stored_plan(record.get("info_hash"))
         plan, rationale = identify.run_identify(sub_id, str(file_abs), log_fn=log,
@@ -1766,7 +1875,16 @@ def _ingest_one_file(record, file_abs, sub_id, sibling_seasons=None):
                 f"dropping: {file_abs.name}")
             return _NO_HOME
         library.validate_plan(plan, str(file_abs.parent),
-                              sibling_seasons=sibling_seasons)
+                              sibling_seasons=sibling_seasons,
+                              release_name=record.get("name"))
+        if plan.get("_collision_parked"):
+            # The only copy of this file collides with an episode already at that slot
+            # under a different name, and the harness will not guess which is right.
+            # Return a PARK verdict, never `_NO_HOME`: dropping it would delete the
+            # download on a collision the plan never resolved (HANDOFF 10.2).
+            log(f"  chunked file collides with an existing episode; parking the "
+                f"release instead of freeing it: {file_abs.name}")
+            return _PARK
         applied = library.apply_plan(plan, sub_id)
         ok, msg = library.verify_applied(applied)
         if not ok:
@@ -1840,15 +1958,42 @@ def _torrent_seasons(by_index):
     return seasons
 
 
+def _wave_disk_files(content_root):
+    """`[(relative_path, size)]` for what is on disk under a wave's content root.
+
+    A chunked torrent is identified one wave at a time and only the wave exists on
+    disk (earlier waves were unlinked as they filed; later ones are parked at
+    priority 0), so this walk IS the wave's release list for the coverage contract.
+    qBittorrent's incomplete-file suffix (`.!qB`) falls outside the media extensions
+    and is accounted for as non-media, correctly.
+    """
+    root = Path(content_root)
+    try:
+        if root.is_file():
+            return [(root.name, root.stat().st_size)]
+        out = []
+        for p in root.rglob("*"):
+            if p.is_file():
+                try:
+                    out.append((str(p.relative_to(root)), p.stat().st_size))
+                except (OSError, ValueError):
+                    continue
+        return out
+    except OSError:
+        return []
+
+
 def _identify_wave(record, t, save_path, by_index, pending):
     """Identify and apply a whole WAVE in one headless AI run.
 
-    Returns (plan_accepted, filed, planned), where `filed` maps a download file's path key
-    to the library destination now proven to hold it, and `planned` is the path key of
-    every download file the plan named at all. The caller needs BOTH: a file in neither is
-    junk the plan declined and is safe to delete, while a file in `planned` but not `filed`
-    had its apply or verify fail and must keep its bytes. Raises IdentifyUnavailable so the
-    caller can abort the wave with everything still on disk.
+    Returns (plan_accepted, filed, planned, unresolved), where `filed` maps a download
+    file's path key to the library destination now proven to hold it, `planned` is the
+    path key of every download file the plan named at all, and `unresolved` is the
+    release-relative list of files the plan did NOT account for. The caller needs ALL
+    of them: a file in neither `filed` nor `planned` and not provably junk is a
+    partial-plan gap and parks the release, while a file in `planned` but not `filed`
+    had its apply or verify fail and must keep its bytes. Raises IdentifyUnavailable so
+    the caller can abort the wave with everything still on disk.
 
     One run per wave, not one per file. Only the wave's files exist on disk -- qBittorrent
     does not preallocate a file parked at priority 0, and every earlier wave's files were
@@ -1891,28 +2036,58 @@ def _identify_wave(record, t, save_path, by_index, pending):
         # An empty wave plan over media is the same "nothing to place" verdict the
         # whole-torrent path accepts (§ An empty plan over media is a skip, not a
         # failure): a wave made up entirely of extras (creditless OP/ED, NCOP/NCED)
-        # or repeats already on disk. Returning (True, {}, set()) lets the caller
+        # or repeats already on disk. Returning (True, {}, set(), []) lets the caller
         # drop every wave file through its existing "not in plan (junk)" branch,
         # rather than validate_plan rejecting the empty list and the wave burning
         # its retries into chunk_failed. Dual-audio stays loud for review.
+        #
+        # "Made up entirely of extras" is now decided by the SAME coverage classifier
+        # the whole-release contract uses, not by a filename token alone: if even one
+        # wave file is not provably junk, the wave is a partial plan wearing an empty
+        # plan's clothes and the release parks. (The Doctor Who (2005) wave that lost
+        # 38 files included `Rose` and four specials -- not extras, and one of them was
+        # the episode the pack was named for.)
         if not plan.get("files") and pending:
+            unresolved, _acct = plan_coverage.release_gaps(
+                _wave_disk_files(content_root), [], content_root)
             all_extras = all(_looks_like_no_home_extra(by_index[i].name) for i in pending)
+            if unresolved:
+                log(f"  chunked wave plan is empty but {len(unresolved)} of its file(s) "
+                    f"are not provably extras (e.g. {unresolved[0]!r}); parking the "
+                    f"release with bytes intact.")
+                return False, {}, set(), unresolved
             if _looks_like_dual_audio(record["name"]) and not all_extras:
                 log(f"  chunked wave is a possible dual-audio upgrade with no plan; "
                     f"failing for review: {record['name']}")
-                return False, {}, set()
+                return False, {}, set(), []
             log(f"  chunked wave has media but no library home (extras/repeat); "
                 f"dropping the wave cleanly.")
-            return True, {}, set()
+            return True, {}, set(), []
         library.validate_plan(plan, str(content_root),
                               sibling_seasons=_torrent_seasons(by_index),
-                              serial_map=identify.serial_release_map(release_files))
+                              serial_map=identify.serial_release_map(release_files),
+                              release_name=record.get("name"))
+        # THE PLAN-COVERAGE CONTRACT. Checked BEFORE apply_plan, because a plan that
+        # names part of the wave is not permission to free the rest: the old
+        # "not in plan (junk/duplicate); dropping" branch deleted 38 files / 60.9 GB
+        # of Doctor Who (2005) exactly this way (HANDOFF 10.1/10.2). A gap parks the
+        # whole release untouched; the caller may only free files this contract has
+        # called accounted-for.
+        _resolved = [d.get("src") for d in (plan.get("_deduped_dropped") or [])
+                     if isinstance(d, dict)]
+        unresolved, _acct = plan_coverage.release_gaps(
+            _wave_disk_files(content_root), plan.get("files") or [], content_root,
+            resolved_srcs=_resolved)
+        if unresolved:
+            log(f"  chunked wave plan leaves {len(unresolved)} file(s) unaccounted "
+                f"(e.g. {unresolved[0]!r}); parking the release with bytes intact.")
+            return False, {}, set(), unresolved
         applied = library.apply_plan(plan, wave_id)
     except identify.IdentifyUnavailable:
         raise
     except Exception as exc:                                              # noqa: BLE001
         log(f"  chunked wave identify/apply failed: {exc}")
-        return False, {}, set()
+        return False, {}, set(), []
     # Verified per entry, not per wave: the caller frees a file's only copy on the strength
     # of this, so one bad entry must not certify the other thirty-one.
     #
@@ -1941,7 +2116,7 @@ def _identify_wave(record, t, save_path, by_index, pending):
     if any(str(f.get("dst_rel") or "").startswith("Comics/Manga/")
            for f in plan.get("files") or []):
         _manga_chapter_reconcile(plan)
-    return True, filed, planned
+    return True, filed, planned, []
 
 
 def _media_relpath(abs_key):
@@ -1985,6 +2160,33 @@ def _still_in_library(rel):
         except OSError:
             continue
     return False, mount_alive
+
+
+def _park_chunked_unfiled(record, client, unresolved, by_index):
+    """Park a chunked pack whose wave plan left media unaccounted for.
+
+    Distinct from `_park_chunked` (a disk-budget pause) and from `_free` (a harness-
+    verified junk verdict): this is the terminal for a PARTIAL plan. It stops the
+    torrent and zeroes every file's priority, but deletes nothing -- the download is
+    the only copy of the unfiled files, and `_fail` leaves the local content in place.
+    The unfiled list lands on the record so the next reader sees exactly which files
+    the plan never covered instead of reconstructing it from the log.
+
+    This is the branch Doctor Who (2005)'s first wave needed and did not have: its
+    plan covered 32 files of the wave, the rest were "not in plan", and the wave
+    freed 38 of them as junk. A partial plan must not be able to delete anything.
+    """
+    h = record["info_hash"]
+    try:
+        qbt.set_file_priority(client, h, list(by_index), 0)
+        qbt.stop(client, h)
+    except Exception as exc:                                              # noqa: BLE001
+        log(f"  could not stop {record['name']} while parking: {exc}")
+    record["chunk_unfiled"] = [str(u) for u in sorted(unresolved)][:500]
+    record["unfiled_count"] = len(unresolved)
+    _fail(record, f"chunked: the wave plan left {len(unresolved)} file(s) unaccounted "
+                  f"(e.g. {', '.join(str(u) for u in unresolved[:3])}); every byte is "
+                  f"left on disk -- a partial plan is not permission to delete the rest")
 
 
 def _finish_chunked(record, client, fls):
@@ -2437,11 +2639,18 @@ def _advance_chunked(record, client, records, tmap=None):
             return
     try:
         _register_periodically(records)
-        wave_plan_ok, filed, planned = _identify_wave(record, t, save_path,
-                                                      by_index, pending)
+        wave_plan_ok, filed, planned, gaps = _identify_wave(record, t, save_path,
+                                                            by_index, pending)
     except identify.IdentifyUnavailable as exc:
         log(f"  identify API unavailable mid-wave for {record['name']}; "
             f"wave left intact and will be re-ingested next cycle ({exc})")
+        return
+
+    if gaps:
+        # A partial plan is never permission to free the files it does not name. Park
+        # the whole release with every byte on disk; the record ends FAILED with the
+        # unfiled list, and the .torrent lands in failed/ for review (HANDOFF 10.1).
+        _park_chunked_unfiled(record, client, gaps, by_index)
         return
 
     for i in pending:
@@ -2483,13 +2692,13 @@ def _advance_chunked(record, client, records, tmap=None):
             done.add(i)
             continue
         if wave_plan_ok and key not in planned:
-            # The run saw this file (it was in the listing) and deliberately left it out
-            # of the plan: a creditless opening, a sample, an in-pack duplicate the
-            # validator collapsed. That is a verdict, not a failure -- drop it exactly as
-            # the whole-torrent path drops everything outside its plan. A file the plan DID
-            # name but that is not in `filed` failed its apply or verify, and falls through
-            # to the retry path below with its bytes intact -- never deleted as junk.
-            log(f"  not in plan (junk/duplicate); dropping: {f.name}")
+            # The coverage contract has already certified this file as junk or as an
+            # intra-torrent duplicate whose surviving copy IS in the plan -- that is
+            # the only way `_identify_wave` returns plan_ok with this file absent from
+            # `planned`. A file the plan DID name but that is not in `filed` failed its
+            # apply or verify, and falls through to the retry path below with its bytes
+            # intact -- never deleted as junk.
+            log(f"  not in plan (accounted junk/duplicate); dropping: {f.name}")
             _free(i)
             done.add(i)
             dropped.add(i)
@@ -2510,6 +2719,9 @@ def _advance_chunked(record, client, records, tmap=None):
             done.add(i)
             dropped.add(i)
             continue
+        if applied is _PARK:
+            _park_chunked_unfiled(record, client, [f.name], by_index)
+            return
         if applied:
             applied_all.extend(applied)
             for entry in applied:
@@ -2551,6 +2763,73 @@ def _mark_downloaded(record, client):
     _advance_identify(record, client)      # keep moving in the same cycle
 
 
+def _release_files_for_coverage(record, content_path):
+    """The release's own file list for the coverage contract, or None when it cannot
+    be enumerated (fail open -- a lookup failure must never park a release).
+
+    Torrent metadata FIRST: the `.torrent` mirror names every file the release will
+    ever write, and unlike a disk walk it stays complete for a chunked pack whose
+    earlier waves were already unlinked. The walk is the fallback for a magnet whose
+    metadata was never fetched, and for direct drops.
+    """
+    tp = _ensure_source(record)
+    if tp is not None:
+        got = qbt.file_list_from_file(tp)
+        if got:
+            return got
+    if not content_path:
+        return None
+    root = Path(content_path)
+    try:
+        if root.is_file():
+            return [(root.name, root.stat().st_size)]
+        out = []
+        for p in root.rglob("*"):
+            if p.is_file():
+                try:
+                    out.append((str(p.relative_to(root)), p.stat().st_size))
+                except (OSError, ValueError):
+                    continue
+        return out or None
+    except OSError:
+        return None
+
+
+def _coverage_gaps(record, content_path, plan):
+    """Release files the plan neither files nor provably accounts for, or [] fail-open.
+
+    The plan's `_deduped_dropped` (an intra-torrent duplicate collapsed onto a copy
+    that IS in the plan) counts as accounted-for. `_collision_parked` deliberately
+    DOES NOT -- a same-slot file already on disk is not a junk verdict, so the release
+    files it stands for stay unresolved and park the release (HANDOFF 10.2).
+    """
+    release = _release_files_for_coverage(record, content_path)
+    if not release:
+        return []
+    resolved = [d.get("src") for d in (plan.get("_deduped_dropped") or [])
+                if isinstance(d, dict)]
+    unresolved, _accounted = plan_coverage.release_gaps(
+        release, plan.get("files") or [], content_path or None, resolved_srcs=resolved)
+    return unresolved
+
+
+def _park_unfiled(record, unresolved, why):
+    """Retire a record with the download LEFT ON DISK and the gap named.
+
+    `_fail` already leaves the local content for inspection and files the `.torrent`
+    under failed/; this adds the machine-readable unfiled list, so the next reader can
+    see WHICH files the plan never accounted for instead of reconstructing it from the
+    log. This is the terminal the Smurfs were missing: 365 files were deleted because
+    a partial plan's cleanup did not know it was partial (HANDOFF 10.1).
+    """
+    record["unfiled"] = [str(u) for u in sorted(unresolved)][:500]
+    record["unfiled_count"] = len(unresolved)
+    _fail(record, why)
+    log(f"  parked {len(unresolved)} unaccounted file(s); the download is intact at "
+        f"{record.get('content_path')} and the .torrent is under failed/. Nothing was "
+        f"deleted.")
+
+
 def _looks_like_dual_audio(name):
     """Whether a torrent NAME advertises a dual/multi-audio track.
 
@@ -2581,7 +2860,16 @@ def _advance_identify(record, client):
             fast = identify.fast_path_plan(h, content, stored)
             if fast is not None:
                 try:
-                    library.validate_plan(fast, content)
+                    library.validate_plan(fast, content, release_name=record.get("name"))
+                    # A stored map is the searcher's snapshot and may predate files the
+                    # release actually carries. A coverage gap means the deterministic
+                    # path cannot account for the download, so fall through to the AI --
+                    # NOT park: the run may legitimately plan the remainder.
+                    gaps = _coverage_gaps(record, content, fast)
+                    if gaps:
+                        raise library.PlanError(
+                            f"stored map leaves {len(gaps)} release file(s) unaccounted "
+                            f"(e.g. {gaps[0]!r})")
                 except Exception as exc:                              # noqa: BLE001
                     log(f"  deterministic fast-path plan rejected ({exc}); "
                         f"falling back to the AI identify")
@@ -2652,7 +2940,23 @@ def _advance_identify(record, client):
             _advance_stage(record, client)
             return
         library.validate_plan(plan, content,
-                              serial_map=identify.serial_release_map_for_content(content))
+                              serial_map=identify.serial_release_map_for_content(content),
+                              release_name=record.get("name"))
+        # THE PLAN-COVERAGE CONTRACT. A plan is permission to delete THIS DOWNLOAD only
+        # when it accounts for every medium in it. The Smurfs lost 365 files / 31 GB to
+        # a 40-file plan whose cleanup deleted the whole root; Doctor Who (2005) lost 38
+        # files / 60.9 GB to a wave whose "not in plan" branch freed them as junk. Both
+        # are the same missing check, so it runs here for the whole-torrent path and in
+        # full again in `_advance_cleanup` -- the moment before the bytes actually go.
+        gaps = _coverage_gaps(record, content, plan)
+        if gaps:
+            _park_unfiled(
+                record, gaps,
+                f"plan accounts for {len(plan.get('files') or [])} file(s) but leaves "
+                f"{len(gaps)} release file(s) unfiled (e.g. "
+                f"{', '.join(str(g) for g in gaps[:3])}). A partial plan is not "
+                f"permission to delete the rest; the release is parked intact.")
+            return
     except identify.IdentifyUnavailable as exc:
         # The CLI could not run -- usage window exhausted, or no usable credential. Either
         # way the plan was never attempted. _fail() here would file the .torrent into
@@ -2726,6 +3030,20 @@ def _manga_chapter_reconcile(plan):
 
 def _advance_cleanup(record, client):
     h = record["info_hash"]
+    # THE LAST LOOK BEFORE THE IRREVERSIBLE STEP. The coverage contract ran at identify
+    # time; this is the instant `qbt.remove(delete_files=True)` and
+    # `_delete_local_content` would touch bytes, so it is re-checked against the
+    # download as it exists NOW. A non-empty gap means a plan that was accepted for
+    # what it names is still not permission to delete what it does not -- park with
+    # the bytes intact instead (HANDOFF 10.1/10.2).
+    gaps = _coverage_gaps(record, record.get("content_path"), record.get("plan") or {})
+    if gaps:
+        _park_unfiled(
+            record, gaps,
+            f"cleanup refused: the plan does not account for {len(gaps)} file(s) still "
+            f"in the download (e.g. {', '.join(str(g) for g in gaps[:3])}). Leaving "
+            f"every byte in place.")
+        return
     # Comics are served by YACReader (which scans its own folders); only video
     # lands in Jellyfin. Fire the rescan if any file went to Shows/ or Movies/
     # (covers "mixed" torrents whose media_type isn't literally show/movie).
@@ -3148,6 +3466,14 @@ def cycle():
     # and frees its space -- the disk drains while nothing refills it.
     if not config.ACQUISITION_PAUSED:
         register_new_torrents(records)
+    # Cleanup, not acquisition, so it runs even while paused: sources stranded in
+    # queued//ingesting/ by a terminal record or an iCloud " 2" duplicate are filed
+    # out of the state folders here (HANDOFF 10.6). Never deletes and never touches a
+    # source it cannot parse.
+    try:
+        sweep_orphan_sources(records)
+    except Exception as exc:                                              # noqa: BLE001
+        log(f"orphan source sweep skipped: {exc}")
 
     # One bulk snapshot of every torrent in qBittorrent, threaded through the whole
     # cycle. Resolving a torrent used to be one HTTP request per hash, which with a

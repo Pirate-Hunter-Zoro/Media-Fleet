@@ -73,9 +73,12 @@ Rules that are enforced by the harness and will get your plan rejected:
   movies may not share an id. Three parts of one film trilogy are three films with
   three different ids, not one.
 - Set `anime: true` for Japanese animation.
-- **Leave junk out entirely**: creditless openings/endings (NCOP, NCED, "Textless",
-  "Clean Opening"), previews/PV, samples, screenshots, release `.nfo`/`.txt`.
-  Anything you do not list is deleted with the download.
+- **Leave out only recognized junk**: creditless openings/endings (NCOP, NCED,
+  "Textless", "Clean Opening"), previews/PV, samples, screenshots, release
+  `.nfo`/`.txt`, and subtitles beside a video you did list. **Every other media
+  file must appear in `files`** — the harness counts them and PARKS the whole wave
+  (nothing filed, nothing deleted) if one is unaccounted for. Listing a real extra
+  with a real destination always beats parking the release.
 - **One episode, one copy.** Two files mapping to one destination is a hard error.
 - **An already-present file is a SUCCESS — list it anyway**, with its correct
   destination. The harness skips it safely. **Never return an empty `files` list**

@@ -32,7 +32,7 @@ run() {  # run <label> <command...>
 
 echo "=============== FLEET VERIFICATION ==============="
 run "Torrent-Ingest modules import" \
-    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" -c "import config,library,identify,fastpath,ingest,journal,direct_ingest,direct_ingest_bridge,acceptance_gate"
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" -c "import config,library,identify,fastpath,ingest,journal,direct_ingest,direct_ingest_bridge,acceptance_gate,plan_coverage"
 run "Torrent-Ingest plan API contract" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" contract.py
 run "YouTube-Downloader preflight" \
@@ -49,6 +49,24 @@ run "ffprobe is usable" \
     ffprobe -version
 run "placement guards vs. full history" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_placement_guards.py
+# A plan that names PART of a release was permission to delete the rest: the Smurfs
+# lost 365 files / 31 GB to a 40-file plan, Doctor Who (2005) lost 38 files / 60.9 GB
+# to a wave's "not in plan (junk)" branch. The coverage contract parks the release
+# unless every medium is filed or provably junk, the collision collapse parks instead
+# of dropping, and a release whose own name states a year cannot be filed into another
+# year's series. Part 5 replays every historical plan that still has its .torrent and
+# PRINTS the would-park count, because a guard that rejects real history is worse than
+# the bug it fixes (§4.114).
+run "plan coverage: no partial plan may delete (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_plan_coverage.py
+# `find_drop_files` reads only the watch root's TOP level, so a `.torrent` filed
+# into queued//ingesting/ is never seen again: an iCloud "X 2.torrent" duplicate or
+# a terminal record's leftover source had no path out, and two One Piece files sat
+# there for a month (10.6). The sweep files terminal sources away, files live
+# duplicates under finished/, adopts the survivor when the recorded copy is gone,
+# and never deletes or touches a source it cannot parse.
+run "orphaned sources get a way out of queued/ (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_orphan_sources.py
 run "acceptance gate vs. full history" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_acceptance_gate.py
 # The gate's `.torrent` half. §4.120 twice over: a gate on ONE of two drop paths goes dark

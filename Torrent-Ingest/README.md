@@ -128,6 +128,23 @@ A single `advance(record)` dispatches on `status`, and once a torrent reaches
 `DOWNLOADED` the remaining transitions cascade within one cycle (identify →
 stage → verify → cleanup) rather than waiting a poll interval between each.
 
+**A partial plan is PARKED, not completed (2026-09-19).** When the plan-coverage
+contract finds media the plan never accounted for, or a planned file collides with a
+differently-named file already at its slot, nothing is applied and nothing is
+deleted: the record goes FAILED with `unfiled` (whole-torrent) or `chunk_unfiled`
+(chunked) naming the files, the local download stays where it is, and the `.torrent`
+is filed under `failed/` for review. A re-drop after the cause is fixed resumes only
+the chunked progress the record can still PROVE. See safety invariants 6 and 7.
+
+**Orphaned sources in `queued/` and `ingesting/` have a way out (2026-09-19).**
+`find_drop_files` scans only the watch root's top level, so a source filed into a
+state folder is never seen again by registration. `ingest.sweep_orphan_sources` runs
+every cycle: a terminal record's leftover source goes to `finished/` (or `failed/`),
+an iCloud `" 2"` duplicate of a tracked source goes to `finished/`, a live record
+whose recorded copy is gone ADOPTS the survivor, and a hash with no record at all
+returns to the watch root for registration. It never deletes and never touches a
+source it cannot parse. Guard: `scripts/test_orphan_sources.py`.
+
 ### The acceptance gate on the magnet path (§4.120)
 
 A magnet leaving `QUEUED` passes one more check than a `.torrent` does, and it exists
@@ -1647,6 +1664,30 @@ These are the load-bearing guarantees. Do not weaken them.
    the daemon runs it. The interface check is env-independent and tests the exact
    condition that matters: qBittorrent is bound to that `100.x` address, so if the
    address is gone no traffic can leak, and if it's present the VPN path is live.
+6. **A partial plan may not delete the rest (2026-09-19).** Every plan is checked
+   against the release's OWN file list before a byte is deleted — torrent metadata
+   for a torrent, a disk walk for a wave or a direct drop. A file the plan names (or
+   that sits under a planned loose-pages DIRECTORY, or that the harness itself
+   collapsed as an intra-torrent duplicate) is accounted for; release `.nfo`/`.txt`,
+   samples, screenshots, creditless OP/ED/NCOP extras, subtitles beside a planned
+   video, and sub-50 MiB videos are JUNK; **anything else is UNRESOLVED and parks
+   the whole release** — `_fail` with the `unfiled` list on the record, every byte
+   left on disk, the `.torrent` under `failed/`, nothing applied. The check runs
+   again in `_advance_cleanup` immediately before the irreversible step, and the
+   chunked path parks the release rather than freeing an unaccounted file. This is
+   the seam that cost the Smurfs 365 files / 31 GB to a 40-file plan and Doctor Who
+   (2005) 38 files / 60.9 GB to a wave's "not in plan" branch; `plan_coverage.py`
+   is the classifier, `scripts/test_plan_coverage.py` the guard, and its journal
+   replay found both (plus a third, unnoticed Yamato 2202 partial plan).
+7. **A release's own year decides its series (2026-09-19).** `validate_plan` refuses
+   a plan that files a release whose name states a year into a series folder of a
+   different year (`Doctor Who 2005` into `Doctor Who (1963)`), and refuses a
+   single-folder plan whose own `year` contradicts the folder. Deliberately narrow,
+   because the first replay showed the broad version rejecting 22 of 177 accepted
+   plans (franchise parts like `Lupin III Part IV` in the (1971) folder, bracketed
+   CRC32s read as years); the rule applies only when the release name says nothing
+   more than the folder's title, and square-bracket groups/resolution pairs are
+   stripped first. Fail-open in every other direction.
 
 ---
 

@@ -26,7 +26,7 @@ thing to do.
 On the Mac itself, the one command that answers "is the code sound?":
 
 ```bash
-bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh      # 49 blocking checks
+bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh      # 52 blocking checks
 ```
 
 It must print `ALL CHECKS PASSED`. If it does not, do not deploy anything.
@@ -109,6 +109,18 @@ applies in full.
 **3.4 Two files covering one episode is a question, not a bug.** Several shows hold two
 complete parallel rips. Deleting one is a taste decision (bigger h264 vs smaller hevc), it
 is irreversible, and nothing will make it for you. See §5.
+
+**3.5 A "parked" release is a plan that did not account for the whole download.**
+Since 2026-09-19, the harness enumerates every media file in a release and refuses to
+delete anything unless the plan covers all of it. When a plan covers part — or a planned
+file collides with a different file already at its episode slot — the record goes
+**FAILED** with an `unfiled` / `chunk_unfiled` list, the download is left untouched, and
+the `.torrent` is filed under `failed/`. Nothing was filed from that plan and nothing was
+lost. To retry: re-drop the `.torrent` from `failed/`, or fix what the plan got wrong
+(a model bug, a colliding episode) and re-drop. A parked release is the system working —
+the old behavior deleted the unfiled remainder. Look for `unfiled` in `state/journal.jsonl`
+or the `parked N unaccounted file(s)` line in `torrent_ingest.log` to see which files the
+plan missed. Guard: `scripts/test_plan_coverage.py`.
 
 ---
 
@@ -500,7 +512,7 @@ mistaken for a single project's property, and it now has history.
 error there surfaces only when you next try to deploy — run `bash -n ~/Developer/Media-Fleet/ship-fleet.sh`
 after editing it.
 
-Before you ship: `verify_fleet.sh` must pass all 49. After you ship: check the daemon got a
+Before you ship: `verify_fleet.sh` must pass all 52. After you ship: check the daemon got a
 new PID and no NEW traceback appeared — check the log's modification time first, because
 `DirectIngest.err` holds 2,176 stale ones from August.
 

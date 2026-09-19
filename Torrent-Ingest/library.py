@@ -1106,7 +1106,8 @@ def _reroute_novel_archives(plan, content_root):
     return plan
 
 
-def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None):
+def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
+                  release_name=None):
     """Raise PlanError if the plan is unsafe or malformed. Returns normalized plan.
 
     `sibling_seasons` is the set of season numbers the SOURCE the plan was cut from
@@ -1116,6 +1117,11 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None):
     `serial_map` is `identify.serial_release_map` over the whole release, and it makes
     the computed broadcast numbering BINDING for a pack that names its files by serial
     (see the guard below). Optional: None simply disables that check.
+
+    `release_name` is the torrent/content name the drop arrived under. It feeds the
+    release-identity guard (`_reject_release_identity`): a release whose own name
+    states a year may not be filed into a series of a different one. Optional and
+    fail-open -- no year in the name means no check.
 
     Guarantees before any file is touched:
       * media_type is show|movie|comic|mixed,
@@ -1225,7 +1231,8 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None):
             print(f"[validate_plan] dropped duplicate of {d.get('dst_rel')} "
                   f"(kept higher-quality copy): {d.get('src')}", flush=True)
         plan["_deduped_dropped"] = [
-            {"src": d.get("src"), "dst_rel": d.get("dst_rel")} for d in dropped
+            {"src": d.get("src"), "dst_rel": d.get("dst_rel"), "reason": "duplicate"}
+            for d in dropped
         ]
         files = deduped
         plan["files"] = deduped
@@ -1524,11 +1531,21 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None):
     _reject_arc_split_across_seasons(files)
     _reject_season_over_provider_count(plan, files)
     _reject_season_gap(plan, files, sibling_seasons)
+    _reject_release_identity(plan, files, release_name)
     files, dropped_ep = _collapse_existing_episode_collisions(files)
     if dropped_ep:
+        # A collision is NOT a junk verdict: the planned file may be the right content
+        # for that slot and the file already on disk the wrong one (Doctor Who (2005)
+        # filed into the (1963) series -- every early-2005 file collided with an existing
+        # classic slot). It is kept OUT of the plan so no byte is written, but the
+        # coverage contract must still see it as unaccounted and PARK the release
+        # (HANDOFF 10.2). `_deduped_dropped` is the opposite -- an intra-torrent
+        # duplicate whose surviving copy IS in the plan -- and stays accounted-for.
         plan["files"] = files
-        plan.setdefault("_deduped_dropped", []).extend(
-            {"src": d.get("src"), "dst_rel": d.get("dst_rel")} for d in dropped_ep)
+        plan["_collision_parked"] = [
+            {"src": d.get("src"), "dst_rel": d.get("dst_rel"), "reason": "collision"}
+            for d in dropped_ep
+        ]
     return plan
 
 
@@ -1568,6 +1585,136 @@ def _file_episode_key(f):
     if not m:
         return None
     return (int(m.group(1)), int(m.group(2)))
+
+
+def _reject_release_identity(plan, files, release_name):
+    """Refuse a plan whose own year contradicts the series folder it targets.
+
+    THE INCIDENT: Doctor Who (2005). `74c608c7ba56dd4b3f2c04ab3999f045d767013f`
+    ("Doctor Who Seasons 1 to 13 Mp4 1080p") was identified as Doctor Who (1963) by the
+    provider that served the first wave. Every early-2005 file collided with an existing
+    classic-series slot, the collision collapse removed those files from the plan, and
+    the cleanup then deleted 38 files / 60.9 GB as "not in plan" (HANDOFF 10.2). Later
+    waves of the same release identified it correctly as (2005), which is the tell: the
+    release and the destination were never the same show.
+
+    WHAT THE FIRST REPLAY TAUGHT, and why the rule is this narrow. A title-overlap plus
+    "years differ" rule rejected 22 of 177 historical whole-torrent plans and almost
+    none of them were wrong: `Lupin III Part IV (2015)` lives in `Lupin III (1971)` by
+    the owner's franchise convention, `Little Witch Academia [Movies 2013+2015]` in the
+    (2017) series folder, `SAC_2045`'s own title number read as a year, `[DD3A2043]` (a
+    CRC32) read as 2043. A guard that rejects real content is worse than the bug it
+    fixes, so the checks are narrowed to the shapes the fleet has never legitimately
+    produced:
+
+      * the release name's year(s) matter only when the release name says NOTHING MORE
+        than the folder's own name (`Lupin III Part IV Italian Adventure` does -- its
+        extra words mark it a part/edition entry, and those are filed into franchise
+        folders on purpose);
+      * square-bracket groups and `1920x1080` pairs are stripped before looking for a
+        year, and a number the DESTINATION folder also carries (SAC_2045, Blade Runner
+        2049) is the show's title, not a year claim;
+      * the plan's own `year` is compared only when the plan targets exactly ONE show
+        folder (a multi-show pack's top-level year is one member's, not the pack's --
+        the Steins;Gate + Steins;Gate 0 and Haruhi false positives), and only with the
+        same subset gate.
+
+    Tolerance is one year: production-vs-premiere off-by-one is ordinary, while 2005
+    against 1963 is 42. Fail open everywhere else -- no year, no name overlap, a
+    folder without a year, an unparseable value -> no opinion.
+    """
+    plan_year = None
+    try:
+        plan_year = int(plan.get("year")) if plan.get("year") is not None else None
+    except (TypeError, ValueError):
+        plan_year = None
+    folders = sorted({Path(f.get("dst_rel") or "").parts[1]
+                      for f in files
+                      if len(Path(f.get("dst_rel") or "").parts) >= 2
+                      and Path(f.get("dst_rel") or "").parts[0] == "Shows"})
+    if not folders:
+        return
+    release_words = _identity_words(release_name)
+    plan_words = _identity_words(plan.get("title"))
+    for folder in folders:
+        dst_year = _folder_year(folder)
+        if dst_year is None:
+            continue                      # a folder without a year carries no claim
+        folder_words = _identity_words(_series_name_of(folder))
+        extra = release_words - folder_words if (release_words and folder_words) else set()
+        if release_words and not extra:
+            rel_years = _release_years(release_name)
+            if rel_years and not any(abs(y - dst_year) <= 1 for y in rel_years):
+                # A year the folder itself carries (SAC_2045, Blade Runner 2049) is the
+                # show's title number, not a claim about the release -- so a release whose
+                # every year is a title number of the destination is not a mismatch.
+                folder_title_numbers = {int(m.group(1)) for m in _YEAR_RE.finditer(folder)}
+                if not rel_years <= folder_title_numbers:
+                    raise PlanError(
+                        f"release identity mismatch: the release is named "
+                        f"{str(release_name)[:80]!r} (year {sorted(rel_years)}) but the "
+                        f"plan files it into '{folder}' ({dst_year}). A release whose "
+                        f"own name states a year may not be filed into a series of "
+                        f"another one -- that is almost always a remake/reboot/revival "
+                        f"being merged into the original show, and every episode will "
+                        f"scrape the wrong series' metadata. Re-check which series this "
+                        f"release actually is, and file it under that series' own folder "
+                        f"(or own it, with real per-episode titles+plots, if the provider "
+                        f"carries no entry for it).")
+        if len(folders) == 1 and plan_year is not None:
+            words = plan_words or release_words
+            if words and folder_words and words <= folder_words \
+                    and abs(plan_year - dst_year) > 1:
+                raise PlanError(
+                    f"release identity mismatch: the plan says this is "
+                    f"{plan.get('title')!r} ({plan_year}) but files it into '{folder}' "
+                    f"({dst_year}). The plan's own identity contradicts the series "
+                    f"folder it targets. Re-check which series this release actually is "
+                    f"and file it under that series' own folder.")
+
+
+_YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
+_NON_YEARS = {480, 576, 720, 1080, 1280, 1440, 1600, 1920, 2048, 2160, 2560, 3840, 4320}
+_RESOLUTION_RE = re.compile(r"\d{3,4}\s*x\s*\d{3,4}", re.IGNORECASE)
+_BRACKET_RE = re.compile(r"\[[^\]]*\]")
+_EP_TOKEN_RE = re.compile(r"\bs\d{1,3}e\d{1,4}\b|\b\d{3,4}p\b|\b\d{1,2}bit\b", re.IGNORECASE)
+_IDENTITY_STOPWORDS = {
+    "the", "a", "an", "of", "and", "complete", "season", "seasons", "series", "vol",
+    "volume", "part", "parts", "disc", "disk", "remaster", "remastered", "edition",
+    "uncut", "extended", "dvdrip", "bdrip", "bluray", "webrip", "web", "multi",
+    "audio", "dual", "mp4", "mkv", "x264", "x265", "hevc", "aac", "flac", "sub",
+    "subs", "custom", "proper", "repack", "batch", "movie", "movies", "special",
+    "specials", "ova", "ovas",
+}
+
+
+def _release_years(name):
+    """Years a release name claims, with the traps the first replay found removed.
+
+    Square-bracket groups carry group tags and CRC32s (`[DD3A2043]` -> "2043") and
+    resolution pairs (`[1920x1080 ...]` -> "1920"); both are stripped first. Whether a
+    remaining year is the show's title number (SAC_2045) rather than a claim is decided
+    by the caller, which knows the destination folder.
+    """
+    s = _BRACKET_RE.sub(" ", str(name or ""))
+    s = _RESOLUTION_RE.sub(" ", s)
+    return {int(m.group(1)) for m in _YEAR_RE.finditer(s)
+            if int(m.group(1)) not in _NON_YEARS}
+
+
+def _folder_year(folder):
+    m = re.search(r"\((\d{4})\)\s*$", str(folder or ""))
+    return int(m.group(1)) if m else None
+
+
+def _identity_words(text):
+    """Distinctive lowercase words of a release or series name, tags dropped."""
+    s = _BRACKET_RE.sub(" ", str(text or ""))
+    s = _EP_TOKEN_RE.sub(" ", s)
+    s = _RESOLUTION_RE.sub(" ", s)
+    words = re.sub(r"[^a-z0-9]+", " ", s.lower()).split()
+    return {w for w in words if w not in _IDENTITY_STOPWORDS and not w.isdigit()
+            and len(w) > 1}
 
 
 def _collapse_existing_episode_collisions(files):

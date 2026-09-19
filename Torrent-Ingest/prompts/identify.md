@@ -454,6 +454,16 @@ An e-book plan looks like:
    Series is Season 8 of the umbrella TMDB entry 46261) belongs *under* that entry;
    the test is always "does the provider carry this as a separate series id?"
 
+   **The harness checks the release's own year against the destination folder's.**
+   A release whose name states a year may not be filed into a series of a different
+   year: `Doctor Who 2005 Season 1` into `Doctor Who (1963)` is refused, body and
+   bones. (This is a real shipped failure — a 2005 release was filed into the 1963
+   series, collided with its slots, and lost 38 files.) When the release name is the
+   show plus a year, that year decides which series folder it belongs to. A release
+   that names a part/edition/sequel of a franchise (extra words beyond the folder's
+   title) is exempt — `Lupin III Part IV` still lives in the `Lupin III (1971)`
+   franchise folder.
+
 2. **Movie vs special.** Decide this with ONE decisive test, in this order — do
    not go by whether the title "feels" like part of the show:
    - **Does TMDB carry it as a standalone _film_ (its own `/movie/<id>` entry)?**
@@ -719,12 +729,19 @@ Rules for the plan:
 - `dst_rel` is relative to the media root and MUST start with `Shows/`,
   `Movies/`, `Comics/`, or `Novels/` consistent with `media_type`.
 - Include every file worth keeping (video + its subtitles, or the comic
-  archives). **Leave junk out of the plan entirely** — anything you do not list
-  is deleted with the local download and never reaches the library. Always scrub:
-  creditless openings/endings (NCOP, NCED, "Clean Opening/Ending", "Textless"),
-  previews/PV, samples, screenshots, ad pages, and release `.nfo`/`.txt` junk.
-  These are usually clearly labelled; when a file is plainly an NC/OP/ED extra,
-  drop it.
+  archives). **The harness now ENFORCES this with a computed coverage contract: it
+  enumerates every media file in the release and, if the plan leaves even one
+  unaccounted, the WHOLE RELEASE IS PARKED intact — nothing filed, nothing deleted
+  — for review.** A plan that covers part of a pack therefore fails instead of
+  deleting the remainder. The only files you may leave out are ones the harness
+  itself also recognizes as junk: release `.nfo`/`.txt`/`.sfv`, samples,
+  screenshots/cover art, subtitles beside a video you did list, tiny (<50 MB)
+  videos, and clearly-labelled creditless openings/endings (NCOP/NCED,
+  "Clean Opening/Ending", "Textless") or previews/PV. **Anything else MUST appear
+  in `files`, with a real destination**: an extra or featurette goes to `Season 00`
+  as an owned special (real title+plot), a bundled film goes to `Movies/` with its
+  film id or an owned title+plot, a recap episode goes to its special slot. When in
+  doubt, LIST IT — parking the release is not a success.
 - **One episode, one copy — drop duplicate/alternate versions.** A big pack often
   ships the SAME episode more than once: a main line PLUS lower-quality alternates
   in sibling folders (a complete-series One Piece pack bundling

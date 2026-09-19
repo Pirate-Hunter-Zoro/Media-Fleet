@@ -206,6 +206,47 @@ def file_sizes_from_file(torrent_path):
     return sizes
 
 
+def file_list_from_file(torrent_path):
+    """`[(relative_path, size)]` for every file a `.torrent` will write, in torrent order.
+
+    The plan-coverage contract's release enumeration for a torrent: it must name every
+    file that exists after the download, and nothing that does not. BEP 47 padding
+    files are therefore EXCLUDED -- qBittorrent never writes them -- while
+    `file_sizes_from_file` keeps them so its indices line up with `files()`. Returns
+    None when the metadata cannot be read, which callers treat as "cannot enumerate,
+    fail open" rather than "empty release".
+    """
+    try:
+        data = torrent_path.read_bytes()
+        meta, _ = _bdecode(data, 0)
+    except (OSError, ValueError, IndexError):
+        return None
+    info = meta.get(b"info") if isinstance(meta, dict) else None
+    if not isinstance(info, dict):
+        return None
+    if b"length" in info:                       # single-file torrent
+        name, size = info.get(b"name"), info.get(b"length")
+        if not name or size is None:
+            return None
+        return [(name.decode("utf-8", "replace"), int(size))]
+    if b"files" not in info:
+        return None
+    out = []
+    for f in info.get(b"files", []):
+        if not isinstance(f, dict) or _is_padding_file(f):
+            continue
+        parts = [p.decode("utf-8", "replace") for p in (f.get(b"path") or [])
+                 if isinstance(p, (bytes, bytearray))]
+        if not parts:
+            continue
+        try:
+            size = int(f.get(b"length", 0))
+        except (ValueError, TypeError):
+            size = None
+        out.append(("/".join(parts), size))
+    return out or None
+
+
 def _is_padding_file(f):
     """True for a BEP 47 padding file: a piece-alignment pad qBittorrent counts in
     the .torrent metadata but never writes to disk. Counting it would make the
