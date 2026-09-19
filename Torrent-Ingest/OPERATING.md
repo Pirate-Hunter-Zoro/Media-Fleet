@@ -383,7 +383,10 @@ the periodic update keeps it current from then on. There is no headless way to o
 library — quit/relaunch, `open -a`, command-line arguments and `open` document events all
 leave it on the chooser (measured 2026-09-19) — so this is the one human click the
 integration needs, and the supervisor's "opened no library" alert names it. Do not
-force-kill it: it is running fine hidden, and killing it only forces another click.
+force-kill it: it is running fine hidden, and killing it only forces another click. An
+update that has been SEEN since the app started proves the library open, and the
+supervisor then leaves the app alone until its next start — a scan that finishes in
+seconds can no longer produce a false "opened no library" alarm.
 
 ## 5d. "A chapter vanished — why?"
 

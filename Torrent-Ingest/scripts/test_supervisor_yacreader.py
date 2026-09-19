@@ -91,6 +91,7 @@ def state() -> dict:
             "yac_backoff_until": None, "yac_backoff_alerted": False,
             "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
             "yac_activate_attempts": 0, "yac_activate_alerted": False,
+            "yac_update_seen": False,
             "yac_hide_pending": False, "yac_hide_arm_at": 0.0}
 
 
@@ -117,10 +118,19 @@ try:
     ls._yacreader_tick(st)
     check("the reader is hidden once its update is underway", fake.hides == 1)
     check("...and hiding is not re-armed", st["yac_hide_pending"] is False)
+    check("the open library is now PROVEN for this run", st["yac_update_seen"] is True)
     fake.updating = False
     CLOCK[0] += 5
     ls._yacreader_tick(st)
     check("an idle reader is not hidden again", fake.hides == 1)
+    # A startup update can finish in seconds. The NEXT index check must not read that as
+    # "never opened a library": that false alarm fired at 15:01:54 on 2026-09-19, seconds
+    # after `hid ... (update)` proved the scan was running.
+    CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
+    ls._yacreader_tick(st)
+    check("a completed update suppresses later activation",
+          fake.activations == 0)
+    check("...and no false 'opened no library' alert", len(fake.alerts) == 0)
 
     # 1d. An app that never starts an update -- parked on the library CHOOSER, measured
     #     2026-09-19 -- is still hidden, once the settle window passes. Before that it is
@@ -222,7 +232,8 @@ try:
     fake.updating = False
     CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
     ls._yacreader_tick(st)
-    check("an idle app still gets activated", fake.activations == 1)
+    check("after a seen update the idle app is left alone (library proven open)",
+          fake.activations == 0 and len(fake.alerts) == 0)
 
     # 4. Persistent chooser-parking alerts once and stops activating: activation steals
     #    focus, and a reader parked on its library chooser is not repaired by being

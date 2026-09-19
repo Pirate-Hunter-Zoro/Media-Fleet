@@ -248,6 +248,7 @@ def _start_yacreader_with_scan(state: dict) -> None:
     state["yac_started_at"] = time.time()
     state["yac_stopped_by_us"] = False
     state["yac_index_checked_at"] = 0        # probe the open index on the next tick
+    state["yac_update_seen"] = False         # no proof of an open library yet
 
 
 def _arm_hide(state: dict) -> None:
@@ -366,7 +367,14 @@ def _yacreader_tick(state: dict) -> None:
             if yacreader_db.update_in_progress():
                 state["yac_activate_attempts"] = 0
                 state["yac_activate_alerted"] = False
-            elif started is not None \
+                # An update in flight is PROOF the library is open. Remember it for the
+                # rest of this app run: a startup update can finish in seconds (nothing
+                # new to index), and without this the next 60 s check sees "no update"
+                # and alerts a perfectly healthy open library -- which is exactly what
+                # fired at 15:01:54 on 2026-09-19, with `hid ... (update)` in the log
+                # seconds earlier. Once seen, the app is left alone until its next start.
+                state["yac_update_seen"] = True
+            elif not state.get("yac_update_seen") and started is not None \
                     and now - started <= config.SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC:
                 attempts = state.get("yac_activate_attempts", 0)
                 if attempts < config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS:
@@ -553,6 +561,7 @@ def main() -> int:
              "yac_backoff_until": None, "yac_backoff_alerted": False,
              "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
              "yac_activate_attempts": 0, "yac_activate_alerted": False,
+             "yac_update_seen": False,
              # Hide a reader that was already up and visible when this supervisor
              # (re)started -- a login auto-relaunch, or a deploy. It fires once the
              # app's library update is underway, or after the settle window.
