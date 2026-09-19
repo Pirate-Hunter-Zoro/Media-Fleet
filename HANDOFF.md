@@ -850,7 +850,9 @@ apply before any file is trusted over the provider.
 
 ## 11. The repository is PUBLIC — the 2026-09-19 secrets extraction
 
-The GitHub repo was made public on 2026-09-19. It used to be private and tracked two
+The GitHub repo was made public on 2026-09-19 and lives at
+**https://github.com/Pirate-Hunter-Zoro/Media-Orchestrator** (renamed from `Media-Fleet`
+the same day; the local directory kept its name). It used to be private and tracked two
 credential stores; both are now machine-local, untracked, and gone from history:
 
 | what | where it lives now | tracked template |
@@ -877,12 +879,18 @@ credential stores; both are now machine-local, untracked, and gone from history:
   for secret stores and credential-shaped values; `.githooks/pre-commit` unstages
   `rclone.conf`/`.env` and rewrites a live Jellyfin key to the placeholder.
 * History was rewritten with `git filter-branch` (rclone.conf removed from every commit;
-  the Jellyfin key string replaced with the placeholder), then the GitHub repository was
-  **deleted and recreated under the same name** and the clean history pushed into it —
-  every old SHA now 404s. A force-push alone was NOT enough and was measured not to be:
-  after the rewrite the old commits were still fetchable by SHA (`raw=200`/`api=200`),
-  and this file itself names old commits, so the old objects were deleted with the repo.
-  A pre-rewrite bundle is at
+  the Jellyfin key string replaced with the placeholder). A force-push alone was NOT
+  enough and was measured not to be: after the rewrite the old commits were still
+  fetchable by SHA (`raw=200`/`api=200`), and this file itself named old commits. So the
+  GitHub repository was deleted, a clean one created, and the project renamed to
+  `Media-Orchestrator` (GitHub would not release the old name immediately). The old git
+  objects are gone: `git fetch origin <old-sha>` answers `upload-pack: not our ref` and the
+  old SHAs 404 under the new name. One residue is outside the owner's control: the OLD-name
+  raw URL (`raw.githubusercontent.com/.../Media-Fleet/<old-sha>/...`) kept answering 200
+  from Fastly's cache (`x-cache: HIT`, `max-age=300`) while the same SHA under the NEW name
+  404s — a CDN entry only GitHub Support or time can clear. The local directory stays
+  `~/Developer/Media-Fleet`; the plists, configs and runbooks address that absolute path,
+  so **do not rename it casually**. A pre-rewrite bundle is at
   `~/Developer/Media-Fleet-backups/Media-Fleet-prepublic-20260919-151123.bundle`
   — it STILL CONTAINS the old credentials, so treat it as sensitive and delete it once a
   rotation is done.
