@@ -358,6 +358,60 @@ def _rewrite_state(moves, tag):
         print(f"  {path.name}: rewrote {n} key(s)")
 
 
+def _parse_indices(spec):
+    """`1,3,5-9` -> [1, 3, 5, 6, 7, 8, 9]. Ranges because a repair list like DW's
+    `1-31, 41, 55-59, 92` is unreadable and error-prone expanded by hand."""
+    out = []
+    for tok in str(spec or "").replace(" ", "").split(","):
+        if not tok:
+            continue
+        head, sep, tail = tok.partition("-")
+        try:
+            if sep:
+                start, end = int(head), int(tail)
+                if end < start or end - start > 100000:
+                    raise ValueError(tok)
+                out.extend(range(start, end + 1))
+            else:
+                out.append(int(tok))
+        except ValueError:
+            raise SystemExit(f"REFUSED: bad index list item {tok!r} (want N or N-M)")
+    return out
+
+
+def rearm_only(info_hash, indices):
+    """Clear re-fetchable indices from every proof list WITHOUT moving a byte.
+
+    The repair path for bytes that are GONE (`refile_season` mapping mode moves files;
+    this is its complement, for when there is nothing left to move). `_rearm_indices`
+    already holds the rule -- an index in `chunk_filed` is content the library holds,
+    so re-arming it would re-download something already owned, and it is refused.
+    This wrapper adds the rest of the re-drop contract: reset the wave clock so the
+    next admission does not inherit a stale stall deadline, and put the re-arm in
+    `decisions.log` where a human can see it. One journal write.
+
+    Used by the DW (2005) repair (HANDOFF 10.2): 38 indices were freed unfiled by a
+    wave's collision cleanup, and the record's `chunk_dropped` still listed them as a
+    deliberate verdict, so a plain re-drop of the same `.torrent` was a no-op that
+    immediately reported COMPLETED. Clearing them makes exactly those indices fetch
+    again.
+    """
+    import time as _time                                                # noqa: PLC0415
+    records = journal.load_records()
+    rec = records.get(info_hash)
+    if rec is None:
+        raise SystemExit(f"REFUSED: no journal record for {info_hash}")
+    cleared = _rearm_indices(rec, indices)
+    if cleared:
+        rec["wave_started_at"] = _time.time()
+        journal.write_record(rec)
+        journal.log_decision(
+            info_hash, rec.get("name") or info_hash[:12],
+            f"re-arm-only: {len(cleared)} index(es) made re-fetchable on the next "
+            f"re-drop: {cleared}")
+    return {"cleared": cleared}
+
+
 def _apply_mapping(moves, rearm, args):
     """Sequential, ordered apply for mapping mode: remotes first, then locals.
 
@@ -421,14 +475,34 @@ def main():
     ap.add_argument("--record", help="info hash whose chunk_filed/applied to rewrite")
     ap.add_argument("--rearm", default="",
                     help="comma-separated torrent indices to make re-fetchable")
+    ap.add_argument("--rearm-only", action="store_true",
+                    help="with --record/--rearm: clear the indices so a re-drop refetches "
+                         "them, without moving anything (no --mapping needed)")
     ap.add_argument("--show-title", help="series title for library.db (mapping mode)")
     ap.add_argument("--apply", action="store_true")
     args = ap.parse_args()
 
+    if args.rearm_only:
+        if not (args.record and args.rearm):
+            ap.error("--rearm-only needs --record HASH and --rearm i,j or i-J")
+        indices = _parse_indices(args.rearm)
+        if not args.apply:
+            rec = journal.load_records().get(args.record) or {}
+            filed = {int(k) for k in (rec.get("chunk_filed") or {}) if str(k).isdigit()}
+            would = [i for i in indices if i not in filed]
+            print(f"re-arm-only: {len(indices)} requested, {len(would)} would be cleared "
+                  f"({len(indices) - len(would)} already filed, refused); pass --apply to "
+                  f"write")
+            return 0
+        counts = rearm_only(args.record, indices)
+        print(f"re-arm-only: cleared {len(counts['cleared'])} index(es): "
+              f"{counts['cleared']}")
+        return 0
+
     mapping_mode = bool(args.mapping)
     if mapping_mode:
         moves, file_rearm = build_moves_from_mapping(args.mapping)
-        rearm = [int(x) for x in args.rearm.split(",") if x.strip()] or file_rearm
+        rearm = _parse_indices(args.rearm) or file_rearm
         print(f"mapping: {len(moves)} reviewed move(s)"
               + (f", {len(rearm)} index(es) to re-arm" if rearm else ""))
     else:
