@@ -51,7 +51,7 @@ import dbhook                                                        # noqa: E40
 
 librarydb = dbhook.librarydb
 
-REMOTE_INVENTORY = Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer" / "remote_inventory.json"
+REMOTE_INVENTORY = Path.home() / "Developer" / "Media-Orchestrator" / "Media-Syncer" / "remote_inventory.json"
 
 _EP_RE = re.compile(r"[Ss](\d{1,3})[Ee](\d{1,4})")
 _VOL_RE = re.compile(r"\bv(\d{1,4})\b", re.IGNORECASE)

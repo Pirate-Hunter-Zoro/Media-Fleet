@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/run_direct_ingest.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Torrent-Ingest/run_direct_ingest.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

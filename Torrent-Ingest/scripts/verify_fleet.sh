@@ -11,7 +11,7 @@
 # ===========================================================================
 set -uo pipefail
 
-DEV="$HOME/Developer/Media-Fleet"
+DEV="$HOME/Developer/Media-Orchestrator"
 PY_INGEST="/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3"
 PY_BASE="/opt/homebrew/Caskroom/miniconda/base/bin/python3"
 [ -x "$PY_INGEST" ] || PY_INGEST="$(command -v python3)"

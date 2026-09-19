@@ -78,7 +78,7 @@ RESTARTABLE_LABELS = (
 #: Where a launchd agent's plist lives once installed.
 LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 #: The repos whose `com.mikeyferguson.*.plist` files define the expected fleet.
-DEV_ROOT = Path.home() / "Developer" / "Media-Fleet"
+DEV_ROOT = Path.home() / "Developer" / "Media-Orchestrator"
 
 #: Labels that legitimately are NOT loaded in the user domain, with the reason. Anything
 #: else with a plist in a repo is expected to be loaded, and a missing one is a fault.

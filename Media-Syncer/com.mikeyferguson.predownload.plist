@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/run_predownload.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Media-Syncer/run_predownload.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

@@ -31,7 +31,7 @@ into the local `~/Downloads/DirectIngest/` by `directingestbridge`) or straight 
 `~/Downloads/DirectIngest/`, and the `directingest` daemon files it through the same
 pipeline: video to Shows/Movies, comics to Comics, e-books to Google Drive Novels.
 
-**One git repository at `~/Developer/Media-Fleet`** — the five projects are directories in
+**One git repository at `~/Developer/Media-Orchestrator`** — the five projects are directories in
 it. The directory names are load-bearing: launchd plists, `config.py` and cross-project
 imports address the sub-directories absolutely, so renaming one breaks a daemon.
 `Torrent-Ingest` is the project that matters; the others are `Media-Syncer` (replication +
@@ -61,7 +61,7 @@ Violating any of these has destroyed data or burned a day. They are not style pr
    destination and rejects a bad plan whatever wrote it. **Do not weaken that seam to make a
    model's answer fit.** If a plan is being rejected, the plan is usually wrong.
 
-**Deploying:** `bash ~/Developer/Media-Fleet/ship-fleet.sh "what changed"` (or `bash
+**Deploying:** `bash ~/Developer/Media-Orchestrator/ship-fleet.sh "what changed"` (or `bash
 scripts/ship.sh`) — commits once at the monorepo root, pushes, and restarts every daemon in
 a safe order. It correctly refuses to bounce the reaper while it is draining. For a change
 confined to scripts no daemon loads, `scripts/save-and-push.sh "msg"` commits and pushes
@@ -109,9 +109,9 @@ undo a twentyfold capacity increase.
 ## 4. Orient in sixty seconds
 
 ```bash
-bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh          # must say ALL CHECKS PASSED
-python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/fleet_doctor.py  --once --dry-run
-python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/fleet_health.py  --once
+bash ~/Developer/Media-Orchestrator/Torrent-Ingest/scripts/verify_fleet.sh          # must say ALL CHECKS PASSED
+python3 ~/Developer/Media-Orchestrator/Torrent-Ingest/scripts/fleet_doctor.py  --once --dry-run
+python3 ~/Developer/Media-Orchestrator/Torrent-Ingest/scripts/fleet_health.py  --once
 ```
 
 `media_doctor` needs Jellyfin credentials that live in its launchd plist, not your shell —
@@ -122,7 +122,7 @@ nothing:
 JELLYFIN_URL=http://127.0.0.1:8096 \
 JELLYFIN_API_KEY="$(plutil -extract EnvironmentVariables.JELLYFIN_API_KEY raw \
     ~/Library/LaunchAgents/com.mikeyferguson.mediadoctor.plist)" \
-python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/media_doctor.py --once --dry-run
+python3 ~/Developer/Media-Orchestrator/Torrent-Ingest/scripts/media_doctor.py --once --dry-run
 ```
 
 **The human-facing reports live in `iCloud Drive/Torrents/`**, not in the repo:
@@ -206,7 +206,7 @@ Every number below was measured this session.
 | `verify_fleet.sh` | **ALL CHECKS PASSED**, 53 blocking checks (2026-09-19, after the §10.1/10.2/10.6 + YacReader-hide work) |
 | `fleet_doctor` / `fleet_health` | refresh after the post-ship `mediadoctor` pass; see §10.8 for what should read clean |
 | `media_doctor` | Toriko (2011) title/plot faults and the TZ (2019) art faults are §10.3/10.4 — still open |
-| Repo | one monorepo at `~/Developer/Media-Fleet`, shipping `9ae7a95` + the 2026-09-19 coverage/rearm/orphan work and the secrets extraction for going public (§11) |
+| Repo | one monorepo at `~/Developer/Media-Orchestrator`, shipping `9ae7a95` + the 2026-09-19 coverage/rearm/orphan work and the secrets extraction for going public (§11) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies |
 | Mount | Shows 312 dirs, Movies 449 video files, Manga 102 series — primed and serving |
 | `library.db` | 24,415 owned rows, 2,221 series rows |
@@ -851,9 +851,10 @@ apply before any file is trusted over the provider.
 ## 11. The repository is PUBLIC — the 2026-09-19 secrets extraction
 
 The GitHub repo was made public on 2026-09-19 and lives at
-**https://github.com/Pirate-Hunter-Zoro/Media-Orchestrator** (renamed from `Media-Fleet`
-the same day; the local directory kept its name). It used to be private and tracked two
-credential stores; both are now machine-local, untracked, and gone from history:
+**https://github.com/Pirate-Hunter-Zoro/Media-Orchestrator** — renamed from `Media-Fleet`
+the same day, and the local directory renamed to match
+(`~/Developer/Media-Orchestrator`). It used to be private and tracked two credential
+stores; both are now machine-local, untracked, and gone from history:
 
 | what | where it lives now | tracked template |
 |---|---|---|
@@ -888,12 +889,25 @@ credential stores; both are now machine-local, untracked, and gone from history:
   old SHAs 404 under the new name. One residue is outside the owner's control: the OLD-name
   raw URL (`raw.githubusercontent.com/.../Media-Fleet/<old-sha>/...`) kept answering 200
   from Fastly's cache (`x-cache: HIT`, `max-age=300`) while the same SHA under the NEW name
-  404s — a CDN entry only GitHub Support or time can clear. The local directory stays
-  `~/Developer/Media-Fleet`; the plists, configs and runbooks address that absolute path,
-  so **do not rename it casually**. A pre-rewrite bundle is at
-  `~/Developer/Media-Fleet-backups/Media-Fleet-prepublic-20260919-151123.bundle`
-  — it STILL CONTAINS the old credentials, so treat it as sensitive and delete it once a
-  rotation is done.
+  404s — a CDN entry only GitHub Support or time can clear (it was observed to expire after
+  the TTL once the old name was vacated). The pre-rewrite bundle
+  (`~/Developer/Media-Fleet-backups/Media-Fleet-prepublic-20260919-151123.bundle`) was
+  deleted after this migration was verified — it contained the old credentials by
+  definition, hence the rotation note below.
+* **The local directory was renamed the same day** (`~/Developer/Media-Fleet` →
+  `~/Developer/Media-Orchestrator`), and every absolute-path reference in the tracked tree
+  was rewritten: launchd plists, `config.py`/`ytconfig.py` fallbacks, audit tools,
+  `ship-fleet.sh`, `verify_fleet.sh`, the `.env.example` template and the docs. The
+  `.env` itself was repointed too. Because the move happened while an identify run and the
+  reaper drain were live (§2.2/§2.4 forbid bouncing either), a **temporary compatibility
+  symlink `~/Developer/Media-Fleet -> Media-Orchestrator`** was left in place so the
+  in-flight processes' already-loaded absolute paths keep resolving; the installed launch
+  agents were refreshed from the renamed tree (with the Jellyfin key substituted) but
+  deliberately NOT reloaded, so nothing running was disturbed. **Remove the symlink only
+  after a full `ship-fleet.sh` restart (or a reboot) has every daemon running from the new
+  path** — until then it is load-bearing. `~/Developer/.megaignore` was repointed to
+  `Media-Orchestrator/...` AND excludes the old name, so MEGA neither syncs the alias nor
+  re-engages the old churn paths.
 * **Rotation is recommended** even though the tree is clean and the remote object store
   is gone: both values lived in a private GitHub repo whose object store was exposed
   before the deletion (GitHub's retention of deleted repos is finite but not zero), and

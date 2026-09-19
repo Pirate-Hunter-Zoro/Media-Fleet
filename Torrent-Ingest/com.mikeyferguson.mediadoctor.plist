@@ -14,11 +14,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/Caskroom/miniconda/base/envs/torrent_ingest_env/bin/python3</string>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/scripts/media_doctor.py</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Torrent-Ingest/scripts/media_doctor.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest</string>
+    <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Torrent-Ingest</string>
 
     <key>RunAtLoad</key>
     <true/>

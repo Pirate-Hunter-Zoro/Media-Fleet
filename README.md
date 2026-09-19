@@ -1,4 +1,4 @@
-# Media fleet — one repository
+# Media-Orchestrator — one repository
 
 This is the whole fleet on one Mac: a set of launchd daemons that take a `.torrent`
 dropped into `iCloud Drive/Torrents/`, download it, ask a free AI model where each file
@@ -32,7 +32,7 @@ Supporting documents at the root:
   commit MEGA session tokens.
 
 Outside the repo, at `~/Developer/`: `.megaignore`, MEGAsync's ignore list for the sync
-root, with its patterns pointing into `Media-Fleet/`.
+root, with its patterns pointing into `Media-Orchestrator/`.
 
 ## Deploying
 

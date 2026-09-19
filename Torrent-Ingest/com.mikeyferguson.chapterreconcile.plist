@@ -5,7 +5,7 @@
   <key>Label</key><string>com.mikeyferguson.chapterreconcile</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/run_chapter_reconcile.sh</string>
+    <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Torrent-Ingest/run_chapter_reconcile.sh</string>
   </array>
   <key>StartInterval</key><integer>21600</integer>
   <key>RunAtLoad</key><true/>

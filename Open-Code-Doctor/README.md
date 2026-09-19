@@ -135,7 +135,7 @@ replaced underneath it. `brew_upgrade.py` is stdlib-only and 3.9-clean for that 
 
 ### Registered fleet-wide
 
-Both agents are in `~/Developer/Media-Fleet/ship-fleet.sh` — `opencodedoctor` in `LABELS` (restarted
+Both agents are in `~/Developer/Media-Orchestrator/ship-fleet.sh` — `opencodedoctor` in `LABELS` (restarted
 on every fleet deploy), `brewupgrade` in `PERIODIC` (checked for being loaded, never
 kickstarted). Every scheduled job in the fleet is now in one of those two lists.
 

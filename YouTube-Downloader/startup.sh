@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLIST_NAME="com.mikeyferguson.youtubesync.plist"
 PLIST_SRC="$SCRIPT_DIR/$PLIST_NAME"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME"
-TORRENT_INGEST_DIR="${TORRENT_INGEST_DIR:-$HOME/Developer/Media-Fleet/Torrent-Ingest}"
+TORRENT_INGEST_DIR="${TORRENT_INGEST_DIR:-$HOME/Developer/Media-Orchestrator/Torrent-Ingest}"
 COOKIES_FILE="${YOUTUBE_COOKIES_FILE:-$HOME/.config/youtube-sync/cookies.txt}"
 
 echo "--- YouTube ingest setup ---"

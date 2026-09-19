@@ -13,11 +13,11 @@
          cost one stat() of the stamp file and exit silently. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Open-Code-Doctor/run_brew_upgrade.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Open-Code-Doctor/run_brew_upgrade.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/mikeyferguson/Developer/Media-Fleet/Open-Code-Doctor</string>
+    <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Open-Code-Doctor</string>
 
     <key>StartInterval</key>
     <integer>3600</integer>

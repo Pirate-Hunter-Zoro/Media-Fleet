@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/run_gdrive_supervisor.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Torrent-Ingest/run_gdrive_supervisor.sh</string>
     </array>
 
     <!-- Keeps the Google Drive macOS app running so light novels can be placed into

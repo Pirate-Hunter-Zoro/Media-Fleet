@@ -36,7 +36,7 @@ restart() {
     else
       # kickstart fails when the job was booted OUT rather than merely stopped.
       plist="$HOME/Library/LaunchAgents/com.mikeyferguson.$d.plist"
-      [ -f "$plist" ] || plist="$(ls "$HOME/Developer/Media-Fleet"/*/com.mikeyferguson."$d".plist 2>/dev/null | head -1)"
+      [ -f "$plist" ] || plist="$(ls "$HOME/Developer/Media-Orchestrator"/*/com.mikeyferguson."$d".plist 2>/dev/null | head -1)"
       if [ -n "$plist" ] && launchctl bootstrap gui/501 "$plist" >/dev/null 2>&1; then
         echo "   bootstrapped $d"
       else

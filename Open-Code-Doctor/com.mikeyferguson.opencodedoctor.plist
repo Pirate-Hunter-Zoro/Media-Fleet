@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Open-Code-Doctor/run_doctor.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Open-Code-Doctor/run_doctor.sh</string>
     </array>
 
     <!-- Run once a minute; the doctor no-ops when opencode is currently running. -->

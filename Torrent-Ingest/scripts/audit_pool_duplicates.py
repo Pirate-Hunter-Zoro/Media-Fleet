@@ -46,7 +46,7 @@ import config  # noqa: E402
 
 VIDEO = {".mkv", ".mp4", ".avi", ".m4v"}
 MOUNT = Path(os.path.expanduser("~/MediaLibrary"))
-QUEUE = Path(os.path.expanduser("~/Developer/Media-Fleet/Media-Syncer/mediafs_deletions.jsonl"))
+QUEUE = Path(os.path.expanduser("~/Developer/Media-Orchestrator/Media-Syncer/mediafs_deletions.jsonl"))
 
 
 def _queued() -> set:
@@ -70,7 +70,7 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="list every duplicated episode")
     args = ap.parse_args()
 
-    inv_path = Path(os.path.expanduser("~/Developer/Media-Fleet/Media-Syncer/remote_inventory.json"))
+    inv_path = Path(os.path.expanduser("~/Developer/Media-Orchestrator/Media-Syncer/remote_inventory.json"))
     inv = json.loads(inv_path.read_text(encoding="utf-8"))
     queued = _queued()
 

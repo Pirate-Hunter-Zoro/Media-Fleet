@@ -54,7 +54,7 @@ MACHINE_REPORT_FILE = config.STATE_DIR / "fleet_health.json"
 
 OPENROUTER_KEY_FILE = Path.home() / ".config" / "api-keys" / "openrouter_key"
 
-MEDIA_SYNCER_DIR = Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer"
+MEDIA_SYNCER_DIR = Path.home() / "Developer" / "Media-Orchestrator" / "Media-Syncer"
 FREE_SPACE_FILE = MEDIA_SYNCER_DIR / "free_space.json"
 
 # Flag a volume once its free space drops below this (the ingest chunk budget needs
@@ -246,7 +246,7 @@ def _expected_labels() -> set:
     """Every agent the repos say should exist. Mirrors `remedies.expected_labels()`."""
     found = set()
     try:
-        for p in (Path.home() / "Developer" / "Media-Fleet").glob("*/com.mikeyferguson.*.plist"):
+        for p in (Path.home() / "Developer" / "Media-Orchestrator").glob("*/com.mikeyferguson.*.plist"):
             found.add(p.stem)
     except OSError:
         return set()
@@ -454,7 +454,7 @@ def check_vpn() -> list[tuple[str, str]]:
     you that on its own behalf.
     """
     try:
-        sys.path.insert(0, str(Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer"))
+        sys.path.insert(0, str(Path.home() / "Developer" / "Media-Orchestrator" / "Media-Syncer"))
         from scripts import tailscale_watchdog as tsw           # noqa: PLC0415
     except Exception as exc:                                    # noqa: BLE001
         return [("WARN", f"cannot read the tailscale watchdog heartbeat: {exc}")]
@@ -512,7 +512,7 @@ def check_acceptance_gate() -> list[tuple[str, str]]:
     two facts together are the only way to tell a correctly idle gate from a bypassed one.
     """
     try:
-        sys.path.insert(0, str(Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest"))
+        sys.path.insert(0, str(Path.home() / "Developer" / "Media-Orchestrator" / "Torrent-Ingest"))
         import acceptance_gate                                  # noqa: PLC0415
     except Exception as exc:                                    # noqa: BLE001
         return [("WARN", f"cannot read the acceptance-gate heartbeat: {exc}")]

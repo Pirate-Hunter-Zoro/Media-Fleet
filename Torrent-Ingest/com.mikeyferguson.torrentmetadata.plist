@@ -10,7 +10,7 @@
          failed on them. This is a scheduled one-shot, not a daemon. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/scripts/nightly_metadata.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Torrent-Ingest/scripts/nightly_metadata.sh</string>
     </array>
 
     <!-- Run once a day at 04:30, after Jellyfin's own nightly scan has had its

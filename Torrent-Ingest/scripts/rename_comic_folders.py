@@ -36,7 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config                                                          # noqa: E402
 
-SYNCER = Path.home() / "Developer/Media-Fleet/Media-Syncer"
+SYNCER = Path.home() / "Developer/Media-Orchestrator/Media-Syncer"
 INVENTORY = SYNCER / "remote_inventory.json"
 MANGA = "Comics/Manga/"
 WORKERS = 5

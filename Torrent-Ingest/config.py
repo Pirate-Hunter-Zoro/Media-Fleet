@@ -1630,7 +1630,7 @@ RCLONE_CONFIG = Path(
 # writes a regenerated session token back into a file that must stay secret-free.
 MEDIA_SYNCER_RCLONE_CONF = fleet_env.env_path(
     "MEDIA_SYNCER_RCLONE_CONF",
-    Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer" / "rclone.conf",
+    Path.home() / "Developer" / "Media-Orchestrator" / "Media-Syncer" / "rclone.conf",
 )
 
 # Which MEGA remote (a pool account from rclone.conf) receives the backup, and
@@ -1750,7 +1750,7 @@ LOOSE_PAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 # Machine-specific: `MEDIA_SYNCER_DIR` in `.env` (defaults to the monorepo sibling).
 MEDIA_SYNCER_DIR = fleet_env.env_path(
     "MEDIA_SYNCER_DIR",
-    Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer",
+    Path.home() / "Developer" / "Media-Orchestrator" / "Media-Syncer",
 )
 MEDIA_SYNCER_INVENTORY = MEDIA_SYNCER_DIR / "remote_inventory.json"
 # The virtual-library delete signal. When a media file is deleted THROUGH the

@@ -65,7 +65,7 @@ ROOT = Path(os.path.expanduser(
     "~/Library/Mobile Documents/com~apple~CloudDocs/Torrents"))
 # Deliberately NOT under state/: nothing in the fleet rotates, prunes or resets this file,
 # and no tool but this one writes it. That is the whole point (§4.13).
-LOG = Path(os.path.expanduser("~/Developer/Media-Fleet/Torrent-Ingest/state/icloud_census.jsonl"))
+LOG = Path(os.path.expanduser("~/Developer/Media-Orchestrator/Torrent-Ingest/state/icloud_census.jsonl"))
 
 
 def census(root: Path) -> dict:

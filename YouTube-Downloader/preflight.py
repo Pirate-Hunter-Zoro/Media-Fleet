@@ -37,7 +37,7 @@ import discover
 import ytconfig
 
 INSTALLED_SPLIT_TUNNEL = Path("/usr/local/bin/split_tunnel.sh")
-REPO_SPLIT_TUNNEL = (Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer" / "scripts"
+REPO_SPLIT_TUNNEL = (Path.home() / "Developer" / "Media-Orchestrator" / "Media-Syncer" / "scripts"
                      / "split_tunnel.sh")
 
 # Everything this repo imports out of Torrent-Ingest. Checked by name so a rename over
@@ -145,7 +145,7 @@ def _check_free_space_floor(warnings: list) -> None:
     theirs by exactly the deliberate FLOOR_DIP_BYTES, and never below Torrent-Ingest's own
     20 GiB OS headroom.
     """
-    ms_cfg = Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer" / "scripts" / "config.py"
+    ms_cfg = Path.home() / "Developer" / "Media-Orchestrator" / "Media-Syncer" / "scripts" / "config.py"
     try:
         text = ms_cfg.read_text(encoding="utf-8", errors="ignore")
     except OSError:

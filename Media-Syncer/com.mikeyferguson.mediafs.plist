@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/run_mediafs.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Media-Syncer/run_mediafs.sh</string>
     </array>
 
     <!-- Foreground FUSE mount; KeepAlive + the launcher's stale-mount force-clean

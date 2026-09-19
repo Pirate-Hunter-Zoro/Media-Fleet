@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/run_db_guardian.sh</string>
+        <string>/Users/mikeyferguson/Developer/Media-Orchestrator/Torrent-Ingest/run_db_guardian.sh</string>
     </array>
 
     <!-- The daemon runs its own loop; KeepAlive restarts it only if it dies.

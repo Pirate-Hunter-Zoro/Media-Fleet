@@ -52,7 +52,7 @@ fleet_env.load()
 
 TORRENT_INGEST_DIR = Path(
     os.environ.get("TORRENT_INGEST_DIR", "").strip()
-    or (Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest")
+    or (Path.home() / "Developer" / "Media-Orchestrator" / "Torrent-Ingest")
 )
 # Appended, not prepended: Torrent-Ingest's modules must resolve, but THIS repo's
 # modules still take precedence for any name both repos happen to define.

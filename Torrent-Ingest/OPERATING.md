@@ -1,6 +1,6 @@
 # Operating this fleet without an assistant
 
-This replaces `~/Developer/Media-Fleet/diagnosis.txt`, which was a hand-off note written for whatever
+This replaces `~/Developer/Media-Orchestrator/diagnosis.txt`, which was a hand-off note written for whatever
 AI session came next. There is no next session, so this is written for **you**: what to
 look at, what the reports mean, what is safe to do, and what is not.
 
@@ -26,7 +26,7 @@ thing to do.
 On the Mac itself, the one command that answers "is the code sound?":
 
 ```bash
-bash ~/Developer/Media-Fleet/Torrent-Ingest/scripts/verify_fleet.sh      # 52 blocking checks
+bash ~/Developer/Media-Orchestrator/Torrent-Ingest/scripts/verify_fleet.sh      # 52 blocking checks
 ```
 
 It must print `ALL CHECKS PASSED`. If it does not, do not deploy anything.
@@ -155,7 +155,7 @@ downloads finish and sit UNFILED until a provider's cap resets. Nothing is lost 
 needs doing; filing resumes on its own. Check with:
 
 ```bash
-python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/identify_capacity.py --probe
+python3 ~/Developer/Media-Orchestrator/Torrent-Ingest/scripts/identify_capacity.py --probe
 ```
 
 `--probe` is not optional — a cached verdict is not a measurement.
@@ -225,7 +225,7 @@ seasons, and a season filled past the provider's episode count. Both were replay
 all 788 historical plans and reject none of them.
 
 How this was proven, and the measurement tool, are written down in
-`~/Developer/Media-Fleet/HANDOFF.md` §1 and §3. The short version: use
+`~/Developer/Media-Orchestrator/HANDOFF.md` §1 and §3. The short version: use
 `scripts/audit_arc_placement.py` — not `verify_arc_mapping.py` — to decide pass or fail on
 any multi-arc pack, because it censuses EVERY file back to its source arc instead of
 sampling one per season. It prints a real `VERDICT:` line and exits non-zero on FAIL.
@@ -439,7 +439,7 @@ refuses the series' future drops.
 # 2. Delete through the MOUNT, never ~/Media:
 rm -rf ~/MediaLibrary/Shows/"<Title>"
 # 3. The queue should grow by exactly the manifest count:
-wc -l < ~/Developer/Media-Fleet/Media-Syncer/mediafs_deletions.jsonl
+wc -l < ~/Developer/Media-Orchestrator/Media-Syncer/mediafs_deletions.jsonl
 # 4. Kick the reaper ONLY IF IT IS IDLE (see 3.2):
 pgrep -f 'Torrent-Ingest/reap.py' || launchctl kickstart -k gui/501/com.mikeyferguson.torrentreap
 # 5. Delete the matching torrent from qBittorrent, or ingest re-fetches it.
@@ -447,11 +447,11 @@ pgrep -f 'Torrent-Ingest/reap.py' || launchctl kickstart -k gui/501/com.mikeyfer
 #    -poster.jpg / ._* beside them stay, and are why a "purged" tree still looks full:
 find ~/MediaLibrary/Shows/"<Title>" -type f -print0 | xargs -0 rm -f
 # 7. CHUNKED packs only -- retire the journal record, or it is re-adopted (see below):
-grep '<info_hash>' ~/Developer/Media-Fleet/Torrent-Ingest/state/journal.jsonl | tail -1
+grep '<info_hash>' ~/Developer/Media-Orchestrator/Torrent-Ingest/state/journal.jsonl | tail -1
 # 8. Nothing to do: the reaper now supersedes the purged rows in library.db itself as
 #    the last step of a verified purge (shows, films and comics). For rows the reaper
 #    could not match, or content that left the library without a purge:
-python3 ~/Developer/Media-Fleet/Torrent-Ingest/scripts/reconcile_library_db.py --apply --include-requested
+python3 ~/Developer/Media-Orchestrator/Torrent-Ingest/scripts/reconcile_library_db.py --apply --include-requested
 ```
 
 **Step 7 is not optional for a chunked pack, and step 5 alone does not cover it.** A
@@ -468,7 +468,7 @@ journal line for the hash reads `"status": "completed"` (or `failed`) before you
 `Season NN` directories (`dr-xr-xr-x`, 1969 mtime) from pool copies still queued for the
 reaper. Those are NOT stuck directories and `rmdir` will not remove them — they disappear
 on their own when the drain finishes. Watch
-`grep -ic '<Title>' ~/Developer/Media-Fleet/Media-Syncer/remote_inventory.json` count down to 0 rather
+`grep -ic '<Title>' ~/Developer/Media-Orchestrator/Media-Syncer/remote_inventory.json` count down to 0 rather
 than hunting for them. And Jellyfin keeps three kinds of row that no library scan reaps: a
 Series row pointing at the synthesized shell, an empty Playlist, and an empty BoxSet.
 Find and delete them by API (`ChildCount`/children of 0 is the test for "empty"):
@@ -500,7 +500,7 @@ python3 - <<'PY'
 import json, os
 root = os.path.expanduser('~/MediaLibrary')
 for q in ('mediafs_deletions.jsonl', 'mediafs_deletions.jsonl.processing'):
-    f = os.path.expanduser('~/Developer/Media-Fleet/Media-Syncer/' + q)
+    f = os.path.expanduser('~/Developer/Media-Orchestrator/Media-Syncer/' + q)
     if not os.path.exists(f): continue
     live = [p for p in {json.loads(l)['path'] for l in open(f) if l.strip()}
             if os.path.exists(os.path.join(root, p))]
@@ -517,20 +517,20 @@ sibling for the same episode is present with its `.nfo`, which makes it a real d
 ## 7. Deploying a change
 
 ```bash
-bash ~/Developer/Media-Fleet/ship-fleet.sh "what changed"
+bash ~/Developer/Media-Orchestrator/ship-fleet.sh "what changed"
 ```
 
 Commits and pushes the monorepo once, then restarts every daemon. It refuses to restart a
 draining reaper.
 
-**The script itself lives at `~/Developer/Media-Fleet/ship-fleet.sh`, at the root of the one
+**The script itself lives at `~/Developer/Media-Orchestrator/ship-fleet.sh`, at the root of the one
 repository** (since the 2026-09-13 merge everything is tracked there; before that it was
 deliberately untracked, because owning it from any single repo was a risk). Being at the
 top of the monorepo is the same protection without the untracked trade-off: it cannot be
 mistaken for a single project's property, and it now has history.
 
 `verify_fleet.sh` does not check it, so a syntax
-error there surfaces only when you next try to deploy — run `bash -n ~/Developer/Media-Fleet/ship-fleet.sh`
+error there surfaces only when you next try to deploy — run `bash -n ~/Developer/Media-Orchestrator/ship-fleet.sh`
 after editing it.
 
 Before you ship: `verify_fleet.sh` must pass all 52. After you ship: check the daemon got a

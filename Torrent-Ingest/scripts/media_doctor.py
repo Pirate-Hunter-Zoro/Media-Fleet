@@ -932,7 +932,7 @@ def _journal_destinations():
     if _JOURNAL_DSTS is not None:
         return _JOURNAL_DSTS
     out = set()
-    jp = Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest" / "state" / "journal.jsonl"
+    jp = Path.home() / "Developer" / "Media-Orchestrator" / "Torrent-Ingest" / "state" / "journal.jsonl"
     try:
         for line in jp.read_text(encoding="utf-8", errors="replace").splitlines():
             line = line.strip()

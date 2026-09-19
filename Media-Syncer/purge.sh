@@ -3,7 +3,7 @@ set -euo pipefail
 
 echo "--- BEGINNING FINAL PURGE AND RE-BINDING ---"
 
-cd "$HOME/Developer/Media-Fleet/Media-Syncer"
+cd "$HOME/Developer/Media-Orchestrator/Media-Syncer"
 
 echo "\n--> Step 1: Banishing the old service..."
 bash ./cancel_sync.sh
