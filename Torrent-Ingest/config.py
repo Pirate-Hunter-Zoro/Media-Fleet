@@ -2257,14 +2257,6 @@ SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC = int(
 # that the alert stands and nothing else touches the app until its next start.
 SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS = int(
     os.environ.get("SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS", "2"))
-# How long after a FLEET-INITIATED start or activation the supervisor keeps re-hiding
-# YacReader's window. The fleet bounces the reader on its own schedule (every comic
-# filing consumes the refresh marker), `open -g` stops focus-stealing but not the window
-# APPEARING, and the owner does not want a reader he did not open covering his screen
-# (2026-09-19 owner report). 60 s covers the asynchronous window creation and the
-# startup update's UI, then the supervisor stops interfering -- a reader the OWNER opens
-# is left alone.
-SUPERVISOR_YAC_HIDE_SEC = int(os.environ.get("SUPERVISOR_YAC_HIDE_SEC", "60"))
 # How long the index may sit unchanged with shelf files missing and no update running
 # before fleet_health escalates it from a warning to an ACTION (and the doctor may
 # request a rescan). Long on purpose: a pool-backed scan can spend many minutes reading

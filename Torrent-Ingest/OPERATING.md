@@ -369,13 +369,14 @@ the index lock; the supervisor restarts the app when the lock is released.
 
 **The reader is meant to be invisible.** The fleet starts and bounces YacReader on its own
 schedule (every comic filing consumes the refresh marker), and since 2026-09-19 each of
-those starts ends with the window HIDDEN — `open -g` alone stopped it stealing focus but
-not covering the screen. Hiding does not stop the library update. If you want to read, open
-YacReader from the Dock: the supervisor only re-hides through a bounded 60 s window after
-a fleet start or a supervisor restart, so a reader you opened yourself stays up. A line in
-the supervisor log saying the window "could not be hidden" means the AppKit route failed
-and the System Events fallback was refused — check Accessibility for the daemon if the
-popups return.
+those starts is HIDDEN as soon as its library update is underway — `open -g` alone stopped
+it stealing focus but not covering the screen. Hiding waits for the update on purpose:
+hiding before the library window exists suppresses the window itself, and an in-flight
+update is the proof the window is open. Hiding does not stop the update. If you want to
+read, open YacReader from the Dock: the supervisor only hides in the moments after a
+fleet start, so a reader you opened yourself stays up. A line in the supervisor log saying
+the window "could not be hidden" means the AppKit route failed and the System Events
+fallback was refused — check Accessibility for the daemon if the popups return.
 
 ## 5d. "A chapter vanished — why?"
 

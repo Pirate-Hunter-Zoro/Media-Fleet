@@ -92,7 +92,7 @@ def state() -> dict:
             "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
             "yac_activate_attempts": 0, "yac_activate_alerted": False,
             "yac_bounced_after_alert": False,
-            "yac_hide_until": 0.0}
+            "yac_hide_pending": False}
 
 
 try:
@@ -107,21 +107,21 @@ try:
     check("a down app is started", fake.starts == 1 and fake.running)
     check("the refresh marker is consumed at start",
           not ls.config.YACREADER_REFRESH_MARKER.exists())
-    check("a fleet start hides the reader's window", fake.hides >= 1)
+    check("a just-started reader is NOT hidden before its window exists", fake.hides == 0)
+    check("...but hiding is armed", st["yac_hide_pending"] is True)
 
-    # 1b. A window created asynchronously after the start would appear a moment later,
-    #     so the supervisor keeps re-hiding through a bounded window -- then stops.
-    #     `updating=True` keeps the windowless-activation branch out of this case.
-    fake.index_open = True
+    # 1b. Hiding waits for the library update -- the proof the window exists. Hiding
+    #     before then suppresses the window entirely (measured 2026-09-19: 0 windows
+    #     while hidden, 1 after un-hiding).
     fake.updating = True
-    base = fake.hides
     CLOCK[0] += 5
     ls._yacreader_tick(st)
-    check("the next tick re-hides a just-started reader", fake.hides == base + 1)
-    CLOCK[0] += config.SUPERVISOR_YAC_HIDE_SEC + 1
+    check("the reader is hidden once its update is underway", fake.hides == 1)
+    check("...and hiding is not re-armed", st["yac_hide_pending"] is False)
+    fake.updating = False
+    CLOCK[0] += 5
     ls._yacreader_tick(st)
-    check("after the bounded window the supervisor stops hiding",
-          fake.hides == base + 1)
+    check("an idle reader is not hidden again", fake.hides == 1)
 
     # 1c. A refused hide -- System Events/Accessibility is not granted to the fleet -- must
     #     not break the start or the tick. It is reported, not swallowed, and the app runs.
@@ -131,6 +131,9 @@ try:
     logs: list[str] = []
     ls.log = lambda msg, *a, **k: logs.append(str(msg))
     st = state()
+    ls._yacreader_tick(st)
+    fake.updating = True
+    CLOCK[0] += 5
     ls._yacreader_tick(st)
     check("a refused hide still starts the app", fake.starts == 1 and fake.running)
     check("...and it is reported, not swallowed",
@@ -146,7 +149,11 @@ try:
     ls._yacreader_tick(st)
     check("drifted flags bounce the app", fake.stops == 1 and fake.starts == 1)
     check("...and it is running again", fake.running)
-    check("...and it is hidden again after the bounce", fake.hides >= 1)
+    check("...and hiding is armed for the new process", st["yac_hide_pending"] is True)
+    fake.updating = True
+    CLOCK[0] += 5
+    ls._yacreader_tick(st)
+    check("...and it is hidden once its update runs", fake.hides == 1)
 
     # 3. Up, flags fine, no library open -> activate (throttled), never restart.
     fake = Fake()
@@ -156,7 +163,8 @@ try:
     st = state()
     ls._yacreader_tick(st)
     check("a windowless app is activated", fake.activations == 1 and fake.stops == 0)
-    check("...and immediately hidden again (activation raises it)", fake.hides >= 1)
+    check("activation does NOT hide it immediately", fake.hides == 0)
+    check("...but arms the hide for when its update runs", st["yac_hide_pending"] is True)
     CLOCK[0] += 10
     ls._yacreader_tick(st)
     check("activation is throttled inside the check interval", fake.activations == 1)

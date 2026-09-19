@@ -112,14 +112,15 @@ try:
     check("hide_app returns False when both routes refuse",
           yacreader_db.hide_app(attempts=1), False)
 
-    print("\nPart 6 -- the supervisor hides after start and after activation, bounded")
+    print("\nPart 6 -- the supervisor hides only once an update proves the window exists")
     src = (Path(__file__).resolve().parent.parent / "library_supervisor.py").read_text()
-    for needle in ("_hide_yacreader(state, \"start\")",
-                   "_hide_yacreader(state, \"activation\")",
-                   "yacreader_db.hide_app(attempts=1, wait_sec=0)",
-                   "config.SUPERVISOR_YAC_HIDE_SEC",
-                   '"yac_hide_until": time.time() + config.SUPERVISOR_YAC_HIDE_SEC'):
+    for needle in ("_hide_yacreader(state, \"update\")",
+                   'state["yac_hide_pending"] = True',
+                   "yacreader_db.update_in_progress()",
+                   '"yac_hide_pending": True'):
         check(f"source contains {needle!r}", needle in src, True)
+    check("and it never hides before the update is seen",
+          "_hide_yacreader(state, \"start\")" not in src, True)
 finally:
     yacreader_db.app_running = saved_running
     yacreader_db.subprocess.run = saved_run
