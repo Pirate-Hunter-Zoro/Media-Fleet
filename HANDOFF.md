@@ -203,10 +203,10 @@ Every number below was measured this session.
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 53 blocking checks (2026-09-19, after the §10.1/10.2/10.6 + YacReader-hide work) |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 54 blocking checks (2026-09-19, after the §10.1/10.2/10.6 + YacReader-hide work, the public-repo secrets extraction and the rename) |
 | `fleet_doctor` / `fleet_health` | refresh after the post-ship `mediadoctor` pass; see §10.8 for what should read clean |
 | `media_doctor` | Toriko (2011) title/plot faults and the TZ (2019) art faults are §10.3/10.4 — still open |
-| Repo | one monorepo at `~/Developer/Media-Orchestrator`, shipping `9ae7a95` + the 2026-09-19 coverage/rearm/orphan work and the secrets extraction for going public (§11) |
+| Repo | one monorepo at `~/Developer/Media-Orchestrator`, shipping `aa70cc5` + the 2026-09-19 coverage/rearm/orphan work, the secrets extraction for going public and the directory rename (§11) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies |
 | Mount | Shows 312 dirs, Movies 449 video files, Manga 102 series — primed and serving |
 | `library.db` | 24,415 owned rows, 2,221 series rows |
@@ -214,6 +214,7 @@ Every number below was measured this session.
 | In flight | the **Smurfs identify is retrying** (`6c413306…`; all free providers were capped ~15:00, the wave keeps bytes and retries) and the **reaper is draining** (`reap.py` PID 1229) — do not bounce the reaper (§2.2), and wait for an identify run before any deploy (§2.4). The 2026-09-19 session shipped 10.1/10.2/10.6 plus the YacReader hide/periodic policy, then ran the repairs in §10.7b |
 | Parked re-drops | both are back IN the pipeline and `~/Downloads` is clean: DW (2005) `74c608c7…` re-armed (140/178 carried) and re-dropped, the Smurfs replacement pack `6c413306…` dropped and downloading — watch `state/decisions.log` and the journal for their outcome |
 | Open work | **§10.3–10.5e** (TZ art/ids, Toriko metadata, the One Piece manga/DB/franchise cluster). 10.1, 10.2 and 10.6 are shipped — read the section below before re-doing any of them |
+| Pending after reboot | **§12**: the owner rebooted on 2026-09-19 so launchd would pick up the renamed agents. Confirm every daemon runs from `~/Developer/Media-Orchestrator`, then remove the `~/Developer/Media-Fleet` symlink. The reboot deliberately bounced the in-flight Smurfs identify and the reaper drain (§2.2/§2.4 waived for that boot) — verify recovery, do **not** deploy again |
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 
@@ -904,17 +905,67 @@ stores; both are now machine-local, untracked, and gone from history:
   in-flight processes' already-loaded absolute paths keep resolving; the installed launch
   agents were refreshed from the renamed tree (with the Jellyfin key substituted) but
   deliberately NOT reloaded, so nothing running was disturbed. **Remove the symlink only
-  after a full `ship-fleet.sh` restart (or a reboot) has every daemon running from the new
-  path** — until then it is load-bearing. `~/Developer/.megaignore` was repointed to
+  after a reboot has every daemon running from the new path** (`ship-fleet.sh` cannot do
+  it: `kickstart -k` restarts the LOADED definition, which still names the old path). The
+  owner scheduled that reboot; **§12 is the closing checklist** — until it runs, the
+  symlink is load-bearing. `~/Developer/.megaignore` was repointed to
   `Media-Orchestrator/...` AND excludes the old name, so MEGA neither syncs the alias nor
   re-engages the old churn paths.
 * **Rotation is recommended** even though the tree is clean and the remote object store
-  is gone: both values lived in a private GitHub repo whose object store was exposed
-  before the deletion (GitHub's retention of deleted repos is finite but not zero), and
-  the pre-rewrite bundle above still holds them. Changing the MEGA account password(s)
-  and regenerating the Jellyfin API key is the only complete mitigation; nothing in the
-  fleet breaks if the key is rotated and `.env` + the installed plists are updated with it.
+  is gone. The old commits were publicly fetchable by SHA for the window the rewritten
+  repo sat public (~15 min) and until Fastly's 5-minute cache expired after the deletion —
+  a real, measured exposure window, not a theoretical one. Changing the MEGA account
+  password(s) and regenerating the Jellyfin API key is the only complete mitigation;
+  nothing in the fleet breaks if the key is rotated and `.env` + the installed plists are
+  updated with it.
 
 This work was shipped without a fleet restart (`scripts/save-and-push.sh`): `.env` carries
 the exact values the code previously hardcoded, so the running daemons see no change.
 `verify_fleet.sh` printed `ALL CHECKS PASSED` (54 blocking checks) after the extraction.
+
+---
+
+## 12. After the reboot: close out the Media-Orchestrator rename (owner-scheduled)
+
+The owner rebooted on 2026-09-19 so launchd would re-read the refreshed agents. The
+rename itself is DONE and pushed (`aa70cc5`); `ship-fleet.sh` cannot put it into effect
+because `kickstart -k` restarts the LOADED job definition, which still names the old path
+(measured: `program = .../Developer/Media-Fleet/...`). The reboot also bounced the
+in-flight Smurfs identify and the reaper drain — the owner knowingly waived §2.2/§2.4 for
+this one boot, so this checklist is about proving recovery and finishing the rename, **not
+deploying again**.
+
+1. **Every daemon must be on the new path before anything is removed:**
+   ```bash
+   pgrep -fl 'Developer/Media-Fleet'                      # MUST be empty
+   pgrep -fl 'Developer/Media-Orchestrator' | wc -l
+   ```
+   If a process still shows the old path, its loaded definition was not refreshed —
+   reload just that agent (`launchctl bootout gui/$(id -u)/<label>`, then `launchctl
+   bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`) rather than rebooting
+   again.
+2. **Remove the compatibility symlink** (only once step 1 is empty):
+   ```bash
+   rm /Users/mikeyferguson/Developer/Media-Fleet     # plain rm — no -rf, no trailing slash
+   ```
+   `rm -rf Media-Fleet/` with a trailing slash can follow the link and delete the real
+   repo. Leave the `-p:Media-Fleet` line in `~/Developer/.megaignore`; it is now insurance.
+3. **Prove the fleet healthy:** `bash Torrent-Ingest/scripts/verify_fleet.sh` must print
+   `ALL CHECKS PASSED`; `fleet_doctor --once --dry-run` and `fleet_health --once` clean or
+   naming only §7/§10 known items. After boot the mount and Jellyfin take ~2 minutes to
+   re-prime — wait for `~/MediaLibrary/Shows` to repopulate and `/Items/Counts` to answer
+   before calling anything broken (§8.7).
+4. **Reaper recovery** (the reboot interrupted the drain): confirm it restarted
+   (`pgrep -f 'Torrent-Ingest/reap.py'`) and that Media-Syncer was not left paused. A
+   lingering `state/reap_ms_paused` marker is self-healing — the next reaper cycle
+   resumes Media-Syncer and clears it; check `media_sync.log` for the resume rather than
+   removing the marker by hand. The drain restarts its probe from the beginning; that is
+   the reboot's cost, not damage.
+5. **Smurfs/identify recovery:** `6c413306…` was mid-retry and the wave keeps its bytes;
+   confirm the journal advances and `state/tmp/6c413306…_plan.json` eventually appears
+   (decisions.log). A killed run costs provider budget (§2.4) — nothing to repair by hand.
+6. **Rotation is still outstanding from §11:** regenerate the Jellyfin API key and change
+   the shared MEGA password. For the key: update `.env`, then re-run
+   `bash Torrent-Ingest/startup.sh` at a quiet moment (it re-substitutes the key into the
+   installed plists and reloads the Torrent-Ingest agents). Check `pgrep -f ai_runner.py`
+   is empty first.
