@@ -133,6 +133,15 @@ run "YacReader scan-at-startup enforced (both ways)" \
 # restarting forever. Driven with fake app control and a fake clock, both directions.
 run "YacReader supervisor freshness (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_supervisor_yacreader.py
+# The fleet bounces YacReader on its own schedule (every comic filing) and `open -g`
+# stops focus-stealing but not the window APPEARING, so the owner reported it "keeps
+# popping up and taking over the whole screen" (2026-09-19). Every fleet start/activate
+# now ends in `yacreader_db.hide_app()`, which uses AppKit's NSRunningApplication.hide()
+# through AppleScriptObjC FIRST -- no Accessibility grant needed, unlike the System
+# Events fallback -- and the supervisor re-hides through a bounded window. Faked
+# subprocesses: the route order, the fallback, and the fail-soft contract.
+run "YacReader stays hidden after fleet starts (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_yacreader_hide.py
 # The outside view: a crash row, a damaged index, a windowless app, drifted flags and
 # shelf files the index lacks each get the severity that matches who can fix them, and
 # `fleet_doctor` has reviewed remedies for the auto-fixable two. The detector is driven

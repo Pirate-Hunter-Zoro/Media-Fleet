@@ -288,7 +288,9 @@ def activate_app() -> bool:
     """Bring YACReader forward so its library window (and `init()`) exist.
 
     A running-but-windowless app answers AppleEvents; `open -a` does not guarantee a
-    window after a crash restore, activation does.
+    window after a crash restore, activation does. Callers pair this with `hide_app`:
+    activation brings the window FORWARD, which is the opposite of what the owner wants
+    from a reader he did not open.
     """
     if not app_running():
         return False
@@ -296,6 +298,60 @@ def activate_app() -> bool:
                     f'tell application "{config.YACREADER_APP_NAME}" to activate'],
                    capture_output=True, timeout=10, check=False)
     return True
+
+
+def hide_app(attempts: int = 3, wait_sec: float = 1.0) -> bool:
+    """Send YacReader's window off-screen without quitting or minimising it.
+
+    THE REASON, owner report 2026-09-19: "it keeps popping up and taking over the whole
+    screen". The fleet restarts the reader on its own schedule -- every comic filing
+    consumes the refresh marker and bounces it, and a crash restore gets an `activate` --
+    and `open -g` stops it STEALING focus but does not stop the window APPEARING, while
+    `activate` explicitly brings it forward. Hiding is the state that survives the
+    window being created asynchronously after launch, and it does not interrupt the
+    library update (which runs off the window's `init()`, not its visibility).
+
+    TWO ROUTES, and the order matters. `NSRunningApplication.hide()` through
+    AppleScriptObjC is the AppKit hide (Cmd-H); it needs no TCC grant. The System Events
+    route (`set visible`) is UI scripting and needs Accessibility, which the fleet may
+    not hold, so it is only the FALLBACK for an osascript too old for `use framework`.
+    Both are best-effort by contract: a refusal returns False and is the CALLER's to
+    report -- it must never stop a start, an activation, or the scan. Retried a few
+    times because a just-launched app has no process for LaunchServices to address yet.
+    """
+    if not app_running():
+        return False
+    appkit = (
+        'use framework "AppKit"\n'
+        f'set apps to current application\'s NSRunningApplication\'s '
+        f'runningApplicationsWithBundleIdentifier:"{config.YACREADER_BUNDLE_ID}"\n'
+        'if (count of apps) is 0 then return "absent"\n'
+        'set a to item 1 of apps\n'
+        'a\'s hide()\n'
+        'if a\'s isHidden() then return "hidden"\n'
+        'return "shown"\n')
+    system_events = (f'tell application "System Events" to tell process '
+                     f'"{config.YACREADER_APP_NAME}" to set visible to false')
+
+    for attempt in range(max(1, attempts)):
+        if not app_running():
+            return False
+        for script in (appkit, system_events):
+            try:
+                r = subprocess.run(["/usr/bin/osascript", "-e", script],
+                                   capture_output=True, timeout=10, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if r.returncode != 0:
+                continue                      # AppKit bridge unavailable -> fall back
+            out = (r.stdout or b"").decode("utf-8", "replace").strip().lower()
+            if out == "hidden" or script == system_events:
+                return True                   # System Events only succeeds or errors
+            if out == "absent":
+                break                         # not registered yet; wait and retry
+        if attempt + 1 < attempts:
+            time.sleep(wait_sec)
+    return False
 
 
 def update_in_progress() -> bool:

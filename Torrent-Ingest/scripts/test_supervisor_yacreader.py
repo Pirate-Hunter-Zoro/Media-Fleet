@@ -45,6 +45,8 @@ class Fake:
         self.starts = 0
         self.stops = 0
         self.activations = 0
+        self.hides = 0
+        self.hide_ok = True
         self.index_open = False
         self.updating = False          # a library update is in flight
         self.settings_ok = True
@@ -57,7 +59,8 @@ saved = {n: getattr(ls, n) for n in ("yacreader_running", "stop_yacreader", "sta
                                      "log", "alert")}
 saved_db = {n: getattr(ls.yacreader_db, n) for n in ("ensure_scan_settings",
                                                      "scan_settings_ok", "activate_app",
-                                                     "index_open", "update_in_progress")}
+                                                     "hide_app", "index_open",
+                                                     "update_in_progress")}
 saved_time = ls.time.time
 saved_marker = ls.config.YACREADER_REFRESH_MARKER
 TMP = Path(tempfile.mkdtemp(prefix="yac-supervisor-"))
@@ -77,6 +80,8 @@ def wire(fake: Fake) -> None:
     ls.yacreader_db.scan_settings_ok = lambda: fake.settings_ok
     ls.yacreader_db.activate_app = lambda: (setattr(fake, "activations",
                                                     fake.activations + 1), True)[-1]
+    ls.yacreader_db.hide_app = lambda attempts=3, wait_sec=1.0: (
+        setattr(fake, "hides", fake.hides + 1), fake.hide_ok)[-1]
     ls.yacreader_db.index_open = lambda: fake.index_open
     ls.yacreader_db.update_in_progress = lambda: fake.updating
 
@@ -100,6 +105,35 @@ try:
     check("a down app is started", fake.starts == 1 and fake.running)
     check("the refresh marker is consumed at start",
           not ls.config.YACREADER_REFRESH_MARKER.exists())
+    check("a fleet start hides the reader's window", fake.hides >= 1)
+
+    # 1b. A window created asynchronously after the start would appear a moment later,
+    #     so the supervisor keeps re-hiding through a bounded window -- then stops.
+    #     `updating=True` keeps the windowless-activation branch out of this case.
+    fake.index_open = True
+    fake.updating = True
+    base = fake.hides
+    CLOCK[0] += 5
+    ls._yacreader_tick(st)
+    check("the next tick re-hides a just-started reader", fake.hides == base + 1)
+    CLOCK[0] += config.SUPERVISOR_YAC_HIDE_SEC + 1
+    ls._yacreader_tick(st)
+    check("after the bounded window the supervisor stops hiding",
+          fake.hides == base + 1)
+
+    # 1c. A refused hide -- System Events/Accessibility is not granted to the fleet -- must
+    #     not break the start or the tick. It is reported, not swallowed, and the app runs.
+    fake = Fake()
+    fake.hide_ok = False
+    wire(fake)
+    logs: list[str] = []
+    ls.log = lambda msg, *a, **k: logs.append(str(msg))
+    st = state()
+    ls._yacreader_tick(st)
+    check("a refused hide still starts the app", fake.starts == 1 and fake.running)
+    check("...and it is reported, not swallowed",
+          any("could not be hidden" in m for m in logs))
+    ls.log = lambda *a, **k: None
 
     # 2. Drifted flags while up -> bounce (stop + start) so the patch takes.
     fake = Fake()
@@ -110,6 +144,7 @@ try:
     ls._yacreader_tick(st)
     check("drifted flags bounce the app", fake.stops == 1 and fake.starts == 1)
     check("...and it is running again", fake.running)
+    check("...and it is hidden again after the bounce", fake.hides >= 1)
 
     # 3. Up, flags fine, no library open -> activate (throttled), never restart.
     fake = Fake()
@@ -119,6 +154,7 @@ try:
     st = state()
     ls._yacreader_tick(st)
     check("a windowless app is activated", fake.activations == 1 and fake.stops == 0)
+    check("...and immediately hidden again (activation raises it)", fake.hides >= 1)
     CLOCK[0] += 10
     ls._yacreader_tick(st)
     check("activation is throttled inside the check interval", fake.activations == 1)
@@ -186,6 +222,7 @@ try:
 
     src = (Path(__file__).resolve().parent.parent / "library_supervisor.py").read_text()
     for needle in ("yacreader_db.update_in_progress()", "yacreader_db.activate_app()",
+                   "yacreader_db.hide_app()", "_hide_yacreader",
                    "SUPERVISOR_YAC_CRASH_LIMIT", "ensure_scan_settings()",
                    '"/usr/bin/open", "-g"'):
         check(f"source still contains {needle!r}", needle in src)

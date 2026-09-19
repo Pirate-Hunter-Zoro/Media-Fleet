@@ -241,9 +241,30 @@ def _start_yacreader_with_scan(state: dict) -> None:
         log("YacReader ini: re-enabled scan-at-startup (auto-update flags had drifted)")
     log("starting YacReader (mount primed)")
     start_yacreader()
+    _hide_yacreader(state, "start")
     state["yac_started_at"] = time.time()
     state["yac_stopped_by_us"] = False
     state["yac_index_checked_at"] = 0        # probe the open index on the next tick
+
+
+def _hide_yacreader(state: dict, why: str) -> None:
+    """Put a FLEET-STARTED reader out of the owner's way, best-effort.
+
+    The owner does not want a reader he did not open covering his screen (2026-09-19:
+    "it keeps popping up and taking over the whole screen"), and every comic filing
+    bounces the app -- so each fleet-initiated start/activate ends hidden, and
+    `yac_hide_until` keeps re-hiding through the asynchronous window creation that
+    follows a launch. Bounded on purpose: after the window passes the supervisor stops
+    touching it, so a reader the OWNER opens is never fought.
+
+    `hide_app` failing (System Events/Accessibility refused) only means the window
+    shows; it must never turn into a failed start or a crash-loop, so this logs and
+    continues.
+    """
+    if not yacreader_db.hide_app():
+        log(f"YacReader window could not be hidden after {why} (System Events "
+            f"refused); it may show while it scans")
+    state["yac_hide_until"] = time.time() + config.SUPERVISOR_YAC_HIDE_SEC
 
 
 def _yacreader_tick(state: dict) -> None:
@@ -264,6 +285,12 @@ def _yacreader_tick(state: dict) -> None:
             state["yac_started_at"] = started = now
         elif now - started >= config.SUPERVISOR_YAC_CRASH_WINDOW_SEC:
             state["yac_crashes"] = 0
+        # A window created asynchronously after a fleet start/activate would otherwise
+        # appear seconds after `_hide_yacreader` already ran. Re-hide through a bounded
+        # window, then stop touching it -- a reader the owner opens himself is not
+        # fought (see `_hide_yacreader`).
+        if now < state.get("yac_hide_until", 0):
+            yacreader_db.hide_app(attempts=1, wait_sec=0)
         # 1. Drift in the scan flags is the "new comics never appear" fault and the app
         #    is already up: it must be bounced for the patch AND for the startup scan.
         if not yacreader_db.scan_settings_ok():
@@ -319,6 +346,7 @@ def _yacreader_tick(state: dict) -> None:
                         "so the library window (and its startup update) exist (attempt "
                         f"{state['yac_activate_attempts']})")
                     yacreader_db.activate_app()
+                    _hide_yacreader(state, "activation")
                 if state["yac_activate_attempts"] >= config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS \
                         and not state.get("yac_activate_alerted"):
                     alert("YacReaderLibrary started but has opened no library; the "
@@ -495,7 +523,12 @@ def main() -> int:
              "yac_started_at": None, "yac_stopped_by_us": False, "yac_crashes": 0,
              "yac_backoff_until": None, "yac_backoff_alerted": False,
              "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
-             "yac_activate_attempts": 0, "yac_activate_alerted": False}
+             "yac_activate_attempts": 0, "yac_activate_alerted": False,
+             # Hide a reader that was already up and visible when this supervisor
+             # (re)started -- a login auto-relaunch, or a deploy. Bounded to the same
+             # window as a fleet start, so an owner who opens the reader right after a
+             # restart loses at most a minute, not his session.
+             "yac_hide_until": time.time() + config.SUPERVISOR_YAC_HIDE_SEC}
     if args.once:
         tick(state)
         return 0

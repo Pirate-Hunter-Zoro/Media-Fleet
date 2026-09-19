@@ -54,7 +54,7 @@ Violating any of these has destroyed data or burned a day. They are not style pr
 2. **Never restart the reaper mid-drain.** `pgrep -f 'Torrent-Ingest/reap.py'` — any output
    means leave it alone. A single drain has run for five days.
 3. **`bash Torrent-Ingest/scripts/verify_fleet.sh` must print `ALL CHECKS PASSED` before any
-   deploy.** It is the gate. 52 blocking checks.
+   deploy.** It is the gate. 53 blocking checks.
 4. **Never deploy while an identify run is in flight** — `pgrep -f ai_runner.py`. The run is
    a subprocess of the daemon; a deploy kills it *and* the provider's daily budget with it.
 5. **The model PROPOSES, the harness DISPOSES.** `library.validate_plan` re-derives every
@@ -203,7 +203,7 @@ Every number below was measured this session.
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 52 blocking checks (2026-09-19, after the §10.1/10.2/10.6 code) |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, 53 blocking checks (2026-09-19, after the §10.1/10.2/10.6 + YacReader-hide work) |
 | `fleet_doctor` / `fleet_health` | refresh after the post-ship `mediadoctor` pass; see §10.8 for what should read clean |
 | `media_doctor` | Toriko (2011) title/plot faults and the TZ (2019) art faults are §10.3/10.4 — still open |
 | Repo | one monorepo at `~/Developer/Media-Fleet`, shipping `f0cfb4d` + the 2026-09-19 coverage/rearm/orphan work |
@@ -215,9 +215,10 @@ Every number below was measured this session.
 | Parked re-drops | after the 2026-09-19 repairs both are back IN the pipeline: DW (2005) `74c608c7…` re-armed and re-dropped, the Smurfs replacement pack `6c413306…` dropped — watch `state/decisions.log` and the journal for their outcome |
 | Open work | **§10.3–10.5e** (TZ art/ids, Toriko metadata, the One Piece manga/DB/franchise cluster). 10.1, 10.2 and 10.6 are shipped — read the section below before re-doing any of them |
 
-### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep
+### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 
-Three changes, all in `Torrent-Ingest`, each with a registered guard and a journal replay.
+Four changes, all in `Torrent-Ingest`, each with a registered guard and (where a guard
+rejects work) a journal replay.
 
 **10.1 — a partial plan can no longer delete the rest.** `plan_coverage.py` enumerates a
 release's media (torrent metadata first, disk walk for a wave or direct drop) and
@@ -244,7 +245,20 @@ deliberate verdict, and `_rearm_indices` makes exactly the named indices re-fetc
 every cycle: terminal records' leftover sources file under `finished/`/`failed/`, iCloud
 `" 2"` duplicates file under `finished/`, a live record whose recorded source is gone
 ADOPTS the survivor, an untracked hash returns to the watch root. Registration no longer
-files duplicate sources into `queued/`; `test_orphan_sources.py` is check #52.
+files duplicate sources into `queued/`; `test_orphan_sources.py` is check #52. In the
+production cycle after this shipped, both One Piece 1177/1178 sources were filed out of
+`queued/` and it is empty.
+
+**YacReader stays hidden (owner request, 2026-09-19).** The reader "keeps popping up and
+taking over the whole screen": every comic filing bounces it, and `open -g` stops focus
+stealing but not the window appearing. `yacreader_db.hide_app()` now runs after every
+fleet-initiated start/activation, using AppKit's `NSRunningApplication.hide()` through
+AppleScriptObjC FIRST (no Accessibility grant needed) with System Events only a fallback;
+`library_supervisor` re-hides through a bounded 60 s window (`SUPERVISOR_YAC_HIDE_SEC`)
+then stops, so a reader the owner opens himself is not fought. A supervisor restart also
+hides an already-visible reader for that window (covers login auto-relaunch). Guards:
+`test_yacreader_hide.py` (check #53, route order + fail-soft) and the extended
+`test_supervisor_yacreader.py`. Hiding does not stop the library update.
 
 **Replay results (printed by `test_plan_coverage.py`, in the commit message).** 177
 whole-torrent historical plans still have their `.torrent` mirror. The coverage contract
@@ -791,7 +805,7 @@ apply before any file is trusted over the provider.
 **Progress 2026-09-19 (this session):**
 
 * 10.1, 10.2 and 10.6 are shipped with registered tests #51/#52 and the replay results
-  recorded above and in the commit message. `verify_fleet.sh` = 52 checks, ALL PASSED.
+  recorded above and in the commit message. `verify_fleet.sh` = 53 checks, ALL PASSED.
 * The replay surfaced **Yamato 2202**: 26 real episodes a partial plan never accounted for
   and the old cleanup deleted — a Smurfs-class loss nobody had noticed. Recorded above.
 * Repairs run by the shipped tools this session: DW (2005) re-armed
