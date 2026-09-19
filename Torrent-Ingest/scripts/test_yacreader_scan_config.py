@@ -45,6 +45,7 @@ LIBRARIES=@ByteArray(Comics)
 UPDATE_LIBRARIES_AT_CERTAIN_TIME_TIME=00:00
 UPDATE_LIBRARIES_AT_STARTUP=false
 UPDATE_LIBRARIES_PERIODICALLY=false
+UPDATE_LIBRARIES_PERIODICALLY_INTERVAL=1
 USE_OPEN_GL=2
 """
 
@@ -54,16 +55,19 @@ ini = TMP / "YACReaderLibrary.ini"
 ini.write_text(ORIGINAL, encoding="utf-8")
 
 check("drift is detected before any fix", yacreader_db.scan_settings_ok(ini) is False)
-check("both flags read as false",
+check("both flags read as false, the drifted interval as 1",
       yacreader_db.read_scan_settings(ini)
       == {"UPDATE_LIBRARIES_AT_STARTUP": "false",
-          "UPDATE_LIBRARIES_PERIODICALLY": "false"})
+          "UPDATE_LIBRARIES_PERIODICALLY": "false",
+          "UPDATE_LIBRARIES_PERIODICALLY_INTERVAL": "1"})
 
 changed = yacreader_db.ensure_scan_settings(ini)
 text = ini.read_text(encoding="utf-8")
 check("ensure reports it changed the file", changed is True)
 check("startup flag is now true", "UPDATE_LIBRARIES_AT_STARTUP=true" in text)
 check("periodic flag is now true", "UPDATE_LIBRARIES_PERIODICALLY=true" in text)
+check("the interval is pinned to the 30-minute index 0",
+      "UPDATE_LIBRARIES_PERIODICALLY_INTERVAL=0" in text)
 check("now reads ok", yacreader_db.scan_settings_ok(ini) is True)
 check("the registered library path survived",
       "LIBRARIES=@ByteArray(Comics)" in text)

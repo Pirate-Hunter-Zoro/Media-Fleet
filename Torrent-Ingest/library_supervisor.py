@@ -325,44 +325,47 @@ def _yacreader_tick(state: dict) -> None:
             _start_yacreader_with_scan(state)
             state["yac_last_refresh"] = now
             return
-        # 2. Comics were filed while the app was up (record_plan's marker): bounce once
-        #    per gap, because the startup update is the only thing that indexes them.
+        # 2. Comics were filed while the app was up (record_plan's marker). The marker is
+        #    CONSUMED, not acted on. Restarting was the old refresh trigger, but a restart
+        #    lands YacReader on its library CHOOSER -- it never re-opens a library by
+        #    itself (measured 2026-09-19: quit+relaunch, `open -a`, CLI args and `open`
+        #    document events all leave it on the chooser) -- so every filing left the
+        #    reader not scanning until a human clicked Comics, and took the owner's screen
+        #    every time. The library's own periodic update is enabled (30 minutes,
+        #    `UPDATE_LIBRARIES_PERIODICALLY` + interval index 0), so a filed comic indexes
+        #    on its own and the open session is never interrupted. Owner decision,
+        #    recorded in HANDOFF 10.6/OPERATING 5c.
         try:
             pending = config.YACREADER_REFRESH_MARKER.exists()
         except OSError:
             pending = False
-        if pending and (now - state.get("yac_last_refresh", 0)
-                        >= config.SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC):
-            log("comics were filed; restarting YacReader so its scan indexes them")
-            state["yac_stopped_by_us"] = True
-            stop_yacreader()
-            _start_yacreader_with_scan(state)
-            state["yac_last_refresh"] = now
-            return
-        # 3. Up but windowless: no window means `LibrariesUpdateCoordinator::init()`
-        #    never ran, so the startup update never fired and the app scans nothing --
-        #    the state a crash restore leaves. Only a JUST-STARTED app can be judged:
-        #    a healthy one begins its update within seconds (the transaction journal
-        #    appears), while a long-running quiet app is indistinguishable from an idle
-        #    one through this filesystem. Activating mid-update must never happen -- the
-        #    index flickers closed between operations and a model reload can collide
-        #    with the update transaction (the 2026-09-14 wedge).
+        if pending:
+            try:
+                config.YACREADER_REFRESH_MARKER.unlink(missing_ok=True)
+            except OSError:
+                pass
+            log("comics were filed; YacReader's periodic update will index them "
+                "(no restart -- the app cannot re-open its library by itself)")
+        # 3. Up but never opened its library: the startup update cannot run, so nothing
+        #    scans until a human clicks Comics. Only a JUST-STARTED app can be judged --
+        #    a healthy one begins its startup update within seconds (the transaction
+        #    journal appears), while a long-running app between periodic scans is
+        #    indistinguishable from one parked on the chooser. Activation is BOUNDED and
+        #    only brings the window forward (which is immediately re-hidden): a restart
+        #    does not make the chooser open the library, so the ALERT is the remedy that
+        #    matters and the supervisor then leaves the app alone until its next start.
         #
         #    Activation is BOUNDED, not repeated: it steals focus, and the app it is
         #    "repairing" may simply have nothing to scan. On 2026-09-15 a stale-index
         #    false positive (the NFC/NFD comparison in yacreader_index, since fixed) had
         #    the doctor bouncing the reader every 15 minutes while this branch activated
         #    it every 60s for hours -- attempt 89 and counting -- so the owner's screen
-        #    was repeatedly taken over by a reader with nothing wrong with it. Two
-        #    attempts are enough for a genuine crash restore to get its window; after
-        #    that the alert stands and the supervisor leaves the app alone until its
-        #    next start.
+        #    was repeatedly taken over by a reader with nothing wrong with it.
         if now - state.get("yac_index_checked_at", 0) >= config.SUPERVISOR_YAC_INDEX_CHECK_SEC:
             state["yac_index_checked_at"] = now
             if yacreader_db.update_in_progress():
                 state["yac_activate_attempts"] = 0
                 state["yac_activate_alerted"] = False
-                state["yac_bounced_after_alert"] = False
             elif started is not None \
                     and now - started <= config.SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC:
                 attempts = state.get("yac_activate_attempts", 0)
@@ -377,24 +380,8 @@ def _yacreader_tick(state: dict) -> None:
                         and not state.get("yac_activate_alerted"):
                     alert("YacReaderLibrary started but has opened no library; the "
                           "startup update cannot run and new comics will not be "
-                          "indexed.")
+                          "indexed until the Comics library is opened manually.")
                     state["yac_activate_alerted"] = True
-                    # Activation does not always reach it. Every deploy restarts mediafs
-                    # moments before the supervisor starts the reader, and an app that
-                    # comes up while the mount is still re-priming can end with no library
-                    # opened at all -- neither `activate` nor `open` makes it try again
-                    # (measured 2026-09-19: 0 windows, activation a no-op, five consecutive
-                    # deploy-time alerts). A FRESH process after the mount has settled
-                    # does, so bounce it exactly ONCE; then the alert stands and the crash
-                    # policy owns whatever happens next.
-                    if not state.get("yac_bounced_after_alert"):
-                        state["yac_bounced_after_alert"] = True
-                        log("windowless YacReader did not answer activation; bouncing it "
-                            "once so it re-opens its library")
-                        state["yac_stopped_by_us"] = True
-                        stop_yacreader()
-                        state["yac_activate_attempts"] = 0
-                        _start_yacreader_with_scan(state)
         return
 
     # Down. A start that did not survive the crash window is a crash, not a quit; enough
@@ -566,7 +553,6 @@ def main() -> int:
              "yac_backoff_until": None, "yac_backoff_alerted": False,
              "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
              "yac_activate_attempts": 0, "yac_activate_alerted": False,
-             "yac_bounced_after_alert": False,
              # Hide a reader that was already up and visible when this supervisor
              # (re)started -- a login auto-relaunch, or a deploy. It fires once the
              # app's library update is underway, or after the settle window.

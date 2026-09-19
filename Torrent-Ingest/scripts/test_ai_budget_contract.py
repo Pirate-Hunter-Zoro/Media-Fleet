@@ -149,7 +149,18 @@ def test_wrapper_answers_on_live_inputs() -> None:
     check("'reserved' is a bool", isinstance(a["reserved"], bool), True)
     check("'why' is a non-empty string", bool(a["why"]) and isinstance(a["why"], str), True)
     check("'capable' is a list", isinstance(a["capable"], list), True)
-    check("'chain' is a non-empty list", isinstance(a["chain"], list) and len(a["chain"]) > 0, True)
+    check("'chain' is a list", isinstance(a["chain"], list), True)
+    # A non-empty chain is only owed when the wrapper is HEALTHY. When every provider is
+    # over its daily cap the chain is legitimately empty -- that is the honest "defer the
+    # run" verdict, not a broken wrapper, and asserting otherwise made this blocking check
+    # depend on today's caps (it failed at 14:2x on 2026-09-19 while the Smurfs retries
+    # had every provider capped, with the code untouched). The healthy half still catches
+    # a wrapper that lost its chain.
+    if a["healthy"]:
+        check("a healthy wrapper has a non-empty chain", len(a["chain"]) > 0, True)
+    else:
+        print("        (wrapper unhealthy this hour: an empty chain is the honest "
+              "'all providers capped' verdict)")
     print(f"        (live: healthy={a['healthy']} capable={a['capable']} "
           f"chain={a['chain']})")
 

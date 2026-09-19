@@ -91,7 +91,6 @@ def state() -> dict:
             "yac_backoff_until": None, "yac_backoff_alerted": False,
             "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
             "yac_activate_attempts": 0, "yac_activate_alerted": False,
-            "yac_bounced_after_alert": False,
             "yac_hide_pending": False, "yac_hide_arm_at": 0.0}
 
 
@@ -170,6 +169,22 @@ try:
     ls._yacreader_tick(st)
     check("...and it is hidden once its update runs", fake.hides == 1)
 
+    # 2b. A refresh marker while the app is UP no longer restarts it. The 30-minute
+    #     periodic update indexes new comics; a restart lands the app on its library
+    #     chooser where nothing scans until a human clicks Comics (owner decision
+    #     2026-09-19).
+    fake = Fake()
+    fake.running = True
+    wire(fake)
+    ls.config.YACREADER_REFRESH_MARKER.write_text("pending\n", encoding="utf-8")
+    st = state()
+    st["yac_started_at"] = CLOCK[0] - config.SUPERVISOR_YAC_CRASH_WINDOW_SEC - 1
+    ls._yacreader_tick(st)
+    check("filed comics do NOT restart the reader",
+          fake.stops == 0 and fake.starts == 0 and fake.running)
+    check("the marker is consumed anyway",
+          not ls.config.YACREADER_REFRESH_MARKER.exists())
+
     # 3. Up, flags fine, no library open -> activate (throttled), never restart.
     fake = Fake()
     fake.running = True
@@ -188,8 +203,6 @@ try:
     ls._yacreader_tick(st)
     check("an update in flight resets the attempts",
           st["yac_activate_attempts"] == 0 and st["yac_activate_alerted"] is False)
-    check("...and re-arms the alert bounce",
-          st["yac_bounced_after_alert"] is False)
 
     # 3b. An app with an update IN FLIGHT must never be activated: it closes its index
     #     between operations and I/O-bound scanning can sit at ~1.5% CPU, so the
@@ -211,10 +224,11 @@ try:
     ls._yacreader_tick(st)
     check("an idle app still gets activated", fake.activations == 1)
 
-    # 4. Persistent windowlessness alerts once and stops activating: activation steals
-    #    focus, and a reader that has nothing to scan is not repaired by being brought
-    #    to the front every minute (the 2026-09-15 stale-index false positive had this
-    #    firing for hours).
+    # 4. Persistent chooser-parking alerts once and stops activating: activation steals
+    #    focus, and a reader parked on its library chooser is not repaired by being
+    #    brought to the front every minute (the 2026-09-15 stale-index false positive
+    #    had this firing for hours). It is NOT restarted: a restart does not make the
+    #    chooser open the library, it only interrupts whatever the owner was doing.
     fake = Fake()
     fake.running = True
     fake.index_open = False
@@ -224,9 +238,9 @@ try:
         CLOCK[0] += config.SUPERVISOR_YAC_INDEX_CHECK_SEC
         ls._yacreader_tick(st)
     check("activation is bounded, not repeated",
-          fake.activations == 2 * config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS)
-    check("a persistently windowless app is bounced exactly once", fake.starts == 1)
-    check("...and not stopped a second time", fake.stops == 1)
+          fake.activations == config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS)
+    check("a chooser-parked reader is never restarted",
+          fake.starts == 0 and fake.stops == 0)
     check("the owner is alerted once", len(fake.alerts) == 1)
 
     # 5. Crash loop -> backoff, no thrash.

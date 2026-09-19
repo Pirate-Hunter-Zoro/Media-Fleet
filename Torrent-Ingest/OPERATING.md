@@ -367,23 +367,23 @@ python3 scripts/yacreader_index_health.py            # integrity + the backup ce
 The repair backs the index up under a name that PASSES `integrity_check` and edits under
 the index lock; the supervisor restarts the app when the lock is released.
 
-**The reader is meant to be invisible.** The fleet starts and bounces YacReader on its own
-schedule (every comic filing consumes the refresh marker), and since 2026-09-19 each of
-those starts is HIDDEN as soon as its library update is underway, or after a 30-second
-settle window if no update ever starts — `open -g` alone stopped it stealing focus but not
-covering the screen, and an app parked on its library chooser (see below) never updates at
-all. Hiding does not stop an update in flight. If you want to read, open YacReader from the
-Dock: the supervisor only hides in the moments after a fleet start, so a reader you opened
-yourself stays up. A line in the supervisor log saying the window "could not be hidden"
-means the AppKit route failed and the System Events fallback was refused — check
-Accessibility for the daemon if the popups return.
+**The reader is meant to be invisible, and it updates itself.** The fleet patches
+YacReader's periodic update on before every start (30 minutes, the finest cadence it
+offers), so a filed comic is indexed on its own. Since 2026-09-19 the supervisor **no
+longer restarts the reader when comics are filed**: a restart lands YacReader on its
+library chooser, where it never scans until you click `Comics` — and every filing used to
+take your screen. Each fleet-initiated start is HIDDEN (once its update runs, or after a
+30 s settle). If you want to read, open YacReader from the Dock; the supervisor only hides
+in the moments after a fleet start.
 
-**If the reader shows its library CHOOSER instead of your Comics library**, it has not
-opened the library, so no scan runs (the tell: `library.ydb` mtime never moves and the
-supervisor logs the "opened no library" alert). Open the `Comics` library once by hand,
-let the scan finish, then quit the app from its menu (not `pkill`) so it remembers the
-library; the supervisor's next start restores it. This state is what 18 deploy-time
-alerts were made of through 2026-09-19.
+**If the reader shows its library CHOOSER instead of your Comics library** (after a
+crash, a reboot, or a deploy — a full ship restarts mediafs, and the reader is stopped
+while the mount is unprimed), open the `Comics` library once by hand: it stays open, and
+the periodic update keeps it current from then on. There is no headless way to open a
+library — quit/relaunch, `open -a`, command-line arguments and `open` document events all
+leave it on the chooser (measured 2026-09-19) — so this is the one human click the
+integration needs, and the supervisor's "opened no library" alert names it. Do not
+force-kill it: it is running fine hidden, and killing it only forces another click.
 
 ## 5d. "A chapter vanished — why?"
 

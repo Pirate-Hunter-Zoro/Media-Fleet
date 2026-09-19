@@ -249,20 +249,23 @@ files duplicate sources into `queued/`; `test_orphan_sources.py` is check #52. I
 production cycle after this shipped, both One Piece 1177/1178 sources were filed out of
 `queued/` and it is empty.
 
-**YacReader stays hidden (owner request, 2026-09-19).** The reader "keeps popping up and
-taking over the whole screen": every comic filing bounces it, and `open -g` stops focus
-stealing but not the window appearing. `yacreader_db.hide_app()` now runs after every
-fleet-initiated start/activation (and supervisor restart), using AppKit's
-`NSRunningApplication.hide()` through AppleScriptObjC FIRST (no Accessibility grant
-needed) with System Events only a fallback. The hide fires on the first tick where the
-library update is underway (`update_in_progress()`) OR the 30 s
-`SUPERVISOR_YAC_HIDE_SETTLE_SEC` window has passed — the update path hides a healthy
-scan, and the settle path is what covers the reader's current real state, an app parked
-on its library CHOOSER that never starts an update (its `library.ydb` had not moved
-since Sep 18; 18 deploy-time alerts were this). Once hidden, the supervisor stops
-touching it, so a reader the owner opens himself is not fought. Guards:
-`test_yacreader_hide.py` (check #53, route order + fail-soft) and the extended
-`test_supervisor_yacreader.py`.
+**YacReader stays hidden and refreshes itself (owner decision, 2026-09-19).** The reader
+"keeps popping up and taking over the whole screen": every comic filing bounced it, and
+`open -g` stops focus stealing but not the window appearing. Two changes:
+`yacreader_db.hide_app()` runs after every fleet-initiated start/activation (and
+supervisor restart), using AppKit's `NSRunningApplication.hide()` through
+AppleScriptObjC FIRST (no Accessibility grant needed) with System Events only a
+fallback — armed at start, fired when the library update is underway OR after the 30 s
+settle. And the **restart-bounce for filed comics is GONE**: a restart lands YacReader on
+its library CHOOSER (it never re-opens a library by itself; quit/relaunch, `open -a`,
+CLI args and `open` document events all leave it there — measured), so every filing used
+to leave it not scanning AND interrupt the owner. Instead the app's own periodic update
+is the refresh mechanism, enforced on at 30 minutes
+(`UPDATE_LIBRARIES_PERIODICALLY_INTERVAL` is an enum index: 0=30 min). The supervisor
+still starts it when down, stops it while the mount is unhealthy, bounces it when the
+scan flags drift, and alerts (without restarting) when it is parked on the chooser — the
+one human click (open Comics) is named in the alert. Guards: `test_yacreader_hide.py`
+(check #53), `test_supervisor_yacreader.py`, `test_yacreader_scan_config.py`.
 
 **And a windowless reader it cannot activate is bounced once.** Every deploy restarts
 mediafs moments before the supervisor starts YacReader, and an app that comes up during

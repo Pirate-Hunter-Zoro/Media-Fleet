@@ -2233,13 +2233,21 @@ YACREADER_INI = (Path.home() / "Library" / "Application Support" / "YACReader" /
 YACREADER_SCAN_SETTINGS = {
     "UPDATE_LIBRARIES_AT_STARTUP": "true",
     "UPDATE_LIBRARIES_PERIODICALLY": "true",
+    # The interval is an ENUM INDEX, not a duration: 0=30 min, 1=hourly, 2=2 h, ... 6=daily
+    # (`YACReader::LibrariesUpdateInterval` in the app's source). 30 minutes is the finest
+    # cadence the app offers, and since 2026-09-19 it is the fleet's refresh mechanism --
+    # the supervisor no longer restarts the reader for filed comics (a restart lands it on
+    # the library chooser where it never scans). Enforced like the booleans, so a drifted
+    # interval cannot silently turn indexing off.
+    "UPDATE_LIBRARIES_PERIODICALLY_INTERVAL": "0",
 }
 # Written by `dbhook.record_plan` when a plan filed anything under Comics/. The supervisor
-# consumes it: app up -> bounce it (at most once per gap) so it scans; app down -> the
-# next start scans anyway, so it just clears the marker.
+# CONSUMES it without restarting: the app's own periodic update (30 minutes; interval
+# index 0 in UPDATE_LIBRARIES_PERIODICALLY_INTERVAL semantics) indexes new comics, and a
+# restart would land the app on its library chooser, where it never scans until a human
+# clicks Comics (owner decision 2026-09-19). The marker is kept for the health report and
+# for a future in-app trigger.
 YACREADER_REFRESH_MARKER = STATE_DIR / "yacreader_refresh_request"
-SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC = int(
-    os.environ.get("SUPERVISOR_YAC_SCAN_MARKER_GAP_SEC", str(30 * 60)))
 # The app can be up with NO library window (a crash restore), in which case
 # `LibrariesUpdateCoordinator::init()` never runs and neither does the startup update --
 # the app looks healthy and scans nothing. The supervisor activates it, but only inside
