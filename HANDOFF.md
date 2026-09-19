@@ -210,9 +210,9 @@ Every number below was measured this session.
 | Jellyfin | 313 series, 20,052 episodes, 448 movies |
 | Mount | Shows 312 dirs, Movies 449 video files, Manga 102 series — primed and serving |
 | `library.db` | 24,415 owned rows, 2,221 series rows |
-| YacReader | scan-at-startup flags on, supervisor enforcing them (verify_fleet green) |
-| In flight | **no identify run is in flight** (checked 2026-09-19 after the code work) and the **reaper is draining** (`reap.py` PID 1229) — do not bounce the reaper (§2.2). The 2026-09-19 session shipped 10.1/10.2/10.6 and then ran the repairs in §10.7b |
-| Parked re-drops | after the 2026-09-19 repairs both are back IN the pipeline: DW (2005) `74c608c7…` re-armed and re-dropped, the Smurfs replacement pack `6c413306…` dropped — watch `state/decisions.log` and the journal for their outcome |
+| YacReader | **hidden after every fleet start; no longer restarted for filed comics** — it self-updates every 30 min (enforced). **Owner action pending: open Comics once** (Dock → YacReader → Comics); the app cannot open a library by itself and restarts park it on the chooser. The supervisor alerts (never restarts) when it sees that |
+| In flight | the **Smurfs identify is retrying** (`6c413306…`; all free providers were capped ~15:00, the wave keeps bytes and retries) and the **reaper is draining** (`reap.py` PID 1229) — do not bounce the reaper (§2.2), and wait for an identify run before any deploy (§2.4). The 2026-09-19 session shipped 10.1/10.2/10.6 plus the YacReader hide/periodic policy, then ran the repairs in §10.7b |
+| Parked re-drops | both are back IN the pipeline and `~/Downloads` is clean: DW (2005) `74c608c7…` re-armed (140/178 carried) and re-dropped, the Smurfs replacement pack `6c413306…` dropped and downloading — watch `state/decisions.log` and the journal for their outcome |
 | Open work | **§10.3–10.5e** (TZ art/ids, Toriko metadata, the One Piece manga/DB/franchise cluster). 10.1, 10.2 and 10.6 are shipped — read the section below before re-doing any of them |
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
