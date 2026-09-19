@@ -369,14 +369,21 @@ the index lock; the supervisor restarts the app when the lock is released.
 
 **The reader is meant to be invisible.** The fleet starts and bounces YacReader on its own
 schedule (every comic filing consumes the refresh marker), and since 2026-09-19 each of
-those starts is HIDDEN as soon as its library update is underway — `open -g` alone stopped
-it stealing focus but not covering the screen. Hiding waits for the update on purpose:
-hiding before the library window exists suppresses the window itself, and an in-flight
-update is the proof the window is open. Hiding does not stop the update. If you want to
-read, open YacReader from the Dock: the supervisor only hides in the moments after a
-fleet start, so a reader you opened yourself stays up. A line in the supervisor log saying
-the window "could not be hidden" means the AppKit route failed and the System Events
-fallback was refused — check Accessibility for the daemon if the popups return.
+those starts is HIDDEN as soon as its library update is underway, or after a 30-second
+settle window if no update ever starts — `open -g` alone stopped it stealing focus but not
+covering the screen, and an app parked on its library chooser (see below) never updates at
+all. Hiding does not stop an update in flight. If you want to read, open YacReader from the
+Dock: the supervisor only hides in the moments after a fleet start, so a reader you opened
+yourself stays up. A line in the supervisor log saying the window "could not be hidden"
+means the AppKit route failed and the System Events fallback was refused — check
+Accessibility for the daemon if the popups return.
+
+**If the reader shows its library CHOOSER instead of your Comics library**, it has not
+opened the library, so no scan runs (the tell: `library.ydb` mtime never moves and the
+supervisor logs the "opened no library" alert). Open the `Comics` library once by hand,
+let the scan finish, then quit the app from its menu (not `pkill`) so it remembers the
+library; the supervisor's next start restores it. This state is what 18 deploy-time
+alerts were made of through 2026-09-19.
 
 ## 5d. "A chapter vanished — why?"
 

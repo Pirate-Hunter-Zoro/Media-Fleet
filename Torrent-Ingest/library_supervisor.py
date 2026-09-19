@@ -244,24 +244,39 @@ def _start_yacreader_with_scan(state: dict) -> None:
         log("YacReader ini: re-enabled scan-at-startup (auto-update flags had drifted)")
     log("starting YacReader (mount primed)")
     start_yacreader()
-    state["yac_hide_pending"] = True          # hide once the library update is underway
+    _arm_hide(state)
     state["yac_started_at"] = time.time()
     state["yac_stopped_by_us"] = False
     state["yac_index_checked_at"] = 0        # probe the open index on the next tick
 
 
+def _arm_hide(state: dict) -> None:
+    """Arm the window hide for a fleet-started/activated reader.
+
+    Fires on the first tick where either the library update is underway (`init()` has
+    run) or the settle window has passed -- whichever comes first. See `_hide_yacreader`.
+    """
+    state["yac_hide_pending"] = True
+    state["yac_hide_arm_at"] = time.time()
+
+
 def _hide_yacreader(state: dict, why: str) -> None:
-    """Hide the reader's window, best-effort, NOW that its library is open.
+    """Hide the reader's window, best-effort, and stop touching it.
 
-    WHEN, exactly: only once `update_in_progress()` is true. The owner does not want a
-    reader he did not open covering his screen (2026-09-19: "it keeps popping up and
-    taking over the whole screen"), but hiding a JUST-LAUNCHED reader suppresses the
-    library window itself -- measured 2026-09-19: while hidden it had 0 windows and ran
-    no update, and un-hiding it produced the window. An in-flight update is the proof
-    that `LibrariesUpdateCoordinator::init()` has run, i.e. the window exists and hiding
-    is safe; the update is a SQLite transaction and is not interrupted by a Cmd-H.
+    WHEN, exactly. Hiding is armed at every fleet start/activate and on supervisor
+    restart, and fires on the first tick where EITHER:
 
-    `hide_app` failing (System Events/Accessibility refused) only means the window
+      * `update_in_progress()` is true -- proof `LibrariesUpdateCoordinator::init()` has
+        run, so a library window exists and a Cmd-H cannot interrupt the SQLite
+        transaction; or
+      * the settle window (`SUPERVISOR_YAC_HIDE_SETTLE_SEC`) has passed -- the window is
+        created at launch, so after that it either exists (hide it) or never will. This
+        is what covers an app parked on the library CHOOSER, which never starts an
+        update at all (measured 2026-09-19) and whose window is exactly what the owner
+        does not want on screen.
+
+    Once hidden, pending clears, so a reader the owner opens himself is never fought.
+    `hide_app` failing (AppKit and System Events both refused) only means the window
     shows; it must never turn into a failed start or a crash-loop, so this logs and
     continues.
     """
@@ -290,13 +305,17 @@ def _yacreader_tick(state: dict) -> None:
             state["yac_started_at"] = started = now
         elif now - started >= config.SUPERVISOR_YAC_CRASH_WINDOW_SEC:
             state["yac_crashes"] = 0
-        # Hide a fleet-started reader the moment its library update is underway -- that
-        # is the proof the window exists (`init()` has run), and hiding BEFORE then
-        # suppresses the window entirely (see `_hide_yacreader`). Once hidden, pending
-        # clears and the owner's own use of the reader is never touched.
-        if state.get("yac_hide_pending") and yacreader_db.update_in_progress():
-            _hide_yacreader(state, "update")
-            state["yac_hide_pending"] = False
+        # Hide a fleet-started reader: the moment its library update is underway, or
+        # once the settle window has passed for an app that never starts one (see
+        # `_hide_yacreader`). Once hidden, pending clears and the owner's own use of the
+        # reader is never touched.
+        if state.get("yac_hide_pending"):
+            updating = yacreader_db.update_in_progress()
+            settled = (now - state.get("yac_hide_arm_at", now)
+                       >= config.SUPERVISOR_YAC_HIDE_SETTLE_SEC)
+            if updating or settled:
+                _hide_yacreader(state, "update" if updating else "settle")
+                state["yac_hide_pending"] = False
         # 1. Drift in the scan flags is the "new comics never appear" fault and the app
         #    is already up: it must be bounced for the patch AND for the startup scan.
         if not yacreader_db.scan_settings_ok():
@@ -353,7 +372,7 @@ def _yacreader_tick(state: dict) -> None:
                         "so the library window (and its startup update) exist (attempt "
                         f"{state['yac_activate_attempts']})")
                     yacreader_db.activate_app()
-                    state["yac_hide_pending"] = True   # hide once its update runs
+                    _arm_hide(state)              # hide once its update runs (or settles)
                 if state["yac_activate_attempts"] >= config.SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS \
                         and not state.get("yac_activate_alerted"):
                     alert("YacReaderLibrary started but has opened no library; the "
@@ -549,10 +568,9 @@ def main() -> int:
              "yac_activate_attempts": 0, "yac_activate_alerted": False,
              "yac_bounced_after_alert": False,
              # Hide a reader that was already up and visible when this supervisor
-             # (re)started -- a login auto-relaunch, or a deploy. It takes effect once
-             # the app's library update is underway, which is both when the window is
-             # proven to exist and when the popup is on screen.
-             "yac_hide_pending": True}
+             # (re)started -- a login auto-relaunch, or a deploy. It fires once the
+             # app's library update is underway, or after the settle window.
+             "yac_hide_pending": True, "yac_hide_arm_at": time.time()}
     if args.once:
         tick(state)
         return 0

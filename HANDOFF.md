@@ -251,17 +251,18 @@ production cycle after this shipped, both One Piece 1177/1178 sources were filed
 
 **YacReader stays hidden (owner request, 2026-09-19).** The reader "keeps popping up and
 taking over the whole screen": every comic filing bounces it, and `open -g` stops focus
-stealing but not the window appearing. `yacreader_db.hide_app()` now runs once the app's
-library update is UNDERWAY (`update_in_progress()`), using AppKit's
+stealing but not the window appearing. `yacreader_db.hide_app()` now runs after every
+fleet-initiated start/activation (and supervisor restart), using AppKit's
 `NSRunningApplication.hide()` through AppleScriptObjC FIRST (no Accessibility grant
-needed) with System Events only a fallback; the hide is armed at every fleet
-start/activate and each supervisor restart. **The timing is load-bearing: hiding before
-the window exists suppresses the window entirely** (measured 2026-09-19: 0 windows while
-hidden, 1 after un-hiding), which is why the first draft's hide-at-start was reverted the
-same hour it shipped; an in-flight update proves `init()` ran and a Cmd-H does not
-interrupt the scan. Once hidden, the supervisor stops touching it, so a reader the owner
-opens himself is not fought. Guards: `test_yacreader_hide.py` (check #53, route order +
-fail-soft) and the extended `test_supervisor_yacreader.py`.
+needed) with System Events only a fallback. The hide fires on the first tick where the
+library update is underway (`update_in_progress()`) OR the 30 s
+`SUPERVISOR_YAC_HIDE_SETTLE_SEC` window has passed — the update path hides a healthy
+scan, and the settle path is what covers the reader's current real state, an app parked
+on its library CHOOSER that never starts an update (its `library.ydb` had not moved
+since Sep 18; 18 deploy-time alerts were this). Once hidden, the supervisor stops
+touching it, so a reader the owner opens himself is not fought. Guards:
+`test_yacreader_hide.py` (check #53, route order + fail-soft) and the extended
+`test_supervisor_yacreader.py`.
 
 **And a windowless reader it cannot activate is bounced once.** Every deploy restarts
 mediafs moments before the supervisor starts YacReader, and an app that comes up during

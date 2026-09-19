@@ -2257,6 +2257,14 @@ SUPERVISOR_YAC_ACTIVATE_WINDOW_SEC = int(
 # that the alert stands and nothing else touches the app until its next start.
 SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS = int(
     os.environ.get("SUPERVISOR_YAC_ACTIVATE_MAX_ATTEMPTS", "2"))
+# How long a fleet-started reader may sit VISIBLE before the supervisor hides it even if
+# no library update is observed. The update signal hides the healthy case within a tick;
+# this fallback covers the app that opens its window (chooser or library) and never starts
+# an update -- the owner still does not want that window on screen. Long enough that the
+# launch window has certainly been created (hiding mid-creation would race it), short
+# enough that a bounce does not leave a popup up for long.
+SUPERVISOR_YAC_HIDE_SETTLE_SEC = int(
+    os.environ.get("SUPERVISOR_YAC_HIDE_SETTLE_SEC", "30"))
 # How long the index may sit unchanged with shelf files missing and no update running
 # before fleet_health escalates it from a warning to an ACTION (and the doctor may
 # request a rescan). Long on purpose: a pool-backed scan can spend many minutes reading

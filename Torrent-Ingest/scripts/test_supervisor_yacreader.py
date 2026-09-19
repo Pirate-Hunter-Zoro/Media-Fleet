@@ -92,7 +92,7 @@ def state() -> dict:
             "yac_last_refresh": 0.0, "yac_index_checked_at": 0,
             "yac_activate_attempts": 0, "yac_activate_alerted": False,
             "yac_bounced_after_alert": False,
-            "yac_hide_pending": False}
+            "yac_hide_pending": False, "yac_hide_arm_at": 0.0}
 
 
 try:
@@ -122,6 +122,21 @@ try:
     CLOCK[0] += 5
     ls._yacreader_tick(st)
     check("an idle reader is not hidden again", fake.hides == 1)
+
+    # 1d. An app that never starts an update -- parked on the library CHOOSER, measured
+    #     2026-09-19 -- is still hidden, once the settle window passes. Before that it is
+    #     left alone so the window created at launch is never raced.
+    fake = Fake()
+    wire(fake)
+    st = state()
+    ls._yacreader_tick(st)                    # down -> start, arms the hide
+    CLOCK[0] += 5
+    ls._yacreader_tick(st)
+    check("before the settle window a chooser app is not hidden", fake.hides == 0)
+    CLOCK[0] += config.SUPERVISOR_YAC_HIDE_SETTLE_SEC
+    ls._yacreader_tick(st)
+    check("after the settle window it is hidden anyway", fake.hides == 1)
+    check("...and hiding is not re-armed", st["yac_hide_pending"] is False)
 
     # 1c. A refused hide -- System Events/Accessibility is not granted to the fleet -- must
     #     not break the start or the tick. It is reported, not swallowed, and the app runs.
