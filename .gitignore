@@ -5,6 +5,26 @@
 # .DS_Store
 .DS_Store
 
+# Machine-local configuration and secrets. This repo is public: nothing in here may
+# carry a credential, an account list, or a server token. `.env` holds the machine's
+# real paths/keys (see `.env.example` for the tracked template); the MEGA account pool
+# lives in the untracked `Media-Syncer/rclone.conf` (see `Media-Syncer/rclone.conf.example`).
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+id_rsa*
+# Belt-and-braces: never let the pool config be re-added from any subdirectory.
+rclone.conf
+!*.conf.example
+
+# Python bytecode from the repo-root modules (fleet_env.py) and any tool run from the
+# root; the sub-projects already ignore their own.
+__pycache__/
+*.pyc
+
 # Keep node_modules out if any tooling ever installs one here. The opencode CLI itself is
 # a global Homebrew/npm install and its manifest lives at ~/Developer, outside this repo.
 node_modules/

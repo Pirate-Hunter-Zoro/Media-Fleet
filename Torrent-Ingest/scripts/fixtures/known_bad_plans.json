@@ -8,49 +8,49 @@
    "owned": false,
    "files": [
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E01.1080p.WEB.h264-ETHEL.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E01.1080p.WEB.h264-ETHEL.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E09.mkv",
      "season": 2,
      "episode": 9
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E02.1080p.WEB.h264-ETHEL.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E02.1080p.WEB.h264-ETHEL.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E10.mkv",
      "season": 2,
      "episode": 10
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E03.1080p.WEB.h264-ETHEL.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E03.1080p.WEB.h264-ETHEL.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E11.mkv",
      "season": 2,
      "episode": 11
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E04.1080p.WEB.h264-ETHEL.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E04.1080p.WEB.h264-ETHEL.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E12.mkv",
      "season": 2,
      "episode": 12
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E05.1080p.WEB.h264-ETHEL.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E05.1080p.WEB.h264-ETHEL.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E13.mkv",
      "season": 2,
      "episode": 13
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E06.1080p.WEB.h264-ETHEL.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E06.1080p.WEB.h264-ETHEL.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E14.mkv",
      "season": 2,
      "episode": 14
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E07.1080p.WEB.h264-EDITH.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E07.1080p.WEB.h264-EDITH.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E15.mkv",
      "season": 2,
      "episode": 15
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E08.1080p.WEB.h264-EDITH.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/That.90s.Show.S03.COMPLETE.1080p.WEB.h264-MIXED[TGx]/That.90s.Show.S03E08.1080p.WEB.h264-EDITH.mkv",
      "dst_rel": "Shows/That '90s Show (2023)/Season 02/That '90s Show (2023) - S02E16.mkv",
      "season": 2,
      "episode": 16
@@ -69,145 +69,145 @@
    "owned": true,
    "files": [
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E01E02-A.Few.Good.Grugs-Valley.Shine.Day.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E01E02-A.Few.Good.Grugs-Valley.Shine.Day.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E01.mkv",
      "season": 5,
      "episode": 1
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E01E02-A.Few.Good.Grugs-Valley.Shine.Day.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E01E02-A.Few.Good.Grugs-Valley.Shine.Day.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E02.mkv",
      "season": 5,
      "episode": 2
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E03E04-Chalk.the.Line-Weighting.is the.Hardest.Part.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E03E04-Chalk.the.Line-Weighting.is the.Hardest.Part.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E03.mkv",
      "season": 5,
      "episode": 3
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E03E04-Chalk.the.Line-Weighting.is the.Hardest.Part.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E03E04-Chalk.the.Line-Weighting.is the.Hardest.Part.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E04.mkv",
      "season": 5,
      "episode": 4
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E05E06-WrestleBabia.The Musical-Flowers.for.Munk.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E05E06-WrestleBabia.The Musical-Flowers.for.Munk.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E05.mkv",
      "season": 5,
      "episode": 5
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E05E06-WrestleBabia.The Musical-Flowers.for.Munk.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E05E06-WrestleBabia.The Musical-Flowers.for.Munk.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E06.mkv",
      "season": 5,
      "episode": 6
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E07E08-They.Might.be.Sky.Giants-The.Grugest.Story.Ever.Told.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E07E08-They.Might.be.Sky.Giants-The.Grugest.Story.Ever.Told.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E07.mkv",
      "season": 5,
      "episode": 7
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E07E08-They.Might.be.Sky.Giants-The.Grugest.Story.Ever.Told.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E07E08-They.Might.be.Sky.Giants-The.Grugest.Story.Ever.Told.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E08.mkv",
      "season": 5,
      "episode": 8
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E09E10-Worms.of.Endearment-Dr.Strangegrug.or.How.I.Learned.to.Stop.Worrying.and.Love.the.Spear.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E09E10-Worms.of.Endearment-Dr.Strangegrug.or.How.I.Learned.to.Stop.Worrying.and.Love.the.Spear.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E09.mkv",
      "season": 5,
      "episode": 9
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E09E10-Worms.of.Endearment-Dr.Strangegrug.or.How.I.Learned.to.Stop.Worrying.and.Love.the.Spear.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E09E10-Worms.of.Endearment-Dr.Strangegrug.or.How.I.Learned.to.Stop.Worrying.and.Love.the.Spear.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E10.mkv",
      "season": 5,
      "episode": 10
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E11E12-Tunnel.of.Terror-Creature.from.the.Crood.Lagoon.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E11E12-Tunnel.of.Terror-Creature.from.the.Crood.Lagoon.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E11.mkv",
      "season": 5,
      "episode": 11
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E11E12-Tunnel.of.Terror-Creature.from.the.Crood.Lagoon.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E11E12-Tunnel.of.Terror-Creature.from.the.Crood.Lagoon.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E12.mkv",
      "season": 5,
      "episode": 12
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E13-Voice.Fail.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E13-Voice.Fail.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E13.mkv",
      "season": 5,
      "episode": 13
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E14E15-Punch.Thunk.Love-Nay.Boors.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E14E15-Punch.Thunk.Love-Nay.Boors.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E14.mkv",
      "season": 5,
      "episode": 14
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E14E15-Punch.Thunk.Love-Nay.Boors.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E14E15-Punch.Thunk.Love-Nay.Boors.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E15.mkv",
      "season": 5,
      "episode": 15
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E16E17-Caverns.and.Creepers-Rad.Teacher.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E16E17-Caverns.and.Creepers-Rad.Teacher.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E16.mkv",
      "season": 5,
      "episode": 16
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E16E17-Caverns.and.Creepers-Rad.Teacher.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E16E17-Caverns.and.Creepers-Rad.Teacher.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E17.mkv",
      "season": 5,
      "episode": 17
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E18E19-Grugs.First.Chance-Furry.Road.The.Path.of.the.Bear.Owl.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E18E19-Grugs.First.Chance-Furry.Road.The.Path.of.the.Bear.Owl.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E18.mkv",
      "season": 5,
      "episode": 18
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E18E19-Grugs.First.Chance-Furry.Road.The.Path.of.the.Bear.Owl.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E18E19-Grugs.First.Chance-Furry.Road.The.Path.of.the.Bear.Owl.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E19.mkv",
      "season": 5,
      "episode": 19
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E20E21-My.Big.Fat.Gran.Wedding-The.Strutting.Edge.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E20E21-My.Big.Fat.Gran.Wedding-The.Strutting.Edge.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E20.mkv",
      "season": 5,
      "episode": 20
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E20E21-My.Big.Fat.Gran.Wedding-The.Strutting.Edge.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E20E21-My.Big.Fat.Gran.Wedding-The.Strutting.Edge.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E21.mkv",
      "season": 5,
      "episode": 21
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E22E23-Cant.Hardly.Bait-Crood.Detente.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E22E23-Cant.Hardly.Bait-Crood.Detente.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E22.mkv",
      "season": 5,
      "episode": 22
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E22E23-Cant.Hardly.Bait-Crood.Detente.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E22E23-Cant.Hardly.Bait-Crood.Detente.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E23.mkv",
      "season": 5,
      "episode": 23
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E24-This.Is.an.End.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
+     "src": "/Users/example/Downloads/.torrent-ingest/Dawn.of.the.Croods.S04.1080p.WEBRIP.x265.OPUS51-EMPATHY/Dawn.of.the.Croods.S04E24-This.Is.an.End.1080p.WEBRIP.x265.OPUS51-EMPATHY.mkv",
      "dst_rel": "Shows/Dawn of the Croods (2015)/Season 05/Dawn of the Croods (2015) - S05E24.mkv",
      "season": 5,
      "episode": 24
@@ -224,73 +224,73 @@
    "owned": true,
    "files": [
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E01.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E01.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E01.mp4",
      "season": 3,
      "episode": 1
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E01.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E01.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E01.2_English.srt",
      "season": null,
      "episode": null
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E02.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E02.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E02.mp4",
      "season": 3,
      "episode": 2
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E02.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E02.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E02.2_English.srt",
      "season": null,
      "episode": null
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E03.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E03.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E03.mp4",
      "season": 3,
      "episode": 3
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E03.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E03.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E03.2_English.srt",
      "season": null,
      "episode": null
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E04.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E04.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E04.mp4",
      "season": 3,
      "episode": 4
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E04.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E04.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E04.2_English.srt",
      "season": null,
      "episode": null
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E05.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E05.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E05.mp4",
      "season": 3,
      "episode": 5
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E05.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E05.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E05.2_English.srt",
      "season": null,
      "episode": null
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E06.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/The.Croods.Family.Tree.S05E06.1080p.WEBRip.x265-RARBG[eztv.re].mp4",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E06.mp4",
      "season": 3,
      "episode": 6
     },
     {
-     "src": "/Users/mikeyferguson/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E06.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
+     "src": "/Users/example/Downloads/.torrent-ingest/The.Croods.Family.Tree.S05.1080p.WEBRip.x265[eztv.re]/Subs/The.Croods.Family.Tree.S05E06.1080p.WEBRip.x265-RARBG[eztv.re]/2_English.srt",
      "dst_rel": "Shows/The Croods Family Tree (2021)/Season 03/The Croods Family Tree (2021) - S03E06.2_English.srt",
      "season": null,
      "episode": null

@@ -33,6 +33,14 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+# Machine-local paths live in the repo-root `.env` (untracked; see `.env.example`).
+_REPO_ROOT = PROJECT_ROOT.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
+import fleet_env                                                    # noqa: E402
+
+fleet_env.load()
+
 # --- The Torrent-Ingest pipeline we borrow ------------------------------------
 #
 # Placement, validation, staging, atomic publish, the locked-`.nfo` writers, the
@@ -82,12 +90,15 @@ MOVIES_ROOT = TI.MOVIES_ROOT
 SOUNDTRACKS_DIR = (Path.home() / "Library" / "Mobile Documents"
                    / "com~apple~CloudDocs" / "Soundtracks")
 
-# The second audio destination: Tally's Google Drive `Music` folder, fed by her
-# "Download" playlist. Hand-curated, with subfolders of its own (`Church/`, `Folk
+# The second audio destination: the household Music folder on Google Drive, fed by
+# the "Download" playlist. Hand-curated, with subfolders of its own (`Church/`, `Folk
 # music/`, ...), and reached through the File Provider mount rather than a plain
 # directory -- see AUDIO_PLAYLIST_DIRS for why that second part matters.
-MUSIC_DIR = (Path.home() / "Library" / "CloudStorage"
-             / "GoogleDrive-tallyferguson@gmail.com" / "My Drive" / "Music")
+# Machine-specific: `MUSIC_DIR` in `.env` (the mount folder name is account-derived).
+MUSIC_DIR = fleet_env.env_path(
+    "MUSIC_DIR",
+    Path.home() / "Library" / "CloudStorage" / "GoogleDrive" / "My Drive" / "Music",
+)
 
 # Dot-prefixed scratch dir where yt-dlp downloads. On the DOWNLOADS volume, never in
 # the library root -- same rule (and the same reason) as Torrent-Ingest's

@@ -20,7 +20,7 @@ import os
 import sys
 from pathlib import Path
 
-MS = "/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer"
+MS = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, MS)
 
 from scripts import config            # noqa: E402

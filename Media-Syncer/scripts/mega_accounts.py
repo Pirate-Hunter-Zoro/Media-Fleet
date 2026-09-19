@@ -2,9 +2,10 @@
 
 Monitors PLACEABLE free space across the pool -- raw free minus each remote's per-claim
 fill margin, excluded remotes dropped (see `pool_placeable_bytes`) -- and, when it drops
-below a floor, creates fresh MEGA accounts and adds them to rclone.conf (committed + pushed
-so the whole fleet picks them up on its next pull). Each new account is a free 20 GB tier --
-we NEVER count more than REMOTE_CAP_BYTES per account, because anything above 20 GB is an
+below a floor, creates fresh MEGA accounts and adds them to the machine-local rclone.conf,
+which is installed atomically at ~/.config/rclone/rclone.conf (this repo is public, so the
+account list is never committed or pushed). Each new account is a free 20 GB tier -- we
+NEVER count more than REMOTE_CAP_BYTES per account, because anything above 20 GB is an
 expiring promo.
 
 How an account is created (fully unattended):
@@ -13,8 +14,8 @@ How an account is created (fully unattended):
   2. `megatools reg --register ...` -> prints an ephemeral STATE and sends a confirm email.
   3. Read that email from the base inbox over IMAP, extract the mega.nz confirm link.
   4. `megatools reg --verify STATE LINK` -> the account is live.
-  5. Verify login (`megatools df`), then append a `[<name>]` mega remote to rclone.conf
-     (password rclone-obscured), commit, and push.
+  5. Verify login (`megatools df`), then append a `[<name>]` mega remote to the untracked
+     rclone.conf (password rclone-obscured) and publish it to the live rclone config.
 
 SAFE BY DEFAULT: account creation is INERT unless the base-inbox IMAP app-password is
 present at MEGA_APP_PASSWORD_FILE (outside the repo). Without it the module only MONITORS
@@ -49,7 +50,7 @@ from .operations import (
     placeable_free,
     usable_free,
 )
-from .utils import git_tree_lock, install_rclone_conf
+from .utils import install_rclone_conf
 
 
 # --- capacity ----------------------------------------------------------------
@@ -277,14 +278,16 @@ def _append_remote(name: str, email: str, password: str) -> bool:
 
 
 def _commit_push() -> None:
-    repo = str(config.SCRIPT_DIR.parent)
-    subprocess.run([config.GIT_PATH, "-C", repo, "add", "rclone.conf"], capture_output=True)
-    subprocess.run([config.GIT_PATH, "-C", repo, "commit", "-m",
-                    "Auto-add MEGA account(s) to the pool"], capture_output=True)
-    r = subprocess.run([config.GIT_PATH, "-C", repo, "push", "origin", "main"],
-                       capture_output=True, text=True)
-    logging.info("rclone.conf committed" + ("; pushed." if r.returncode == 0
-                 else f"; push failed ({r.stderr.strip()[:120]})"))
+    """The pool conf is machine-local; there is deliberately no commit and push.
+
+    It used to be committed and pushed so peer machines picked up new accounts on
+    their next pull. The repository is public and the conf carries credentials, so
+    the file is untracked (root `.gitignore`) and the fleet must never publish it;
+    `_append_remote` already installs the updated config atomically at
+    `~/.config/rclone/rclone.conf`, which is the only delivery this single-host
+    fleet needs. Kept as a named seam so the call site reads unchanged.
+    """
+    logging.info("pool config updated locally (untracked); no commit/push by design.")
 
 
 def create_accounts(count: int) -> int:
@@ -320,20 +323,14 @@ def create_accounts(count: int) -> int:
         if not result:
             logging.error(f"account {name} creation failed; stopping this batch.")
             break
-        # The append and the commit are ONE unit as far as the config pull is concerned. A pull
-        # that lands between them sees an uncommitted rclone.conf and aborts; the lock closes
-        # that window. Registration deliberately sits OUTSIDE it -- it takes minutes (MEGA
-        # signup plus an IMAP confirmation round-trip) and holding a git lock across it would
-        # block every pull on the machine for the whole batch.
-        with git_tree_lock(block=True) as got_lock:
-            if not got_lock:
-                logging.warning(f"could not take the repo tree lock within the timeout while "
-                                f"adding {name}; proceeding unlocked. A concurrent config pull "
-                                f"may abort and retry next cycle -- the account is not lost.")
-            if not _append_remote(name, email, pw):
-                logging.error(f"account {name} creation failed; stopping this batch.")
-                break
-            _commit_push()
+        # The pool conf is machine-local state now (it holds credentials in a public
+        # repo), so there is no commit to serialize against a config pull -- the append
+        # is published atomically to the live config inside `_append_remote`. The
+        # named seam (`_commit_push`) is kept as the log line for the call site.
+        if not _append_remote(name, email, pw):
+            logging.error(f"account {name} creation failed; stopping this batch.")
+            break
+        _commit_push()
         made += 1
         skips = 0
         logging.info(f"account {name} live and added to the pool.")

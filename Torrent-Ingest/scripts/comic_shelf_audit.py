@@ -54,12 +54,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config                                                       # noqa: E402
 import yacreader_db
 import yacreader_index
 
-MOUNT = Path("/Users/mikeyferguson/MediaLibrary/Comics")
-LOCAL = Path("/Users/mikeyferguson/Media/Comics")
-INVENTORY = Path("/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/remote_inventory.json")
+MOUNT = config.MEDIAFS_MOUNT / "Comics"
+LOCAL = config.MEDIA_ROOT / "Comics"
+INVENTORY = config.MEDIA_SYNCER_DIR / "remote_inventory.json"
 YAC_DB = LOCAL / ".yacreaderlibrary" / "library.ydb"
 # Where a comic series directory lives, relative to the Comics root.
 SERIES_ROOTS = ("Manga", "")

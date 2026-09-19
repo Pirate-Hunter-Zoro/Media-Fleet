@@ -227,11 +227,11 @@ lands in** — `ytconfig.AUDIO_PLAYLIST_DIRS`:
 | Playlist (by id) | Files into |
 |---|---|
 | `Soundtracks` — `PLJtTPjwghzms` | `~/Library/Mobile Documents/com~apple~CloudDocs/Soundtracks/` (iCloud) |
-| `Download` — `PLSLJ9WOPSCSU` | `~/Library/CloudStorage/GoogleDrive-tallyferguson@gmail.com/My Drive/Music/` (Google Drive) |
+| `Download` — `PLSLJ9WOPSCSU` | `MUSIC_DIR` (Google Drive `My Drive/Music/`; set in `.env`) |
 
 A map rather than a list because the destination is genuinely per-playlist: the OST
-folder is mine and the Drive folder is Tally's, so "audio goes here" cannot be one
-constant. Add another pair to that map to add another music playlist, then register it
+folder and the Drive folder belong to different people, so "audio goes here" cannot be
+one constant. Add another pair to that map to add another music playlist, then register it
 with `--add-playlist` — those are two separate steps, and the routing one is the one
 easy to forget: an unmapped playlist ingests as **library media**, not as audio.
 
@@ -410,7 +410,7 @@ its id; the escape hatch is only for works that are genuinely on no provider.
 ~/Library/Mobile Documents/com~apple~CloudDocs/Soundtracks/     (iCloud — "Soundtracks")
 └── <Clean Track Title>.mp3
 
-~/Library/CloudStorage/GoogleDrive-tallyferguson@gmail.com/My Drive/Music/
+~/Library/CloudStorage/GoogleDrive-<account>/My Drive/Music/     (MUSIC_DIR in .env)
 ├── <Clean Track Title>.mp3                                     (Google Drive — "Download")
 └── Church/  Folk music/  Anime music/  …                       (hand-sorted; scanned for dupes)
 ```

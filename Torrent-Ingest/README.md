@@ -2998,8 +2998,9 @@ thing to revisit if the threat model changes.
   3.11) with `qbittorrent-api`, `guessit`, `requests`.
 - **rclone** (`/opt/homebrew/bin/rclone`) with a MEGA-authed config — only for
   the nightly metadata backup (§ Metadata backup). It reuses the fleet's existing
-  MEGA credentials (Media-Syncer's `rclone.conf`); if that repo isn't present the
-  backup step just logs and skips, harmless to the rest of the pipeline.
+  MEGA credentials (Media-Syncer's machine-local, untracked `rclone.conf`); if that
+  file isn't present the backup step just logs and skips, harmless to the rest of
+  the pipeline.
 
 ---
 
@@ -3174,8 +3175,8 @@ rm ~/Library/LaunchAgents/com.mikeyferguson.torrentingest.plist
 | `DUPLICATE_DEPRIORITIZE_MARKERS` | Path substrings (`uncropped`, `upscale`, `480p`, …) that mark a *lower-preference* copy when a torrent ships the same episode more than once (§ Duplicate variants collapse, not crash). When several sources map to one destination, `validate_plan` keeps the copy with no marker, tie-broken by largest file, and drops the rest — so an in-torrent duplicate collapses to the best copy instead of failing the whole plan. |
 | `CLAUDE_MODEL` | Optional model override for identify (env `TORRENT_INGEST_CLAUDE_MODEL`). |
 | `JELLYFIN_URL` / `JELLYFIN_API_KEY` | Optional post-ingest rescan + the poster backstop's image lookups (env). |
-| `RCLONE_BIN` / `RCLONE_CONFIG` | rclone binary and config for the metadata backup; config defaults to the machine-local `~/.config/rclone/rclone.conf` (seeded from Media-Syncer's committed conf if absent). |
-| `MEDIA_SYNCER_RCLONE_CONF` | Fallback credential source copied into `RCLONE_CONFIG` when the machine-local one is missing (never used in place — keeps session tokens out of the git-tracked file). |
+| `RCLONE_BIN` / `RCLONE_CONFIG` | rclone binary and config for the metadata backup; config defaults to the machine-local `~/.config/rclone/rclone.conf` (seeded from Media-Syncer's untracked pool conf if absent). |
+| `MEDIA_SYNCER_RCLONE_CONF` | Fallback credential source copied into `RCLONE_CONFIG` when the machine-local one is missing (never used in place — keeps rclone's session tokens out of the durable pool conf). Machine-local override from `.env`; the file itself is untracked. |
 | `METADATA_BACKUP_REMOTE` / `METADATA_BACKUP_BASE` | MEGA pool account + top-level path for the metadata backup (`vm_mega1:metadata-backup`; override the remote via `TORRENT_INGEST_BACKUP_REMOTE`). |
 | `METADATA_BACKUP_FILTERS` | rclone filter rules selecting which sidecars to back up (keep `.nfo` + artwork, drop regenerable `-thumb.jpg`/`.trickplay`). |
 | `MEDIA_SYNCER_DIR` / `MEDIA_SYNCER_INVENTORY` / `MEDIA_SYNCER_SYNC_STATE` / `MEDIA_SYNCER_APP_LOG` / `MEDIA_SYNCER_LAUNCHD_LOGS` | Reaper (§ Remote deletion): where Media-Syncer lives + the state files it reads for remote discovery and prunes so a purge sticks. |

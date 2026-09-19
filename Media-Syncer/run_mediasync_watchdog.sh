@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Watchdog for the media_sync daemon. media_sync deliberately has no KeepAlive (the reaper
 # stops it to purge deletions), so this relaunches it only when it is down AND not paused.
-PROJECT_DIR="/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_EXEC="/opt/homebrew/Caskroom/miniconda/base/envs/media_sync_env/bin/python"
 MODULE_PATH="scripts.mediasync_watchdog"
 

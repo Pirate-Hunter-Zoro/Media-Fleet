@@ -6,8 +6,8 @@ rubbish bin. Nothing empties those bins, so they accumulate to tens of GB. This 
 runs `rclone cleanup <remote>:` for every `type = mega` remote in the active rclone.conf
 on a slow schedule, reclaiming the space.
 
-`base_mega1` (the mtf6056@gmail.com backup account the owner added) is picked up
-automatically as soon as it exists in the conf — no code change needed.
+`base_mega1` (the owner's MEGA backup account) is picked up automatically as soon as
+it exists in the conf — no code change needed.
 
 Runs as its own KeepAlive user-agent:
 

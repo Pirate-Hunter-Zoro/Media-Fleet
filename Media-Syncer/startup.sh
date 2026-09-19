@@ -26,7 +26,16 @@ AGENTS=(
 
 echo "--> Placing system artifacts..."
 mkdir -p "$HOME/.config/rclone" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-cp "$SCRIPT_DIR/rclone.conf" "$HOME/.config/rclone/rclone.conf"
+# rclone.conf is machine-local (untracked): the pool holds credentials and this repo is
+# public. Seed the live config from the repo copy ONLY when no live config exists; never
+# overwrite a live one -- it carries rclone's session cache and is the authority.
+if [ -f "$SCRIPT_DIR/rclone.conf" ] && [ ! -f "$HOME/.config/rclone/rclone.conf" ]; then
+    cp "$SCRIPT_DIR/rclone.conf" "$HOME/.config/rclone/rclone.conf"
+    echo "    Seeded ~/.config/rclone/rclone.conf from the machine-local pool copy."
+elif [ ! -f "$SCRIPT_DIR/rclone.conf" ]; then
+    echo "    WARNING: no $SCRIPT_DIR/rclone.conf. Copy rclone.conf.example there and fill"
+    echo "             it in before Media-Syncer can reach the pool."
+fi
 chmod +x "$SCRIPT_DIR"/run_*.sh
 for svc in "${AGENTS[@]}"; do
   src="$SCRIPT_DIR/com.mikeyferguson.${svc}.plist"

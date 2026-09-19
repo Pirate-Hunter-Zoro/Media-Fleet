@@ -17,6 +17,17 @@ import re
 import sys
 import time
 
+# Machine-local paths/credentials live in the repo-root `.env` (untracked; see
+# `.env.example`). Load it BEFORE any constant below reads os.environ, so a daemon
+# started by hand and one started by launchd see the same configuration. Appended, not
+# prepended: Torrent-Ingest's own modules must keep winning the `scripts` import.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
+import fleet_env                                                    # noqa: E402
+
+fleet_env.load()
+
 # --- Log timestamps: LOCAL time, one helper, no exceptions -------------------
 #
 # Every human-facing log line in this repo goes through `log_stamp()`, and it
@@ -61,8 +72,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 
 # iCloud Drive folder watched for new `.torrent` files. Dropped here from any
 # machine (e.g. the MacBook Air); the Mini picks them up once iCloud syncs.
-TORRENTS_DIR = Path(
-    "/Users/mikeyferguson/Library/Mobile Documents/com~apple~CloudDocs/Torrents"
+# Machine-specific: `TORRENTS_DIR` in `.env`.
+TORRENTS_DIR = fleet_env.env_path(
+    "TORRENTS_DIR",
+    Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "Torrents",
 )
 
 # Where a fully-ingested `.torrent` is filed once its media is safely in the
@@ -110,7 +123,7 @@ DOWNLOADS_DIR = Path.home() / "Downloads"
 # uploads it to the MEGA pool and KEEPS the local copy (the pool copy is durability, not
 # the serving path). This is the internal SSD library root; external drives are an optional
 # extra tier of local cache. Keep in step with Media-Syncer's SSD_LIBRARY_ROOT.
-MEDIA_ROOT = Path("/Users/mikeyferguson/Media")
+MEDIA_ROOT = fleet_env.env_path("MEDIA_ROOT", Path.home() / "Media")
 SHOWS_ROOT = MEDIA_ROOT / "Shows"
 MOVIES_ROOT = MEDIA_ROOT / "Movies"
 # Comics/manga, served by YACReader (not Jellyfin). Manga lives under the
@@ -601,9 +614,7 @@ COMIC_FRANCHISES = [
 # YACReader or Jellyfin. They land in a Google Drive folder the owner reads on an
 # e-reader, so the identify step plans them into a `Novels/` top-dir that the applier
 # routes to this tree instead of MEDIA_ROOT.
-NOVELS_ROOT = Path(
-    "/Users/mikeyferguson/Library/CloudStorage/GoogleDrive-mtf6056@gmail.com/My Drive/Novels"
-)
+NOVELS_ROOT = fleet_env.env_path("NOVELS_ROOT", Path.home() / "Novels")
 
 # The Google Drive macOS app (com.google.drivefs), kept running by gdrive_supervisor.
 GDRIVE_APP_NAME = "Google Drive"
@@ -1606,16 +1617,21 @@ RCLONE_BIN = "/opt/homebrew/bin/rclone"
 
 # rclone config to use. Default is rclone's own machine-local config, which
 # Media-Syncer's daemon keeps populated with the MEGA pool credentials. Session
-# tokens belong in this file (never a git-tracked copy), so we point here.
+# tokens belong in this file and nowhere else. Machine-specific: `RCLONE_CONFIG`
+# in `.env` (legacy env alias: `TORRENT_INGEST_RCLONE_CONFIG`).
 RCLONE_CONFIG = Path(
     os.environ.get("TORRENT_INGEST_RCLONE_CONFIG", "").strip()
+    or fleet_env.env("RCLONE_CONFIG")
     or (Path.home() / ".config/rclone/rclone.conf")
 )
 # Fallback source of credentials if the machine-local config is absent: the
-# committed Media-Syncer conf (user/pass only, no session tokens). The backup
+# untracked Media-Syncer pool conf (user/pass only, no session tokens). The backup
 # COPIES it into RCLONE_CONFIG rather than using it in place, so rclone never
-# writes a regenerated session token back into a git-tracked file.
-MEDIA_SYNCER_RCLONE_CONF = Path.home() / "Developer/Media-Fleet/Media-Syncer/rclone.conf"
+# writes a regenerated session token back into a file that must stay secret-free.
+MEDIA_SYNCER_RCLONE_CONF = fleet_env.env_path(
+    "MEDIA_SYNCER_RCLONE_CONF",
+    Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer" / "rclone.conf",
+)
 
 # Which MEGA remote (a pool account from rclone.conf) receives the backup, and
 # the top-level path on it. The path is deliberately NOT Shows/Movies/Comics:
@@ -1731,7 +1747,11 @@ LOOSE_PAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 # stayed intact (§ circuit breaker below).
 
 # Media-Syncer lives here; we read its inventory/sync-state and control its agent.
-MEDIA_SYNCER_DIR = Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer"
+# Machine-specific: `MEDIA_SYNCER_DIR` in `.env` (defaults to the monorepo sibling).
+MEDIA_SYNCER_DIR = fleet_env.env_path(
+    "MEDIA_SYNCER_DIR",
+    Path.home() / "Developer" / "Media-Fleet" / "Media-Syncer",
+)
 MEDIA_SYNCER_INVENTORY = MEDIA_SYNCER_DIR / "remote_inventory.json"
 # The virtual-library delete signal. When a media file is deleted THROUGH the
 # mediafs mount (you remove a title in Jellyfin/Infuse), mediafs appends its
@@ -2155,7 +2175,7 @@ DBG_HWM_FILE = DBG_BACKUP_DIR / ".item_count_hwm"
 # healthy, then starts them and keeps them up. If Jellyfin comes up gutted (item
 # count collapsed while the mount is healthy) it restores db_guardian's last-good
 # backup. Runs as its own KeepAlive user-agent, a sibling of db_guardian.
-MEDIAFS_MOUNT = Path("/Users/mikeyferguson/MediaLibrary")  # the mediafs mount (== Jellyfin's path, local SSD)
+MEDIAFS_MOUNT = fleet_env.env_path("MEDIAFS_MOUNT", Path.home() / "MediaLibrary")  # mediafs mount (== Jellyfin's path, local SSD)
 MEDIAFS_HEALTH_DIRS = ("Shows", "Movies", "Comics")   # each must list >=1 entry
 YACREADER_APP_NAME = "YACReaderLibrary"
 # The bundle id `hide_app` addresses through AppKit. Kept as a constant so the
@@ -2303,7 +2323,7 @@ GDRIVE_LOCK_FILE = STATE_DIR / "gdrive_supervisor.lock"
 GDRIVE_ALERT_FILE = STATE_DIR / "gdrive_supervisor_ALERT.txt"
 
 # --- MEGA supervisor + trash daemon ------------------------------------------
-# The MEGA desktop app backs up the whole Developer directory to the mtf6056 account;
+# The MEGA desktop app backs up the whole Developer directory to the owner's backup account;
 # when files get replaced the old versions pile up in that account's rubbish bin (tens
 # of GB). These two daemons (a) keep the MEGA desktop app alive and (b) empty every
 # MEGA remote's rubbish bin on a schedule so a replace actually reclaims space.

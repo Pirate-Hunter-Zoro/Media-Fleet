@@ -84,10 +84,33 @@ AGENTS=(
 echo "--> Installing ${#AGENTS[@]} launch agents..."
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 UID_NUM="$(id -u)"
+
+# The Jellyfin API key is a CREDENTIAL and is deliberately not tracked (this repo is
+# public). The tracked plists carry `__JELLYFIN_API_KEY__`; substitute the real value
+# here, from the environment, the repo-root `.env`, or ~/.config/api-keys/jellyfin_key
+# (first non-empty wins). A missing key disables only the post-ingest Jellyfin rescan,
+# so warn loudly and install anyway -- a fleet that files media without nudging
+# Jellyfin is strictly better than one that will not start.
+JELLYFIN_KEY_VALUE="$(cd "$SCRIPT_DIR/.." && "$ENV_PY" -c \
+    'import fleet_env; print(fleet_env.env("JELLYFIN_API_KEY"))' 2>/dev/null || true)"
+if [ -z "$JELLYFIN_KEY_VALUE" ] && [ -f "$HOME/.config/api-keys/jellyfin_key" ]; then
+    JELLYFIN_KEY_VALUE="$(tr -d '[:space:]' < "$HOME/.config/api-keys/jellyfin_key")"
+fi
+if [ -z "$JELLYFIN_KEY_VALUE" ]; then
+    echo "    WARNING: no Jellyfin API key (JELLYFIN_API_KEY in .env, or"
+    echo "             ~/.config/api-keys/jellyfin_key). Agents install with rescan disabled."
+fi
+
 for svc in "${AGENTS[@]}"; do
     src="$SCRIPT_DIR/com.mikeyferguson.${svc}.plist"
     [ -f "$src" ] || { echo "    Error: missing plist $src"; exit 1; }
-    cp "$src" "$HOME/Library/LaunchAgents/"
+    dst="$HOME/Library/LaunchAgents/$(basename "$src")"
+    if grep -q '__JELLYFIN_API_KEY__' "$src"; then
+        # The value is a hex API key, so it is sed-safe; only the placeholder is touched.
+        sed "s|__JELLYFIN_API_KEY__|${JELLYFIN_KEY_VALUE}|g" "$src" > "$dst"
+    else
+        cp "$src" "$dst"
+    fi
 done
 # bootout/bootstrap rather than the deprecated load/unload: on current macOS `launchctl load` can
 # report success while doing nothing, which is precisely how an agent ends up silently uninstalled.

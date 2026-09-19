@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # The path to the root of your project, containing the 'scripts' directory.
-PROJECT_DIR="/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_EXEC="/opt/homebrew/Caskroom/miniconda/base/envs/media_sync_env/bin/python"
 
 # The module path to execute.

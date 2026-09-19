@@ -35,10 +35,13 @@ import re
 import sys
 from pathlib import Path
 
-MOUNT = Path("/Users/mikeyferguson/MediaLibrary")
-LOCAL = Path("/Users/mikeyferguson/Media")
-BLOCKLIST = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
-DELETIONS = Path("/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer/mediafs_deletions.jsonl")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config                                                       # noqa: E402
+
+MOUNT = config.MEDIAFS_MOUNT
+LOCAL = config.MEDIA_ROOT
+BLOCKLIST = config.STATE_DIR / "blocklist.json"
+DELETIONS = config.MEDIA_SYNCER_DIR / "mediafs_deletions.jsonl"
 MEDIA_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".ts", ".webm", ".cbz", ".cbr",
              ".pdf", ".epub"}
 ROOTS = ["Shows", "Movies", "Comics/Manga", "Comics"]

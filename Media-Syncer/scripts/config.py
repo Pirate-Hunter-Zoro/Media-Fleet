@@ -15,10 +15,21 @@ rclone.conf changes, but they do not run the sync daemon.)
 
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Machine-local paths/credentials live in the repo-root `.env` (untracked; see
+# `.env.example`). Load it BEFORE any constant below reads os.environ. Appended, not
+# prepended: Media-Syncer's own modules must keep winning the `scripts` package.
+_REPO_ROOT = SCRIPT_DIR.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
+import fleet_env                                                    # noqa: E402
+
+fleet_env.load()
 
 # --- USER CONFIGURATION ---
 # The local library root on the Mac internal SSD -- where the daemons read/write files
@@ -33,7 +44,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Jellyfin/YacReader keep serving them through the mount. External library DRIVES are an
 # optional second tier of local cache (see discover_library_drives); this is the internal
 # SSD root and always present.
-SSD_LIBRARY_ROOT = Path("/Users/mikeyferguson/Media")
+SSD_LIBRARY_ROOT = fleet_env.env_path("MEDIA_ROOT", Path.home() / "Media")
 
 # Where the uploader moves a file that can NEVER be placed: a single file whose size
 # exceeds one MEGA account's usable cap (REMOTE_CAP_BYTES - fill margin). One file cannot
@@ -43,7 +54,9 @@ SSD_LIBRARY_ROOT = Path("/Users/mikeyferguson/Media")
 # The fix is to MOVE it out of the media root (preserving its library-relative path) so it
 # stops counting against the library cache, and report it for the owner to re-encode or
 # delete. Same volume as SSD_LIBRARY_ROOT, so the move is an instant rename, not a copy.
-UNPLACEABLE_DIR = Path("/Users/mikeyferguson/unplaceable_media")
+UNPLACEABLE_DIR = fleet_env.env_path(
+    "UNPLACEABLE_DIR", Path.home() / "unplaceable_media"
+)
 
 # KEEP local copies after upload on the SSD library root. The pool copy is durability, not
 # the serving path, so a hot file serves straight off the SSD and predownload.py manages
@@ -188,7 +201,10 @@ RCLONE_PATH = "/opt/homebrew/bin/rclone"
 # the one base inbox). SAFE: creation is INERT until the base inbox's IMAP app-password is
 # present at MEGA_APP_PASSWORD_FILE -- until then the system only MONITORS and logs.
 MEGATOOLS_BIN = "/opt/homebrew/bin/megatools"
-ACCOUNT_EMAIL_BASE = "mtf6056@gmail.com"      # +aliases (base+automega1@gmail.com, ...)
+# Machine-specific: `ACCOUNT_EMAIL_BASE` in `.env`. Empty (or the example value)
+# keeps the provisioner's alias format harmless; creation stays inert without the
+# IMAP app-password either way.
+ACCOUNT_EMAIL_BASE = fleet_env.env("ACCOUNT_EMAIL_BASE", "user@example.com")  # +aliases
 ACCOUNT_ALIAS_PREFIX = "automega"             # remote name + email-alias tag for new accounts
 MEGA_APP_PASSWORD_FILE = Path.home() / ".config" / "media-syncer" / "email_app_password"
 POOL_LOW_FREE_BYTES = 200 * 1024**3           # create accounts when pool free < this
@@ -389,7 +405,13 @@ LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
 
 # --- CORE CONFIGURATION ---
-RCLONE_CONF_PATH = SCRIPT_DIR.parent / "rclone.conf"
+# The pool account list is a SECRET and is NOT tracked (the repo is public): it lives
+# at `Media-Syncer/rclone.conf`, covered by the root `.gitignore`. Copy
+# `rclone.conf.example` there and fill it in. Machine-specific override:
+# `MEDIA_SYNCER_RCLONE_CONF`.
+RCLONE_CONF_PATH = fleet_env.env_path(
+    "MEDIA_SYNCER_RCLONE_CONF", SCRIPT_DIR.parent / "rclone.conf"
+)
 # The live config every rclone process on the box reads, and the cross-process lock that
 # serializes rewrites of it.
 #
@@ -415,8 +437,9 @@ FREE_SPACE_PATH = SCRIPT_DIR.parent / "free_space.json"   # per-remote {total,us
 # glance at it on your phone (iCloud-synced) and know when to add more MEGA
 # accounts. It just READS free_space.json (which the cycle already refreshes), so
 # it makes no extra rclone calls and does no logging -- keeping media_sync.log clean.
-TORRENTS_ICLOUD_DIR = Path(
-    "/Users/mikeyferguson/Library/Mobile Documents/com~apple~CloudDocs/Torrents"
+TORRENTS_ICLOUD_DIR = fleet_env.env_path(
+    "TORRENTS_DIR",
+    Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "Torrents",
 )
 FREE_SPACE_REPORT_PATH = TORRENTS_ICLOUD_DIR / "mega_free_space.txt"
 FREE_SPACE_LOW_WARN_BYTES = 40 * 1024**3    # total free below this -> "add accounts" warning
@@ -642,8 +665,7 @@ def upload_excluded_remotes() -> set:
     """Remote names the uploader will not place new files on."""
     excluded = set()
     try:
-        import sys
-        ti = Path.home() / "Developer" / "Media-Fleet" / "Torrent-Ingest"
+        ti = _REPO_ROOT / "Torrent-Ingest"
         if str(ti) not in sys.path:
             sys.path.append(str(ti))
         import config as ti_config                     # Torrent-Ingest's config
@@ -1096,7 +1118,9 @@ PREDOWNLOAD_ACCESS_LOG = SCRIPT_DIR.parent / "access_log.jsonl"
 # Jellyfin (video watch-state: which episodes are played, and recency). Comics are not in
 # Jellyfin; those are driven by the access log above. Env-overridable.
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").strip() or "http://127.0.0.1:8096"
-JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "").strip() or "__JELLYFIN_API_KEY__"
+# No hardcoded fallback: the key is a credential and lives in `.env` (loaded above)
+# or the launchd environment. Empty only disables the Jellyfin watch-state read.
+JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "").strip()
 
 # --- Off-machine backup of the load-bearing state files ----------------------
 # Since the cutover, remote_inventory.json is RUNTIME-load-bearing: mediafs presents
@@ -1126,7 +1150,7 @@ STATE_BACKUP_KEEP_VERSIONS = 72
 # media dir (SSD_LIBRARY_ROOT = the SSD library root ~/Media): its files (metadata
 # sidecars + hot/pinned media) pass through untouched; anything only in the inventory
 # is presented full-size and hydrated on first read into TIER_CACHE_DIR.
-MEDIAFS_MOUNT = Path("/Users/mikeyferguson/MediaLibrary")
+MEDIAFS_MOUNT = fleet_env.env_path("MEDIAFS_MOUNT", Path.home() / "MediaLibrary")
 MEDIAFS_LOWER = SSD_LIBRARY_ROOT                       # the real media dir (the SSD library root ~/Media)
 
 # Media payload extensions mediafs virtualizes (everything else in `lower` --

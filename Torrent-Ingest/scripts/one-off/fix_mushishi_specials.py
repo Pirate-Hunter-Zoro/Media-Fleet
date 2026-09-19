@@ -49,9 +49,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+import config                                                        # noqa: E402
 import media_doctor as md                                            # noqa: E402
 
-SEASON = Path("/Users/mikeyferguson/MediaLibrary/Shows/Mushi-Shi (2005)/Season 00")
+SEASON = config.MEDIAFS_MOUNT / "Shows" / "Mushi-Shi (2005)" / "Season 00"
 
 # filename slot -> the metadata that belongs to the file sitting in it.
 # Plots are the real per-episode synopses, not the offset ones.

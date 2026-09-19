@@ -52,8 +52,8 @@ import config
 # `import ingest` once resolved to the searcher's and crashed the daemon at start
 # (§4.102). Order matters: `acceptance` does a bare `import librarydb` / `import parse`
 # at exec time, so both must be in sys.modules before it runs.
-_BRAIN_DIR = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/librarybrain")
-_STATE_DIR = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state")
+_BRAIN_DIR = config.PROJECT_ROOT / "librarybrain"
+_STATE_DIR = config.STATE_DIR
 
 
 def _load(name):

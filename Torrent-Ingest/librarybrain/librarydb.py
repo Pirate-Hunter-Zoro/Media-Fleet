@@ -33,7 +33,11 @@ from pathlib import Path
 
 # --- location ----------------------------------------------------------------
 
-_DB_PATH = "/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/library.db"
+# Module-relative on purpose: this file is loaded by PATH (never imported as part of a
+# package), so it must not import `config` -- every consumer would then hold a copy of
+# `librarydb` bound to a different `config` instance than its own. `librarybrain/` sits
+# directly under Torrent-Ingest, and `state/` is its sibling.
+_DB_PATH = Path(__file__).resolve().parent.parent / "state" / "library.db"
 
 
 def path() -> Path:

@@ -15,10 +15,6 @@ in the requested category, the script retries against all anime (category 1_0)
 so raw / non-English releases are not missed.
 """
 
-DEFAULT_OUTPUT = (
-    "/Users/mikeyferguson/Library/Mobile Documents/com~apple~CloudDocs/Torrents"
-)
-
 import argparse
 import os
 import re
@@ -26,9 +22,14 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+
+DEFAULT_OUTPUT = str(
+    Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "Torrents"
+)
 
 DEFAULT_BASE = "https://nyaa.si"
 CATEGORY_ANIME = "1_0"

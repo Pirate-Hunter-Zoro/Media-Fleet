@@ -38,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config                                                        # noqa: E402
 import media_doctor as md                                            # noqa: E402
 import library                                                       # noqa: E402
 
@@ -150,12 +151,12 @@ check("the journal yields real destinations", len(dsts) > 100, True)
 # a destination the journal really recorded must be confirmable
 sample = next((d for d in dsts if d.endswith(".mkv")), None)
 check("a recorded destination is confirmed",
-      md._journal_confirms_filename(Path("/Users/mikeyferguson/MediaLibrary") / sample)
+      md._journal_confirms_filename(config.MEDIAFS_MOUNT / sample)
       if sample else True, True)
 check("an invented destination is NOT confirmed",
       md._journal_confirms_filename(
-          Path("/Users/mikeyferguson/MediaLibrary/Shows/No Such Show (1999)/Season 01/"
-               "No Such Show (1999) - S01E01 - Nothing.mkv")), False)
+          config.MEDIAFS_MOUNT / "Shows/No Such Show (1999)/Season 01/"
+          "No Such Show (1999) - S01E01 - Nothing.mkv"), False)
 
 print()
 if failures:

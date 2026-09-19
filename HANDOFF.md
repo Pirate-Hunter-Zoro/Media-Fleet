@@ -206,7 +206,7 @@ Every number below was measured this session.
 | `verify_fleet.sh` | **ALL CHECKS PASSED**, 53 blocking checks (2026-09-19, after the §10.1/10.2/10.6 + YacReader-hide work) |
 | `fleet_doctor` / `fleet_health` | refresh after the post-ship `mediadoctor` pass; see §10.8 for what should read clean |
 | `media_doctor` | Toriko (2011) title/plot faults and the TZ (2019) art faults are §10.3/10.4 — still open |
-| Repo | one monorepo at `~/Developer/Media-Fleet`, shipping `f0cfb4d` + the 2026-09-19 coverage/rearm/orphan work |
+| Repo | one monorepo at `~/Developer/Media-Fleet`, shipping `c84f774` + the 2026-09-19 coverage/rearm/orphan work and the secrets extraction for going public (§11) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies |
 | Mount | Shows 312 dirs, Movies 449 video files, Manga 102 series — primed and serving |
 | `library.db` | 24,415 owned rows, 2,221 series rows |
@@ -845,3 +845,48 @@ apply before any file is trusted over the provider.
    known-accepted items from §7.
 4. The next session that reads this file can tell from `state/decisions.log` and the test
    names exactly which tool prevented which fault — that trace is the deliverable.
+
+---
+
+## 11. The repository is PUBLIC — the 2026-09-19 secrets extraction
+
+The GitHub repo was made public on 2026-09-19. It used to be private and tracked two
+credential stores; both are now machine-local, untracked, and gone from history:
+
+| what | where it lives now | tracked template |
+|---|---|---|
+| MEGA account pool (`user`/`pass`, ~822 remotes) | `Media-Syncer/rclone.conf` (root `.gitignore`) | `Media-Syncer/rclone.conf.example` |
+| machine paths + `JELLYFIN_API_KEY` + provisioner email | `.env` (root `.gitignore`) | `.env.example` |
+
+**What changed, and what a future session must not undo:**
+
+* `fleet_env.py` (repo root) loads `.env` with `os.environ` taking precedence. The four
+  configs (`Torrent-Ingest/config.py`, `Media-Syncer/scripts/config.py`,
+  `Title-Scout/config.py`, `YouTube-Downloader/ytconfig.py`) read machine-specific roots
+  through it with generic `Path.home()` defaults; the absolute paths that used to be
+  hardcoded in code are gone (audit tools derive from `config`, plists keep the username
+  in their absolute paths and that is accepted).
+* The nine Torrent-Ingest plists that need a Jellyfin key carry `__JELLYFIN_API_KEY__`;
+  `Torrent-Ingest/startup.sh` substitutes the real value at install time from `.env`,
+  `~/.config/api-keys/jellyfin_key`, or the environment. The installed agents in
+  `~/Library/LaunchAgents` still hold the real key; re-running startup.sh reproduces them.
+* `Media-Syncer/scripts/mega_accounts.py` **no longer commits or pushes** the pool conf —
+  the provisioner appends to the untracked file and publishes it atomically to
+  `~/.config/rclone/rclone.conf`. Do not restore the commit path.
+* Guard: `scripts/test_no_tracked_secrets.py` (verify check #54) scans `git ls-files`
+  for secret stores and credential-shaped values; `.githooks/pre-commit` unstages
+  `rclone.conf`/`.env` and rewrites a live Jellyfin key to the placeholder.
+* History was rewritten with `git filter-branch` (rclone.conf removed from every commit;
+  the Jellyfin key string replaced with the placeholder) and force-pushed. A pre-rewrite
+  bundle is at `~/Developer/Media-Fleet-backups/Media-Fleet-prepublic-20260919-151123.bundle`
+  — it STILL CONTAINS the old credentials, so treat it as sensitive and delete it once a
+  rotation is done.
+* **Rotation is recommended** even though the tree is clean: both values lived in a
+  private GitHub object store, and GitHub can retain unreachable objects after a
+  force-push. Changing the MEGA account password(s) and regenerating the Jellyfin API key
+  is the only complete mitigation; nothing in the fleet breaks if the key is rotated and
+  `.env` + the installed plists are updated with it.
+
+This work was shipped without a fleet restart (`scripts/save-and-push.sh`): `.env` carries
+the exact values the code previously hardcoded, so the running daemons see no change.
+`verify_fleet.sh` printed `ALL CHECKS PASSED` (54 blocking checks) after the extraction.

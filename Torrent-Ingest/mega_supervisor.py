@@ -1,7 +1,7 @@
 """MEGA desktop app supervisor.
 
 The MEGA desktop app is what actually backs up the Developer directory (including these
-repos and the library DB) to the mtf6056 account. If it dies, the backup silently stops.
+repos and the library DB) to the owner's MEGA backup account. If it dies, the backup silently stops.
 This daemon keeps the app up and reports when it stays down, mirroring
 `gdrive_supervisor` but for MEGA.
 

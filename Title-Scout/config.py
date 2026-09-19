@@ -19,8 +19,17 @@ daemon start. Everything talks to the network through `urllib`.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
+
+# Machine-local paths live in the repo-root `.env` (untracked; see `.env.example`).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
+import fleet_env                                                    # noqa: E402
+
+fleet_env.load()
 
 
 # --- Log timestamps: LOCAL time, matching the fleet ---------------------------
@@ -42,8 +51,9 @@ LOG_FILE = PROJECT_ROOT / "title_scout.log"
 
 # The human inbox. Same iCloud Torrents folder the fleet uses, but this is the only
 # document Title-Scout reads -- and it reads only its own `find.txt`.
-TORRENTS_DIR = Path(
-    "/Users/mikeyferguson/Library/Mobile Documents/com~apple~CloudDocs/Torrents"
+TORRENTS_DIR = fleet_env.env_path(
+    "TORRENTS_DIR",
+    Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs" / "Torrents",
 )
 FIND_TXT_FILE = TORRENTS_DIR / "find.txt"
 

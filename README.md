@@ -55,14 +55,23 @@ the second and the no-draining-reaper rule itself.
 
 ## Secrets and state
 
-Tracked on purpose: `Media-Syncer/rclone.conf` — the MEGA account list and credentials
-that `Torrent-Ingest/config.py` seeds the machine-local config from. It must contain
-**no** `session_id`/`master_key` tokens (they are what the pre-commit hook blocks), and
-the live tokens live in `~/.config/rclone/rclone.conf`, never here.
+**This repository is public: nothing tracked here may carry a credential.** The two
+credential stores were moved out of the tree on 2026-09-19 and are covered by the root
+`.gitignore`:
 
-Ignored everywhere: `state/` (journal, library DB, decisions log), `*.log`, and any
-runtime JSON/JSONL. Each project's own `.gitignore` still applies to its directory; the
-root `.gitignore` covers the root.
+* `.env` — machine-local paths and keys (library roots, the Jellyfin API key, the
+  provisioner's base email). `.env.example` is the tracked template; `fleet_env.py`
+  loads it with the process environment taking precedence.
+* `Media-Syncer/rclone.conf` — the MEGA account pool (`user`/`pass` per remote).
+  `Media-Syncer/rclone.conf.example` is the tracked template; the live config with
+  rclone's cached session tokens stays at `~/.config/rclone/rclone.conf`.
+
+The launchd plists carry the `__JELLYFIN_API_KEY__` placeholder; `Torrent-Ingest/startup.sh`
+substitutes the real value at install time. The boundary is enforced by
+`Torrent-Ingest/scripts/test_no_tracked_secrets.py` (verify_fleet.sh check #54) and the
+`.githooks/pre-commit` hook. `state/` (journal, library DB, decisions log), `*.log`, and
+any runtime JSON/JSONL are still ignored everywhere; each project's `.gitignore` applies
+to its own directory and the root file covers the root.
 
 ## Everything else
 

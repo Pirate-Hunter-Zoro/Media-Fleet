@@ -39,8 +39,11 @@ import sys
 import urllib.request
 from pathlib import Path
 
-MOUNT = Path("/Users/mikeyferguson/MediaLibrary")
-LOCAL = Path("/Users/mikeyferguson/Media")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config                                                       # noqa: E402
+
+MOUNT = config.MEDIAFS_MOUNT
+LOCAL = config.MEDIA_ROOT
 MEDIA_EXT = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".ts", ".webm",
              ".cbz", ".cbr", ".pdf", ".epub", ".srt", ".ass"}
 # Where a title directory lives, and how deep the title sits under the root.
@@ -78,7 +81,7 @@ def _norm(s: str) -> str:
 
 def _blocked_norms() -> set:
     """The owner's purge blocklist, from Torrent-Searcher. Empty set if unreadable."""
-    p = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
+    p = config.STATE_DIR / "blocklist.json"
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

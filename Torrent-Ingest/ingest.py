@@ -3335,7 +3335,7 @@ def _jellyfin_rescan():
 
 # --- main loop ---------------------------------------------------------------
 
-_BLOCKLIST_PATH = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
+_BLOCKLIST_PATH = config.STATE_DIR / "blocklist.json"
 
 
 def _block_key(name: str) -> str:

@@ -1,0 +1,32 @@
+# ============================================================================
+#  rclone.conf.example -- the MEGA account pool template.
+#
+#  This file is TRACKED. The real `rclone.conf` beside it is NOT: it holds the
+#  pool's credentials and this repository is public. First-run setup:
+#
+#      cp rclone.conf.example rclone.conf
+#      # then fill in one [section] per MEGA account; the password goes through
+#      rclone obscure 'the-account-password'
+#
+#  Media-Syncer reads this file as the durable account list and publishes it to
+#  ~/.config/rclone/rclone.conf, which is the file rclone itself reads and where
+#  rclone caches `session_id`/`master_key` after a successful login. NEVER put
+#  session tokens in this file: they are machine-local and become stale-on-arrival.
+#
+#  The remote names are referenced by the fleet (METADATA_BACKUP_REMOTE,
+#  upload exclusion, purge tooling), so keep them stable when editing.
+# ============================================================================
+
+[base_mega]
+type = mega
+user = you@example.com
+pass = __OBSCURE_ME__
+use_trash = true
+
+# Add as many sections as the pool needs. Free MEGA accounts cap at 20 GB, and the
+# uploader treats each remote independently, so the pool scales by section count.
+# [mega1]
+# type = mega
+# user = you+alias1@example.com
+# pass = __OBSCURE_ME__
+# use_trash = true

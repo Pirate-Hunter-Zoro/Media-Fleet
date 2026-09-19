@@ -80,14 +80,18 @@ import argparse
 import json
 import re
 import sqlite3
+import sys
 from pathlib import Path
 
-MOUNT = Path("/Users/mikeyferguson/MediaLibrary")
-BLOCKLIST = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/blocklist.json")
-WANTS = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/wants.json")
-LIBRARY_DB = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/library.db")
-PURGE_LOG = Path("/Users/mikeyferguson/Developer/Media-Fleet/Torrent-Ingest/state/reap_purges.log")
-DELETIONS_DIR = Path("/Users/mikeyferguson/Developer/Media-Fleet/Media-Syncer")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config                                                       # noqa: E402
+
+MOUNT = config.MEDIAFS_MOUNT
+BLOCKLIST = config.STATE_DIR / "blocklist.json"
+WANTS = config.STATE_DIR / "wants.json"
+LIBRARY_DB = config.STATE_DIR / "library.db"
+PURGE_LOG = config.STATE_DIR / "reap_purges.log"
+DELETIONS_DIR = config.MEDIA_SYNCER_DIR
 DELETIONS_GLOB = "mediafs_deletions.jsonl*"
 ROOTS = ["Shows", "Movies", "Comics/Manga", "Comics"]
 

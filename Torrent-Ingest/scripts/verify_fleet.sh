@@ -374,6 +374,13 @@ run "chunked progress is proven, not remembered (both ways)" \
 # to prove the new rules refuse nothing the old ones accepted.
 run "English-only language gates (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_language_gate.py
+# This repository is public. It used to track the MEGA account pool (822 remotes with
+# user/pass) and a live Jellyfin API key in nine plists; both moved to machine-local
+# `.env`/an untracked conf on 2026-09-19. A `.gitignore` rule is not a guard against
+# the next session pasting a key into a plist, so this scans exactly what a commit
+# would contain for a tracked secret store or a credential-shaped value.
+run "no tracked secrets in a public repo" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_no_tracked_secrets.py
 
 # ---- advisory: is the acceptance gate still being REACHED? (§4.120) ----------
 # Deliberately NOT part of the pass/fail above. This script answers "is the code sound?",

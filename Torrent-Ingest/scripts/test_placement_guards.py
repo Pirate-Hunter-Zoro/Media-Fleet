@@ -136,13 +136,14 @@ def test_seasons() -> int:
 def test_comics() -> int:
     """Every comic filing ever made must be judged; only franchise-root ones may fail."""
     pairs = []
-    rx = re.compile(r"filed (.+?) -> (/Users/mikeyferguson/Media/.+)$")
+    media_prefix = str(config.MEDIA_ROOT) + "/"
+    rx = re.compile(r"filed (.+?) -> (" + re.escape(media_prefix) + r".+)$")
     log = Path(__file__).resolve().parent.parent / "direct_ingest.log"
     if log.exists():
         for line in log.open(encoding="utf-8", errors="replace"):
             m = rx.search(line.strip())
             if m:
-                pairs.append((m.group(1), m.group(2).split("/Media/", 1)[1]))
+                pairs.append((m.group(1), m.group(2)[len(media_prefix):]))
     for _ih, r in _journal_plans().items():
         for f in ((r.get("plan") or {}).get("files") or []):
             d = f.get("dst_rel") or ""
