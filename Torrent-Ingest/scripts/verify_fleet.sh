@@ -408,6 +408,13 @@ run "metadata heal sees the mount and verifies writes (both ways)" \
 # would contain for a tracked secret store or a credential-shaped value.
 run "no tracked secrets in a public repo" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_no_tracked_secrets.py
+# The owner report once carried a show folder, two poster md5s and a torrent hash in its
+# source: incident evidence that cannot see the same fault elsewhere and rots. Comments
+# and docstrings may still name incidents (the why-comments are the codebase's memory);
+# executable string literals may not carry machine paths or digests. one-off/, archive/
+# and tests are dated records/fixtures and exempt.
+run "no incident hard-coding in shipped code" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_no_incident_hardcoding.py
 
 # ---- advisory: is the acceptance gate still being REACHED? (§4.120) ----------
 # Deliberately NOT part of the pass/fail above. This script answers "is the code sound?",
