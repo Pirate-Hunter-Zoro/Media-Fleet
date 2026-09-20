@@ -240,7 +240,11 @@ TMDB's own mapping. A network error fails open. Live: TZ (2019)'s `tmdb_id 80979
 
 **10.3 — media_doctor owns series identity and title art.** The trigger is computed:
 `premiered` vs TMDB `first_air_date` (a stale `<year>` with a matching premiere is
-harmless — four live shows carry that shape). The repair re-matches the Jellyfin item
+harmless — four live shows carry that shape), now plus `enddate` vs TMDB's
+`last_air_date`: Jellyfin's saver re-stamps `enddate` from its DB and the field is not
+lockable, so without that trigger the TZ `enddate` silently reverted to Too Cute's
+2013-03-06 beside the corrected 2019 premiere (repaired live, and the item's `EndDate`
+is now set too). The repair re-matches the Jellyfin item
 FIRST (`RemoteSearch/Apply`, order measured: a `replaceAllMetadata` refresh after the nfo
 write made Jellyfin rewrite tvshow.nfo and the S02 nfos from its stale DB rows), syncs
 season items, locks the item (`LockData`, valid `LockedFields` only), then writes nfos
@@ -266,6 +270,14 @@ master's own files stays flat until the owner decides on the migration), and
 `resolve_comic_folder(colored=True)` no longer bypasses the table. `identify.md` and
 `README.md` teach the current layout.
 
+**10.9 follow-up (2026-09-20 afternoon).** The generic owner report lists three
+COMPLETED legacy releases whose plans collapsed destinations: `Pokemon Horizons 115-123
+English Dub` (1), `[Deadmau-RAWS] Shokugeki.no.Souma.OVA.2016-2018` (5), `[MTBB]
+Monogatari Series Off & Monster Season S1` (1). These predate the merge collision guard
+and may be benign same-episode duplicates or the Smurfs disagreement shape; each needs a
+content-verify pass (`probe` the survivors against the guide) before being dismissed.
+The Smurfs pack itself is the 32-collapse case already recorded in §10.0 row 5.
+
 **10.9 — release-order packs compute their broadcast numbering, and plans scale.**
 `identify.release_title_map` matches each `SxxEyy (Title)` filename against TVMaze and
 returns the broadcast slots only when they actually differ; the block is stated in the
@@ -285,10 +297,17 @@ plots from TMDB episode overviews (49 available) without overwriting the provide
 `media_doctor.escalate()` snapshots `(blank_plots, junk_titles)` before the AI run and
 charges `escalate_n` only when the sidecars actually improve.
 
-**10.10F — `scripts/verify_owner_report.py`** computes the five §10.0 checks (TZ md5s and
-nfo, no `vNNNN`, zero covered chapters, one edition per volume, Smurfs coverage once a
-plan exists) and prints PASS/FAIL/PENDING. Read-only, exit 0 always, advisory in
-`verify_fleet.sh`.
+**10.10F — `scripts/verify_owner_report.py` is library-wide, not incident-coded.** The
+first cut named the five artifacts (a folder, two poster hashes, the Smurfs info hash);
+that is evidence, not a check, and it cannot see the same fault anywhere else. It now
+computes the invariants across the whole library: no `tvshow.nfo` whose `enddate`
+precedes its premiere; no `vNNNN` mislabel, no chapter covered by an owned volume, and
+no volume in both editions across EVERY two-tier manga series (the reconciler's own
+functions, so it cannot disagree with an apply); and the journal's completed records
+whose destinations were collapsed (content-verification review) and terminal records
+parking unaccounted files. Queued purges report PENDING, not FAIL. Read-only, exit 0
+always, advisory in `verify_fleet.sh`. Its first run surfaced **three legacy destination
+collapses** the incident-coded version could not see — see §10.9's note.
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 

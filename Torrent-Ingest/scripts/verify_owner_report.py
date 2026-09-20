@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""The owner's five verified failures, checked against the artifacts they use (10.10F).
+"""Library-wide acceptance report (HANDOFF 10.10F).
 
-HANDOFF §2.6: "a fix is real only where the owner can see it." A log line, a green
-test or a "shipped" commit is not acceptance. This script computes the five §10.0
-checks and prints PASS/FAIL per line:
+WHY THIS IS GENERIC. The first cut of this script named the five artifacts (a show
+folder, two poster hashes, the Smurfs info hash). That is incident evidence, not a
+check: it cannot see the same fault on another show, and it rots when the incident is
+gone. The durable guards are the registered tests, whose incident details live in their
+fixtures and commit messages. This report instead computes the INVARIANTS the five
+faults violated, across the whole library, and is safe to keep running forever:
 
-  1. TZ (2019) art is not the Too Cute poster (the two byte-identical hashes).
-  2. No `vNNNN` mislabels remain on the One Piece shelf.
-  3. Zero One Piece chapters covered by an owned volume.
-  4. No volume number is held in both editions (the coloured copy wins).
-  5. The Smurfs 409-file plan covers the release once one exists -- PENDING while the
-     pack is parked, and the parked state alone must never fail this report.
+  1. sidecar identity  -- no `tvshow.nfo` whose `enddate` precedes its own premiere
+                           (the TZ shape: a stale other-show end date beside a
+                           corrected premiere);
+  2. manga shelf        -- no `vNNNN` mislabels, no chapter covered by an owned volume,
+                           and no volume number held in both editions, across EVERY
+                           two-tier series (computed by the reconciler's own functions,
+                           so it cannot disagree with an apply);
+  3. large releases     -- completed journal records that collapsed duplicate
+                           destinations (content-verification review), and terminal
+                           records that parked unaccounted files.
 
 READ-ONLY. Always exits 0: it is a report, and `verify_fleet.sh` prints it as an
-advisory so a temporarily-parked Smurfs (or a purge still draining) cannot block a
-deploy. The blocking versions of these checks are the unit tests registered in
-`verify_fleet.sh` (`test_manga_mislabels.py`, `test_series_identity_heal.py`,
-`test_release_title_numbering.py`).
+advisory so a queued purge or a parked pack cannot block a deploy. The blocking
+versions are the tests registered in `verify_fleet.sh`.
 
     python3 scripts/verify_owner_report.py
 """
@@ -24,22 +29,16 @@ deploy. The blocking versions of these checks are the unit tests registered in
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import comicfacts                                                    # noqa: E402
 import config                                                        # noqa: E402
-import dbhook                                                        # noqa: E402
 import chapter_volume_reconcile as cvr                               # noqa: E402
-import manga_volume_map as mvm                                       # noqa: E402
-
-TOO_CUTE_POSTER_MD5 = "05520557851cb23ea38e121ed2713514"
-TOO_CUTE_LANDSCAPE_MD5 = "27082e830c7d93b7bd1defefbe9f884e"
-SMURFS_HASH = "6c413306e7053dbb8f1dabf7dcc845f509ec3027"
-SMURFS_FILES = 409
+import audit_volume_chapter_coverage as audit                        # noqa: E402
 
 results = []
 
@@ -49,116 +48,162 @@ def line(name, status, detail=""):
     print(f"{status:7s} {name}{(': ' + detail) if detail else ''}")
 
 
-def md5(path):
-    import hashlib
-    try:
-        return hashlib.md5(Path(path).read_bytes()).hexdigest()
-    except OSError:
-        return None
+def _tag(text, tag):
+    m = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", text, re.I | re.S)
+    return (m.group(1).strip() if m else "")
 
 
-def check_tz():
-    folder = config.MEDIAFS_MOUNT / "Shows" / "The Twilight Zone (2019)"
-    if not folder.is_dir():
-        line("TZ art", "SKIP", "show folder not present")
-        return
-    p, l = md5(folder / "folder.jpg"), md5(folder / "landscape.jpg")
-    bad = [n for n, h, b in (("folder.jpg", p, TOO_CUTE_POSTER_MD5),
-                             ("landscape.jpg", l, TOO_CUTE_LANDSCAPE_MD5))
-           if h is None or h == b]
+def _year(value):
+    m = re.search(r"(\d{4})", str(value or ""))
+    return int(m.group(1)) if m else None
+
+
+def _shows_root():
+    root = config.MEDIAFS_MOUNT / "Shows"
+    return root if root.is_dir() else config.SHOWS_ROOT
+
+
+def _queued_deletions():
+    """Paths already queued for the reaper's purge (queue + in-flight batch)."""
+    out = set()
+    q = config.MEDIAFS_DELETIONS_QUEUE
+    for p in (q, q.with_name(q.name + ".processing")):
+        try:
+            for raw in p.read_text(encoding="utf-8").splitlines():
+                try:
+                    item = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(item, dict) and item.get("path"):
+                    out.add(str(item["path"]))
+        except OSError:
+            continue
+    return out
+
+
+def check_sidecar_identity():
+    """A sidecar whose end date precedes its own premiere is self-contradictory."""
+    root = _shows_root()
+    bad = []
+    for nfo in sorted(root.glob("*/tvshow.nfo")):
+        try:
+            text = nfo.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        start = _year(_tag(text, "premiered") or _tag(text, "year"))
+        end = _year(_tag(text, "enddate"))
+        if start and end and end < start:
+            bad.append(f"{nfo.parent.name} (end {end} < start {start})")
     if bad:
-        line("TZ art", "FAIL", f"still Too Cute or missing: {', '.join(bad)}")
+        line("sidecar identity", "FAIL", f"{len(bad)} contradictory sidecar(s): "
+             + "; ".join(bad[:3]))
     else:
-        line("TZ art", "PASS", f"folder.jpg {p[:12]}.. landscape.jpg {l[:12]}..")
-    nfo = folder / "tvshow.nfo"
-    try:
-        text = nfo.read_text("utf-8", "ignore")
-    except OSError:
-        text = ""
-    if "2013" in text or "325542" in text:
-        line("TZ nfo identity", "FAIL", "premiered/tvdbid still contaminated")
-    else:
-        line("TZ nfo identity", "PASS")
+        line("sidecar identity", "PASS")
 
 
-def one_piece_files():
-    owned = cvr.owned_manga(series="One Piece").get("One Piece") or {}
-    return owned
+def _manga_series():
+    owned = cvr.owned_manga()
+    return {label: files for label, files in owned.items() if files}
 
 
-def check_mislabels(owned):
-    mis = sorted(rel for rel in owned if dbhook._VOL.search(Path(rel).name)
-                 and len(dbhook._VOL.search(Path(rel).name).group(1)) >= 4)
-    if mis:
-        line("no vNNNN mislabels", "FAIL", f"{len(mis)} remain, e.g. {mis[0]}")
+def check_manga():
+    owned = _manga_series()
+    if not owned:
+        line("manga shelf", "SKIP", "shelf not enumerable")
+        return
+    queued = _queued_deletions()
+    mislabels = sorted(rel for files in owned.values() for rel in files
+                       if re.search(r"\bv\d{4}\b", Path(rel).name))
+    fresh = [r for r in mislabels if r not in queued]
+    if fresh:
+        line("no vNNNN mislabels", "FAIL", f"{len(fresh)} remain, e.g. {fresh[0]}")
+    elif mislabels:
+        line("no vNNNN mislabels", "PENDING",
+             f"{len(mislabels)} queued for purge")
     else:
         line("no vNNNN mislabels", "PASS")
 
-
-def check_coverage():
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import audit_volume_chapter_coverage as audit
-        rows = audit.census(series="One Piece")["rows"]
-    except Exception as exc:                                         # noqa: BLE001
-        line("chapters covered by volumes", "SKIP", f"census failed: {exc}")
-        return
-    covered = sum(int(r.get("leftovers") or 0) for r in rows)
-    if covered:
+    # Covered chapters: the reconciler's own decision function, all series.
+    purges = []
+    for label, files in sorted(owned.items()):
+        kinds = {k for _r, (k, _n, _c) in files.items()}
+        if not {"volume", "chapter"} <= kinds:
+            continue
+        entry = cvr.mvm.get(label, allow_network=False)
+        series_purges, _keeps = cvr.plan_decisions(
+            label, files, entry, cvr.policy_for(label))
+        purges.extend(series_purges)
+    fresh = [r for r in purges if r not in queued]
+    if fresh:
         line("chapters covered by volumes", "FAIL",
-             f"{covered} chapter(s) still covered by an owned volume")
+             f"{len(fresh)} still present, e.g. {fresh[0]}")
+    elif purges:
+        line("chapters covered by volumes", "PENDING",
+             f"{len(purges)} queued for purge")
     else:
         line("chapters covered by volumes", "PASS")
 
-
-def check_editions(owned):
-    by_number = {}
-    for rel, (mtype, number, colored) in owned.items():
-        if mtype != "volume":
-            continue
-        by_number.setdefault(number, set()).add(bool(colored))
-    both = sorted(n for n, colours in by_number.items() if len(colours) > 1)
+    # One edition per volume number, per series.
+    both = []
+    for label, files in sorted(owned.items()):
+        colours = {}
+        for rel, (mtype, number, colored) in files.items():
+            if mtype == "volume":
+                colours.setdefault(number, set()).add(bool(colored))
+        both.extend(f"{label} v{n}" for n, c in colours.items() if len(c) > 1)
     if both:
         line("one edition per volume", "FAIL",
-             f"{len(both)} number(s) held in both editions, e.g. v{both[0]}")
+             f"{len(both)} number(s) in both editions, e.g. {both[0]}")
     else:
-        line("one edition per volume", "PASS",
-             f"{len(by_number)} volume number(s), one edition each")
+        total = sum(1 for files in owned.values()
+                    for (_r, (k, _n, _c)) in files.items() if k == "volume")
+        line("one edition per volume", "PASS", f"{total} volume copy(ies), one per number")
 
 
-def check_smurfs():
-    plans = sorted(config.TMP_DIR.glob(f"{SMURFS_HASH}*_plan.json"))
-    if not plans:
-        line("Smurfs plan coverage", "PENDING", "no plan yet (pack parked)")
-        return
-    plan = plans[-1]
+def check_large_releases():
+    """Journal outcomes for big packs: collapsed destinations, parked unfiled files."""
+    last = {}
     try:
-        data = json.loads(plan.read_text("utf-8"))
-        n = len(data.get("files") or [])
-    except (OSError, ValueError):
-        line("Smurfs plan coverage", "FAIL", f"{plan.name} is unreadable")
+        for raw in (config.STATE_DIR / "journal.jsonl").read_text(
+                encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if rec.get("info_hash"):
+                last[rec["info_hash"]] = rec
+    except OSError:
+        line("large releases", "SKIP", "journal unreadable")
         return
-    if n >= SMURFS_FILES:
-        line("Smurfs plan coverage", "PASS", f"{n}/{SMURFS_FILES} files planned")
+    review = []
+    parked = []
+    for rec in last.values():
+        plan = rec.get("plan") or {}
+        if rec.get("status") == "completed" and (plan.get("_deduped_dropped") or []):
+            review.append(f"{rec.get('name', '?')[:48]} "
+                          f"({len(plan['_deduped_dropped'])} collapsed)")
+        if rec.get("status") in ("failed", "refused") and rec.get("unfiled_count"):
+            parked.append(f"{rec.get('name', '?')[:48]} "
+                          f"({rec['unfiled_count']} unfiled)")
+    if parked:
+        line("large releases", "PENDING", "parked: " + "; ".join(parked[:3]))
+    elif review:
+        line("large releases", "REVIEW",
+             "destination collapses need content verification: " + "; ".join(review[:3]))
     else:
-        line("Smurfs plan coverage", "PENDING",
-             f"{n}/{SMURFS_FILES} files planned (truncated plan; coverage guard parked it)")
+        line("large releases", "PASS")
 
 
 def main() -> int:
-    check_tz()
-    owned = one_piece_files()
-    if not owned:
-        line("One Piece shelf", "SKIP", "shelf not enumerable")
-    else:
-        check_mislabels(owned)
-        check_coverage()
-        check_editions(owned)
-    check_smurfs()
+    check_sidecar_identity()
+    check_manga()
+    check_large_releases()
     print()
     bad = [r for r in results if r[1] == "FAIL"]
     pend = [r for r in results if r[1] == "PENDING"]
-    print(f"{len(results) - len(bad) - len(pend)} PASS, {len(bad)} FAIL, {len(pend)} PENDING")
+    rev = [r for r in results if r[1] == "REVIEW"]
+    print(f"{len(results) - len(bad) - len(pend) - len(rev)} PASS, {len(bad)} FAIL, "
+          f"{len(pend)} PENDING, {len(rev)} REVIEW")
     return 0                                        # a report: never gates a deploy
 
 

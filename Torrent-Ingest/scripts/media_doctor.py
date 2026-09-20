@@ -633,7 +633,7 @@ def _nfo_identity(show_dir):
     if not text:
         return {}
     out = {}
-    for key in ("title", "originaltitle", "year", "premiered"):
+    for key in ("title", "originaltitle", "year", "premiered", "enddate"):
         m = re.search(rf"<{key}>\s*(.*?)\s*</{key}>", text, re.I | re.S)
         out[key] = m.group(1).strip() if m else None
     ids = _nfo_provider_ids(show_dir)
@@ -684,6 +684,15 @@ def _series_identity_problem(show_dir, pids):
     if nfo.get("tvdbid") and ident.get("tvdb_id") \
             and str(nfo["tvdbid"]) != str(ident["tvdb_id"]):
         why.append(f"nfo tvdbid {nfo['tvdbid']} vs TMDB-records {ident['tvdb_id']}")
+    # `enddate` is its own trap: Jellyfin's saver re-stamps it from its DB and it is
+    # not a lockable field, so a stale value survives the rest of the repair (measured:
+    # TZ held Too Cute's 2013-03-06 end date beside the corrected 2019 premiere, and a
+    # premiered-only trigger never looked at it again).
+    end = (nfo.get("enddate") or "")[:4]
+    last = str(ident.get("last_air_date") or "")[:4]
+    if end.isdigit() and last.isdigit() and abs(int(end) - int(last)) > 1:
+        why.append(f"nfo enddate {nfo['enddate']} vs TMDB last air date "
+                   f"{ident.get('last_air_date')}")
     if nfo.get("originaltitle") and ident.get("original_name") \
             and nfo["originaltitle"] != ident["original_name"] \
             and nfo["originaltitle"] != ident.get("name"):
@@ -2074,6 +2083,10 @@ def apply_auto_fixes(probs, jf, state, dry_run, cycle_budget):
                     fields["ProductionYear"] = int(ident["year"])
                 if ident.get("first_air_date"):
                     fields["PremiereDate"] = f"{ident['first_air_date']}T00:00:00.0000000Z"
+                if ident.get("last_air_date"):
+                    # Settable but not lockable; without it Jellyfin's saver re-stamps
+                    # the old `enddate` into the nfo on its next save.
+                    fields["EndDate"] = f"{ident['last_air_date']}T00:00:00.0000000Z"
                 jf.update_item(sid, **fields)
                 acted.append("lock the corrected identity on the Jellyfin item")
                 st["identity_fixed_ts"] = now
