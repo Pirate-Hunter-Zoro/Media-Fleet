@@ -218,7 +218,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; the queued purge's DB mirror completes via `dbhook.record_purge` from the reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The shelf it indexes reflects the repaired names as the purge drains; re-check `yacreader_rescan.py --files` after |
 | In flight | The queued One Piece chapter drops are filing one by one through a provider-limited identify chain (429s on Gemini, empty text on some OpenRouter models). **The Smurfs `.torrent` was re-dropped 2026-09-20 08:00** (top level; no new download), record `downloading`; watch `state/tmp/6c413306…_identify.log` and the journal for the plan. Reaper batch complete (`reap.py` PID 1311; its next batch is separate) |
-| Parked re-drops | The Smurfs pack is unchanged in `~/Downloads/.torrent-ingest/` + `Torrents/failed/`; the plan tooling it needs (§10.9) is shipped and its computed map is verified (362/405 titles matched, 347 differ; release `S01E01 (The Smurfette)` -> broadcast `S01E31`; 409-file skeleton). **Re-drop after the ship** |
+| Parked re-drops | **The Smurfs re-drop COMPLETED 2026-09-20 10:57** (`6c413306…`, 377 files applied, source under `finished/`). The skeleton merge filled 405 episode destinations and the record is terminal with the content on the mount. **BUT row 5 is NOT signed off:** the computed map covered 362/405 titled files; 41 kept their release numbers, and 32 of those collided with a mapped file's computed slot, where the intra-torrent duplicate collapse dropped the larger/cleaner copy — a subset of S01/S02/S03 slots may therefore hold the release-order episode instead of the guide-order one. The collision guard now parks both instead of choosing (commit after the run). The next session must CONTENT-VERIFY the Smurfs shelf (probe each file, match the title) and refile with `refile_season.py --mapping`; `state/journal.jsonl.bak-pack`'s 405-file plan resolves 34 of the 41 unmatched titles and is the mapping cross-check. Do not call row 5 done before that. |
 | Open work | §10.0's live acceptance for rows 1 and 3 completes when the reaper drain finishes; Toriko's live write waits for the mount to unpause; the free-AI upgrade (§10.10) is otherwise implemented |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) still outstanding** |
 
@@ -592,9 +592,10 @@ edit of this file without pasting the acceptance command and its output beside i
 
 **Status 2026-09-20 (verified live).** Rows 1–4 are **done** and `verify_owner_report.py`
 prints them PASS (TZ art/identity; no `vNNNN`; zero covered chapters; one edition per
-volume; Toriko 0 junk titles / 0 blank plots). Row 5's tooling is shipped and the pack
-was re-dropped after the deploy — its plan/filing is the remaining watch item, and the
-report's line flips to PASS when the 409-file plan exists. The evidence as measured:
+volume; Toriko 0 junk titles / 0 blank plots). Row 5: the tooling is shipped and the pack
+filed (409 -> 377 applied, 32 accounted duplicates), **but the completed run exposed the
+release-order-vs-guide-order collision above; the shelf needs a content-verified refile
+before row 5 is done.** The evidence as measured:
   * TZ folder.jpg `965f20be…`, landscape.jpg `ec122588…`, premiered 2019-04-01,
     tvdbid 358915, enddate 2020-06-25; Jellyfin 2 seasons, 20 indexed episodes.
   * One Piece: 7/7 mislabels renamed; shelf 322 -> 197 (127 superseded), 0 `vNNNN`,
