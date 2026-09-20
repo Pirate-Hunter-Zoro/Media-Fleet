@@ -2884,8 +2884,15 @@ def _advance_identify(record, client):
                         f"({fast.get('media_type')}, {len(fast.get('files', []))} files).")
                     _advance_stage(record, client)
                     return
-        plan, rationale = identify.run_identify(h, content, log_fn=log, stored_plan=stored,
-                                                settled=identify.settled_ok(stored))
+        # The release's OWN file list travels with the run: it is what lets identify
+        # compute the release->broadcast numbering, hand a 400-file pack a skeleton,
+        # and require the plan to cover every file (HANDOFF 10.9). The chunked path
+        # already passed its wave list; this one did not, so a whole-torrent pack got
+        # none of the 10.9 machinery -- exactly the Smurfs shape.
+        plan, rationale = identify.run_identify(
+            h, content, log_fn=log, stored_plan=stored,
+            settled=identify.settled_ok(stored),
+            release_files=_release_files_for_coverage(record, content))
         journal.log_decision(h, record["name"],
                              (rationale or "(no rationale)") + "\n\nPLAN:\n"
                              + _pretty(plan))
