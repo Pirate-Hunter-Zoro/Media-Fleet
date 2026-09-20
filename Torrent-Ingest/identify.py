@@ -809,7 +809,8 @@ def release_title_map(content_path, release_files, show_hint=None):
     return claims
 
 
-def title_numbering_block(content_path, release_files, wave_names=None):
+def title_numbering_block(content_path, release_files, wave_names=None,
+                          max_rows=80):
     """The computed title->broadcast numbering, stated to the model as fact, plus the map.
 
     Returns `(block_text, map)`. Empty block when nothing can be computed.
@@ -838,10 +839,10 @@ def title_numbering_block(content_path, release_files, wave_names=None):
     # job is to state the RULE and enough examples, and the validator enforces the map
     # regardless.
     more = ""
-    if len(rows) > 80:
-        more = (f"\n  ... and {len(rows) - 80} more computed row(s); the complete list "
-                f"is in the skeleton handed to you.\n")
-        rows = rows[:80]
+    if max_rows and len(rows) > max_rows:
+        more = (f"\n  ... and {len(rows) - max_rows} more computed row(s); the complete "
+                f"list is in the skeleton handed to you.\n")
+        rows = rows[:max_rows]
     return ("======================================================================\n"
             "RELEASE-ORDER NUMBERING -- COMPUTED BROADCAST NUMBERING\n"
             "======================================================================\n"
@@ -1587,6 +1588,17 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         kind = (stored_plan.get("kind") or "").lower()
 
     file_listing, media_count = _list_files(content_path)
+    # A large release's listing duplicates the skeleton (which carries the same files
+    # with computed destinations). Keep a sample so the model sees the shape and points
+    # it at the skeleton for the rest, instead of shipping the same 40 KB twice.
+    if release_files and len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES:
+        lines = file_listing.splitlines()
+        if len(lines) > 60:
+            file_listing = ("\n".join(lines[:60])
+                            + f"\n  ... and {len(lines) - 60} more entries; the COMPLETE "
+                              f"release listing, with its computed slot where the harness "
+                              f"could compute one, is in the skeleton file the prompt names "
+                              f"below.\n")
     timeout = _timeout_for(media_count)
     sections = _relevant_sections(content_path)
     # Computed once for the whole chain: every provider sees the same mapping, and the
@@ -1600,8 +1612,14 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
     # Release-order numbering for title-named packs (HANDOFF 10.9, The Smurfs). Serial
     # packs already have their binding map; do not stack two numbering blocks on one run.
     title_block, title_map = "", {}
+    large = bool(release_files) and len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES
     if release_files and not serial_map:
-        title_block, title_map = title_numbering_block(content_path, release_files)
+        # When a skeleton follows, the block needs only the RULE and a few examples:
+        # the skeleton carries every computed row, and a 400-row block plus a 400-file
+        # listing pushed the Smurfs prompt to 125 KB -- over every free provider's
+        # ceiling that could not otherwise serve it.
+        title_block, title_map = title_numbering_block(
+            content_path, release_files, max_rows=20 if large else 80)
         if title_map:
             _note(f"identify: computed release->broadcast numbering for "
                   f"{len(title_map)} file(s) from their own titles")
