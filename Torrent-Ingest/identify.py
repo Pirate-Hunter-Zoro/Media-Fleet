@@ -1783,6 +1783,13 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         rel = str(item[0] if isinstance(item, (tuple, list)) else item)
         if Path(rel).suffix.lower() in config.VIDEO_EXTENSIONS:
             require_files.append(Path(rel).name)
+    # With a skeleton the harness COMPLETES the plan from its own enumeration, so the
+    # per-file coverage nudge is wrong here: it would order the model to append the
+    # hundreds of episode entries the merge already supplies, wasting its turns (and
+    # risking the good slot-less entries it did write). The coverage guard stays the
+    # last line of defense for anything the merge could not place.
+    if skeleton_path is not None:
+        require_files = []
     require_list = config.TMP_DIR / f"{info_hash}_require.json"
     if require_files:
         try:
