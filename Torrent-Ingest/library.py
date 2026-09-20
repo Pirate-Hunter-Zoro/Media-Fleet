@@ -2336,8 +2336,16 @@ def _reject_comic_at_franchise_root(files):
             # the shared vNN namespace that caused the 2026-09-02 incident -- by
             # allowing ONLY the file whose series name IS the master and only when the
             # master folder already holds flat archives.
-            own = normalize_folder_name(
-                _series_from_comic_filename(f.get("src") or dst_p.name))
+            #
+            # The SOURCE name is the evidence, and a source that names only a chapter
+            # (`Chapter 1133.zip`) carries none -- that is the normal shape of a
+            # chapter-only drop, not a franchise-root filing. Only then does the
+            # DESTINATION name supply the series; a source that states a DIFFERENT
+            # series (the ElfQuest incident) is still refused.
+            src_name = Path(f.get("src") or "").name or dst_p.name
+            own = normalize_folder_name(_series_from_comic_filename(src_name))
+            if not own:
+                own = normalize_folder_name(_series_from_comic_filename(dst_p.name))
             if own == normalize_folder_name(fr["name"]) and any(
                     _flat_dir_has_comics(root / root_rel)
                     for root in (config.COMICS_ROOT, config.MEDIA_ROOT,

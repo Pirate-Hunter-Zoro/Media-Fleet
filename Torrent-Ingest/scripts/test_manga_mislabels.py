@@ -154,6 +154,28 @@ try:
         plan_for(chapter_src, "Comics/Manga/One Piece/One Piece c1177.cbz"), str(root))
     check("the same content as c1177 is accepted",
           acc.get("media_type") == "comic")
+    # A chapter-only SOURCE (`Chapter 1133.zip`) names no series; the destination does,
+    # and the flat master accepts it. (This exact shape was rejected live by the first
+    # cut of the guard, which read only the source name.)
+    chap_only = cbz(root / "Chapter 1133.cbz", ["1133-001.png"])
+    ch_ok = library.validate_plan(
+        plan_for(chap_only, "Comics/Manga/One Piece/One Piece c1133.cbz"), str(root))
+    check("a chapter-only source files into the flat master",
+          ch_ok.get("media_type") == "comic")
+    # A source that NAMES another series at a franchise root is still refused.
+    sw = root / "Star Wars Comics"
+    cbz(sw / "Star Wars v01.cbz", ["Star Wars/001.png"])
+    darth = cbz(root / "Darth Vader v01.cbz", ["Darth Vader/001.png"])
+    fran = {"media_type": "comic", "title": "Darth Vader", "year": 2017,
+            "files": [{"src": str(darth),
+                       "dst_rel": "Comics/Star Wars Comics/Darth Vader v01.cbz"}]}
+    refused = None
+    try:
+        library.validate_plan(fran, str(root))
+    except library.PlanError as exc:
+        refused = str(exc)
+    check("another series at the franchise root is still refused",
+          refused and "SUB-FOLDERS only" in refused)
     # Unknown ceiling -> fail open.
     comicfacts.VOLUME_MAP_PATH.write_text(json.dumps({"version": 1, "series": {}}))
     open_ok = library.validate_plan(
