@@ -279,6 +279,30 @@ def _guide_index(show_title):
     return idx
 
 
+def _abs_guide_index(guide):
+    """`abs_index -> (title, plot)` from a guide whose season split is not the shelf's.
+
+    The audit computes each episode's absolute index precisely because anime shelves
+    number one continuous run while the guides split seasons (Toriko: files E001-E147
+    under `Season 01`, TVMaze/TMDB 49+49+49 across three). Matching on-disk (1, 56)
+    against the guide's (2, 7) is what made the deterministic filler a no-op.
+    """
+    by_season = {}
+    for e in guide or ():
+        s, n = e.get("season"), e.get("number")
+        if isinstance(s, int) and isinstance(n, int) and s > 0:
+            by_season.setdefault(s, []).append((n, e))
+    out = {}
+    offset = 0
+    for s in sorted(by_season):
+        rows = sorted(by_season[s])
+        for i, (_n, e) in enumerate(rows):
+            out[offset + i + 1] = ((e.get("name") or "").strip(),
+                                   (e.get("summary") or "").strip())
+        offset += len(rows)
+    return out
+
+
 _JUNK_TITLE = re.compile(r"\[[^\]]+\]|x26[45]|\b\d{3,4}p\b|\b(?:webrip|web-dl|bluray|"
                          r"aac|hevc)\b", re.IGNORECASE)
 
@@ -298,44 +322,54 @@ def _fill_synopses(show, todo, backup_root):
     tmdb_id = show.get("tmdb_id")
     if not tmdb_id:
         return 0, todo
-    by_season = {}
-    for e in todo:
-        by_season.setdefault(e.get("season"), []).append(e)
+    try:
+        import tmdbguide
+    except Exception:                      # noqa: BLE001
+        return 0, todo
+    # Fetch every season once and build the absolute-index map, so a shelf numbered as
+    # one continuous run (Toriko) can use the provider's split seasons.
+    overviews = {}
+    offsets = {}
+    try:
+        shape = tmdbguide.season_shape(tmdb_id) or {}
+        off = 0
+        for s in sorted(k for k in shape if k and int(k) > 0):
+            for (a, b), text in (tmdbguide.episode_overviews(tmdb_id, int(s)) or {}).items():
+                overviews[(a, b)] = text
+            count = int((shape[s] or {}).get("count") or 0)
+            for i in range(1, count + 1):
+                offsets[off + i] = (int(s), i)
+            off += count
+    except Exception:                      # noqa: BLE001
+        return 0, todo
     fixed, residue = 0, []
-    for season, rows in sorted(by_season.items(), key=lambda kv: (kv[0] is None, kv[0])):
-        if season is None:
-            residue.extend(rows)
+    for e in todo:
+        plot = overviews.get((e.get("season"), e.get("episode")))
+        if not plot and e.get("abs") in offsets:
+            plot = overviews.get(offsets[e["abs"]])
+        if not plot:
+            residue.append(e)
             continue
-        try:
-            import tmdbguide
-            overviews = tmdbguide.episode_overviews(tmdb_id, season)
-        except Exception:                  # noqa: BLE001
-            overviews = {}
-        for e in rows:
-            plot = overviews.get((e.get("season"), e.get("episode")))
-            if not plot:
-                residue.append(e)
-                continue
-            video = Path(e["video"])
-            title = e.get("title") or ""
-            if not title:
-                nfo = library.episode_nfo_path(video)
-                try:
-                    title = library._xml_tag(nfo.read_text("utf-8", "ignore"), "title")
-                except OSError:
-                    title = ""
+        video = Path(e["video"])
+        title = e.get("title") or ""
+        if not title:
+            nfo = library.episode_nfo_path(video)
             try:
-                _backup_nfo(video, backup_root)
-                library.write_locked_episode_nfo(video, show.get("show", ""), {
-                    "season": e["season"], "episode": e["episode"],
-                    "episode_title": title or f"Episode {e['episode']}", "plot": plot})
-            except Exception:              # noqa: BLE001
-                residue.append(e)
-                continue
-            if library.episode_is_blank(video, show.get("show", "")):
-                residue.append(e)
-            else:
-                fixed += 1
+                title = library._xml_tag(nfo.read_text("utf-8", "ignore"), "title")
+            except OSError:
+                title = ""
+        try:
+            _backup_nfo(video, backup_root)
+            library.write_locked_episode_nfo(video, show.get("show", ""), {
+                "season": e["season"], "episode": e["episode"],
+                "episode_title": title or f"Episode {e['episode']}", "plot": plot})
+        except Exception:                  # noqa: BLE001
+            residue.append(e)
+            continue
+        if library.episode_is_blank(video, show.get("show", "")):
+            residue.append(e)
+        else:
+            fixed += 1
     return fixed, residue
 
 
@@ -354,9 +388,17 @@ def _fill_from_guide(show_title, todo, backup_root):
     idx = _guide_index(show_title)
     if not idx:
         return 0, todo
+    try:
+        abs_idx = _abs_guide_index(epguide.episodes(show_title))
+    except Exception:                      # noqa: BLE001
+        abs_idx = {}
     fixed, residue = 0, []
     for e in todo:
         hit = idx.get((e["season"], e["episode"]))
+        if not hit and e.get("abs") in abs_idx:
+            # The shelf's season split is not the guide's (one absolute run vs 3
+            # seasons). `abs` is the key the audit computed for exactly this.
+            hit = abs_idx[e["abs"]]
         if not hit:
             residue.append(e)
             continue
@@ -390,7 +432,7 @@ def _fill_from_guide(show_title, todo, backup_root):
     return fixed, residue
 
 
-def repair_show(show, backup_root, batch_size, dry_run, min_age_sec):
+def repair_show(show, backup_root, batch_size, dry_run, min_age_sec, allow_ai=True):
     """Resolve+write metadata for one show's blanks. Returns (fixed, attempted, skipped)."""
     title = show["show_title"]
     is_op = _is_one_pace(show)
@@ -458,6 +500,13 @@ def repair_show(show, backup_root, batch_size, dry_run, min_age_sec):
                       f"({len(todo)} left for the AI)")
     if not todo:
         return guide_fixed, guide_fixed, skipped
+    if not allow_ai:
+        # Deterministic sources only (manual mode): the rest stays blank and is named,
+        # so a later pass (or the nightly AI filler) can take it without the tool
+        # spending provider budget competing with identify.
+        print(f"      deterministic only: {len(todo)} episode(s) left queued for a "
+              f"synopsis source/AI pass")
+        return guide_fixed, len(todo) + guide_fixed, skipped
 
     plan_path = config.TMP_DIR / f"repair_{abs(hash(show['show'])) & 0xffffffff:x}.json"
     config.TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -771,11 +820,14 @@ def main():
     ap.add_argument("--no-movies", action="store_true",
                     help="Repair episodes only; skip the Movies/ pass.")
     ap.add_argument("--dry-run", action="store_true", help="Report only; do not call the AI or write.")
+    ap.add_argument("--no-ai", action="store_true",
+                    help="Deterministic sources only (TVMaze + TMDB overviews); leave the "
+                         "rest queued instead of spending provider budget on the AI.")
     args = ap.parse_args()
 
     if not (args.all or args.show or args.worklist):
         ap.error("choose --all, --show NAME, or --worklist PATH")
-    if not config.SHOWS_ROOT.exists():
+    if not audit.shows_root().exists():
         print(f"Shows root not mounted: {config.SHOWS_ROOT}", file=sys.stderr)
         return 2
 
@@ -801,12 +853,16 @@ def main():
     tot_fixed = tot_attempted = tot_skipped = 0
     for s in shows:
         f, a, sk = repair_show(s, backup_root, args.batch_size, args.dry_run,
-                               int(args.min_age_hours * 3600))
+                               int(args.min_age_hours * 3600),
+                               allow_ai=not args.no_ai)
         tot_fixed += f
         tot_attempted += a
         tot_skipped += sk
 
     # Movies: identify + pin + Jellyfin-refresh (its own backup of touched .nfo).
+    if movies and args.no_ai:
+        print("  movies: skipped under --no-ai (movie repair is an AI identify).")
+        movies = []
     if movies:
         mf, ma, msk = repair_movies(movies, backup_root, args.dry_run,
                                     int(args.min_age_hours * 3600))

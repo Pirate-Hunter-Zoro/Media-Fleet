@@ -214,10 +214,10 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
 | Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
-| Mount | One Piece shelf 322 entries: 100 two-digit + 111 three-digit volumes, 103 chapters, **1 `vNNNN`**, plus 6 renamed `cNNNN` from the mislabel repair. The reconcile queued **127 supersedes** (`c1078` already purged); the reaper's batch is draining them — the mount still lists the queued paths because Media-Syncer is paused inside `purge_batch` (§2.2: do not bounce) |
+| Mount | **One Piece is clean (measured 2026-09-20 08:10):** 197 shelf entries, **0 `vNNNN`**, 112 volume numbers **one edition each**, 61 chapters, **0 covered by an owned volume**. The reaper's 128-path batch completed (Media-Syncer resumed 07:57) — `verify_owner_report.py` reads **5 PASS, 0 FAIL, 1 PENDING** (the pending line is the Smurfs plan) |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; the queued purge's DB mirror completes via `dbhook.record_purge` from the reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The shelf it indexes reflects the repaired names as the purge drains; re-check `yacreader_rescan.py --files` after |
-| In flight | **no identify run** (`pgrep -f ai_runner.py` empty, 2026-09-20 07:55). Reaper draining a deletion batch (`reap.py` PID 1311, `mediafs_deletions.jsonl.processing` = 128 paths) — do not bounce it (§2.2) |
+| In flight | The queued One Piece chapter drops are filing one by one through a provider-limited identify chain (429s on Gemini, empty text on some OpenRouter models). **The Smurfs `.torrent` was re-dropped 2026-09-20 08:00** (top level; no new download), record `downloading`; watch `state/tmp/6c413306…_identify.log` and the journal for the plan. Reaper batch complete (`reap.py` PID 1311; its next batch is separate) |
 | Parked re-drops | The Smurfs pack is unchanged in `~/Downloads/.torrent-ingest/` + `Torrents/failed/`; the plan tooling it needs (§10.9) is shipped and its computed map is verified (362/405 titles matched, 347 differ; release `S01E01 (The Smurfette)` -> broadcast `S01E31`; 409-file skeleton). **Re-drop after the ship** |
 | Open work | §10.0's live acceptance for rows 1 and 3 completes when the reaper drain finishes; Toriko's live write waits for the mount to unpause; the free-AI upgrade (§10.10) is otherwise implemented |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) still outstanding** |
@@ -590,14 +590,18 @@ edit of this file without pasting the acceptance command and its output beside i
 | 4 | TZ (2019) still shows *Too Cute* as its show cover | `folder.jpg` md5 = `05520557851cb23ea38e121ed2713514` — byte-identical to the TMDB 80979 (*Too Cute*) poster. `tvshow.nfo` still carries `<originaltitle>萌宠成长记（精编版）</originaltitle>`, `<tvdbid>325542</tvdbid>`, `<premiered>2013-01-30</premiered>` (its `<tmdbid>` is now the correct 83135). `Season 01/season.nfo` year 2013; S02 episode `.nfo`s have **no `<season>`/`<episode>`**; the doctor worklist has no TZ entry at all | 10.3 |
 | 5 | the Smurfs torrent is failing and it should not be | failed 2026-09-19 22:36 CDT: `plan accounts for 24 file(s) but leaves 385 release file(s) unfiled`. The 24-file plan is S01E01–10, S02E01–10 and the 4 Xtras; the identify log shows a 36-turn investigation, then two tiny writes. The 24 are also **wrong numbering** (release order ≠ broadcast order; *The Smurfette* is broadcast S01E31). The full 54.8 GB pack is retained (51 GiB by `du`); the `.torrent` is in `failed/` | 10.9 |
 
-**Status 2026-09-20 (this session).** Row 4 is **done live** (TZ: art md5s differ from
-both Too Cute hashes, identity rewritten, 2 seasons / 20 indexed episodes / no ghost
-season). Row 5's tooling is **shipped**; the `.torrent` re-drops after the deploy. Rows
-1–3 are **applied through the tools** — the 7 mislabels renamed, the reconcile queued 127
-supersedes, `c1078` already purged — but the final shelf census cannot read clean until
-the reaper's batch finishes purging the remotes (a 15h-old drain adopted the queue; §2.2
-forbids bouncing it). The commit message pastes what was measured; do not mark rows 1/3
-"done" in a later edit until `verify_owner_report.py` prints PASS for them.
+**Status 2026-09-20 (verified live).** Rows 1–4 are **done** and `verify_owner_report.py`
+prints them PASS (TZ art/identity; no `vNNNN`; zero covered chapters; one edition per
+volume; Toriko 0 junk titles / 0 blank plots). Row 5's tooling is shipped and the pack
+was re-dropped after the deploy — its plan/filing is the remaining watch item, and the
+report's line flips to PASS when the 409-file plan exists. The evidence as measured:
+  * TZ folder.jpg `965f20be…`, landscape.jpg `ec122588…`, premiered 2019-04-01,
+    tvdbid 358915, enddate 2020-06-25; Jellyfin 2 seasons, 20 indexed episodes.
+  * One Piece: 7/7 mislabels renamed; shelf 322 -> 197 (127 superseded), 0 `vNNNN`,
+    112 volume numbers one edition each, 0 covered chapters.
+  * Toriko: 69 blanks -> 0 (68 guide titles + 69 TMDB synopses), 8 junk titles -> 0.
+  * Smurfs map: 362/405 titles matched, 347 differ, release `S01E01 (The Smurfette)` ->
+    broadcast `S01E31`; 409-file skeleton written.
 
 **The acceptance rule for all five (this is §2.6 in practice).** A repair is done when the
 owner's artifact is checked and the output is pasted into the commit message:
