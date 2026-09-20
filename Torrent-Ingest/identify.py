@@ -1274,7 +1274,8 @@ def _release_title_guess(content_path, release_files=None):
 def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                     series_hint=None, kind=None, failure_context=None, sections=None,
                     release_files=None, title_block="", skeleton_path=None,
-                    require_count=0, skeleton_slotted=0, skeleton_unslotted=0):
+                    require_count=0, skeleton_slotted=0, skeleton_unslotted=0,
+                    unslotted_files=None):
     """The engineered base prompt plus this torrent's concrete context.
 
     With `series_hint`/`kind` (the settled case) the library digest is scoped to that one
@@ -1313,17 +1314,24 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
     if skeleton_path or require_count:
         bits = []
         if skeleton_path:
+            listing = ""
+            if unslotted_files:
+                shown = "\n".join(f"    {n}" for n in unslotted_files[:25])
+                listing = (f"\nFILES THAT NEED YOUR DECISION ({len(unslotted_files)}):\n"
+                           f"{shown}\n"
+                           + (f"    ... and {len(unslotted_files) - 25} more\n"
+                              if len(unslotted_files) > 25 else ""))
             bits.append(
-                "A DETERMINISTIC SKELETON IS WAITING FOR YOU. Every release file, with\n"
-                "the computed destination slot where the harness could compute one, is at:\n"
-                f"{skeleton_path}\n"
-                "Read it, then write the plan: carry over its `files` entries and fill in\n"
-                "`dst_rel` (and any titles/ids). Do not re-investigate what it already states."
-                + (f"\nThe skeleton ALREADY carries the computed destination for "
-                   f"{skeleton_slotted} file(s) -- you do not need to rewrite those; the "
-                   f"harness merges them for you. Only the {skeleton_unslotted} file(s) "
-                   f"with no computed slot (movies/specials) need your destination."
-                   if skeleton_unslotted else ""))
+                "THE HARNESS COMPLETES THIS PLAN FOR YOU. It has already enumerated every\n"
+                "release file and computed the broadcast destination for the "
+                f"{skeleton_slotted} episode file(s) from their own titles. After your run\n"
+                "the harness merges its enumeration with your `files`, so:\n"
+                "  * do NOT read the large skeleton file, and do NOT re-list the episodes;\n"
+                "  * put ONLY the file(s) below in `files`, each with its final `dst_rel`\n"
+                "    (and `tmdb_id` for a movie), plus any top-level title/year/ids;\n"
+                "  * if you have a real episode title or plot to add, include the entry;\n"
+                "    the harness keeps it, but an omitted episode is still placed correctly."
+                + listing)
         if require_count:
             bits.append(
                 f"COVERAGE IS REQUIRED. All {require_count} release file(s) must appear in\n"
@@ -1756,6 +1764,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         except OSError:
             skeleton_path = None
     skeleton_slotted = skeleton_unslotted = 0
+    unslotted_files = []
     if skeleton_path is not None:
         try:
             _sk = json.loads(skeleton_path.read_text(encoding="utf-8"))
@@ -1764,6 +1773,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                     skeleton_slotted += 1
                 else:
                     skeleton_unslotted += 1
+                    unslotted_files.append(Path(str(_f.get("src") or "")).name)
         except (OSError, ValueError):
             pass
     # The files the plan must account for, so ai_client can tell the model exactly what a
@@ -1828,7 +1838,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                  skeleton_path=str(skeleton_path) if skeleton_path else None,
                                  require_count=len(require_files),
                                  skeleton_slotted=skeleton_slotted,
-                                 skeleton_unslotted=skeleton_unslotted)
+                                 skeleton_unslotted=skeleton_unslotted,
+                                 unslotted_files=unslotted_files)
         # Per ATTEMPT, not per run: confirm mode below narrows these for the one provider
         # that needs it, and leaking that narrowing to the next provider would cap a run
         # that has no reason to be capped.
@@ -1845,7 +1856,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                       skeleton_path=str(skeleton_path) if skeleton_path else None,
                                       require_count=len(require_files),
                                       skeleton_slotted=skeleton_slotted,
-                                      skeleton_unslotted=skeleton_unslotted)
+                                      skeleton_unslotted=skeleton_unslotted,
+                                      unslotted_files=unslotted_files)
             if len(compact) < len(prompt):
                 _note(f"  {provider_name}: full prompt is {len(prompt)} chars, over its "
                       f"measured {_TOO_LARGE_CEILING[provider_name]}; retrying with the "
@@ -2009,7 +2021,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                             skeleton_path=str(skeleton_path) if skeleton_path else None,
                             require_count=len(require_files),
                             skeleton_slotted=skeleton_slotted,
-                            skeleton_unslotted=skeleton_unslotted)
+                            skeleton_unslotted=skeleton_unslotted,
+                            unslotted_files=unslotted_files)
                         if len(compact) < len(prompt) and _fits(provider_name, compact):
                             _note(f"  {provider_name}: retrying with the "
                                   f"{'+'.join(sections)} digest only "
