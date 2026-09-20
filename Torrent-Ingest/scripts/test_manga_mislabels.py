@@ -101,13 +101,23 @@ tmp = tempfile.TemporaryDirectory()
 try:
     map_path = Path(tmp.name) / "manga_volume_map.json"
     map_path.write_text(json.dumps({"version": 1, "series": {
-        "one piece": {"total_volumes": 108, "shelf_ceiling": 111, "volumes": {}}}}))
+        "one piece": {"total_volumes": 108, "shelf_ceiling": 111, "volumes": {}},
+        "jujutsu kaisen": {"total_chapters": 272, "anilist_status": "FINISHED",
+                           "volumes": {}},
+        "one punch man": {"total_chapters": 250, "anilist_status": "RELEASING",
+                          "volumes": {}}}}))
     saved = comicfacts.VOLUME_MAP_PATH
     comicfacts.VOLUME_MAP_PATH = map_path
     check("the larger of AniList and the shelf wins (111, not 108)",
           comicfacts.ceiling_for("One Piece") == 111)
     check("an unknown series has no ceiling",
           comicfacts.ceiling_for("Nothing Here") is None)
+    check("a FINISHED series' chapter total is a bound",
+          comicfacts.chapter_ceiling_for("Jujutsu Kaisen") == (272, True))
+    check("an ONGOING series has no chapter bound",
+          comicfacts.chapter_ceiling_for("One Punch Man") == (None, False))
+    check("an unknown series has no chapter bound",
+          comicfacts.chapter_ceiling_for("Nothing Here") == (None, False))
     comicfacts.VOLUME_MAP_PATH = saved
 finally:
     tmp.cleanup()
@@ -162,6 +172,11 @@ try:
         plan_for(chap_only, "Comics/Manga/One Piece/One Piece c1133.cbz"), str(root))
     check("a chapter-only source files into the flat master",
           ch_ok.get("media_type") == "comic")
+    # The canonical member NAME resolves into the franchise even though it is the row's
+    # VALUE, not a key: `Ace's Story` must not become a top-level folder again.
+    check("a canonical member name resolves into the master",
+          str(library.resolve_comic_folder("Ace's Story", "manga")) ==
+          str(root / "Manga" / "One Piece" / "Ace's Story"))
     # A source that NAMES another series at a franchise root is still refused.
     sw = root / "Star Wars Comics"
     cbz(sw / "Star Wars v01.cbz", ["Star Wars/001.png"])
@@ -182,6 +197,45 @@ try:
         plan_for(src, "Comics/Manga/One Piece/One Piece v1176.cbz"), str(root))
     check("no persisted ceiling -> no refusal (fail open)",
           open_ok.get("media_type") == "comic")
+
+    # A destination that names ONLY the marker has no identity (`c1151.cbz` beside
+    # `One Piece c1151.cbz`, 2026-09-20). Refused unless the series is in the name.
+    comicfacts.VOLUME_MAP_PATH = root / "map.json"
+    comicfacts.VOLUME_MAP_PATH.write_text(json.dumps({"version": 1, "series": {
+        "one piece": {"total_volumes": 111, "shelf_ceiling": 111, "volumes": {}}}}))
+    bare_src = cbz(root / "Mashle c1151.cbz", ["1151-001.png"])
+    bare = None
+    try:
+        library.validate_plan(
+            {"media_type": "comic", "title": "Mashle", "year": 2020,
+             "files": [{"src": str(bare_src),
+                        "dst_rel": "Comics/Manga/Mashle/c1151.cbz"}]}, str(root))
+    except library.PlanError as exc:
+        bare = str(exc)
+    check("a bare-marker destination is refused", bare and "marker" in bare)
+
+    # A chapter above a FINISHED series' total cannot be that series'. The cached
+    # AniList facts are the bound; an ONGOING series has no bound.
+    jjk_src = cbz(root / "Chapter 1093 v2.cbz", ["1093-001.png"])
+    comicfacts.VOLUME_MAP_PATH.write_text(json.dumps({"version": 1, "series": {
+        "jujutsu kaisen": {"total_chapters": 272, "anilist_status": "FINISHED",
+                           "volumes": {}}}}))
+    wrong = None
+    try:
+        library.validate_plan(
+            plan_for(jjk_src,
+                     "Comics/Manga/Jujutsu Kaisen/Jujutsu Kaisen c1093.cbz"), str(root))
+    except library.PlanError as exc:
+        wrong = str(exc)
+    check("a chapter above a finished series' total is refused",
+          wrong and "FINISHED series of 272" in wrong)
+    comicfacts.VOLUME_MAP_PATH.write_text(json.dumps({"version": 1, "series": {
+        "jujutsu kaisen": {"total_chapters": 272, "anilist_status": "RELEASING",
+                           "volumes": {}}}}))
+    ongoing = library.validate_plan(
+        plan_for(jjk_src, "Comics/Manga/Jujutsu Kaisen/Jujutsu Kaisen c1093.cbz"), str(root))
+    check("an ongoing series has no chapter bound (fail open)",
+          ongoing.get("media_type") == "comic")
     comicfacts.VOLUME_MAP_PATH = saved_map
 
     # Grey superseding a coloured shelf file is refused. The grey copy is filed at its
@@ -275,9 +329,13 @@ try:
     }}
     try:
         found = rmm.candidates(series="One Piece")
+        # The renamed file MUST keep the series in its name: the first cut wrote a bare
+        # `c1078.cbz`, and those bare markers are the junk the owner found in the shelf
+        # on 2026-09-20 (the repair created them).
         check("only the v-mislabels are candidates",
               sorted(f[2] for f in found) ==
-              ["Comics/Manga/One Piece/c1078.cbz", "Comics/Manga/One Piece/c1176.cbz"])
+              ["Comics/Manga/One Piece/One Piece c1078.cbz",
+               "Comics/Manga/One Piece/One Piece c1176.cbz"])
         superseded, purged, planned, logged = [], [], [], []
         saved_sp, saved_rp, saved_rpl = (library.supersede_paths, __import__("dbhook").record_purge,
                                          __import__("dbhook").record_plan)
@@ -300,9 +358,9 @@ try:
               sorted(superseded) == ["Comics/Manga/One Piece/One Piece v1078.cbz",
                                      "Comics/Manga/One Piece/One Piece v1176.cbz"])
         check("the DB purge mirror saw the old paths", sorted(purged) == sorted(superseded))
-        check("the new cNNNN files exist with bytes",
-              (shelf / "c1078.cbz").stat().st_size > 0
-              and (shelf / "c1176.cbz").stat().st_size > 0)
+        check("the new cNNNN files exist with bytes and the series name",
+              (shelf / "One Piece c1078.cbz").stat().st_size > 0
+              and (shelf / "One Piece c1176.cbz").stat().st_size > 0)
         check("the volume file was left alone", (shelf / "One Piece v001.cbz").exists())
         check("the renames are recorded for the next reader", len(logged) == 2)
     finally:

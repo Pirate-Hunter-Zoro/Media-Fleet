@@ -73,7 +73,16 @@ def candidates(series=None, series_dir=None):
             if not ch:
                 continue
             ext = Path(name).suffix.lower() or ".cbz"
-            new_rel = f"{rel.rsplit('/', 1)[0]}/c{int(ch):04d}{ext}"
+            # KEEP THE SERIES IN THE NAME. The first cut wrote `c{ch:04d}` alone, so the
+            # seven `vNNNN` mislabels became `c1078.cbz`..`c1176.cbz` with no series --
+            # exactly the bare markers the owner found beside their canonical copies on
+            # 2026-09-20 (and the repair's own output created them). Replace the volume
+            # marker in the stem, and prefix the series label when nothing else names it.
+            stem = Path(name).stem
+            newstem = dbhook._VOL.sub(f"c{int(ch):04d}", stem, count=1).strip()
+            if library._BARE_MARKER_STEM.match(newstem):
+                newstem = f"{label.strip()} {newstem}".strip()
+            new_rel = f"{rel.rsplit('/', 1)[0]}/{newstem}{ext}"
             if new_rel == rel or _abs(new_rel) is not None:
                 continue
             out.append((label, rel, new_rel, int(ch), colored))

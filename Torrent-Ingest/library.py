@@ -193,6 +193,14 @@ def comic_franchise(name, kind):
         members = {normalize_folder_name(k): v for k, v in (fr.get("members") or {}).items()}
         if key in members:
             return fr, members[key]
+        # The canonical member NAME is itself an alias. The table's values are what the
+        # folders are called (`Ace's Story`), and a drop or a prompt may use that name
+        # rather than the owner's longer listing — matching only the keys sent
+        # `resolve_comic_folder("Ace's Story")` to None and would have let the model
+        # file a new member at the top level, splitting the franchise again.
+        values = {normalize_folder_name(v): v for v in members.values() if v}
+        if key in values:
+            return fr, values[key]
     for fr in defs:                       # then prefix fallback (nests under the master)
         members = {normalize_folder_name(k): v for k, v in (fr.get("members") or {}).items()}
         for member in members:
@@ -1247,10 +1255,21 @@ def _reject_title_numbering(files, title_map):
             continue
         if not exp:
             continue
-        try:
-            got = (int(f.get("season")), int(f.get("episode")))
-        except (TypeError, ValueError):
-            got = None
+        # The DESTINATION is what gets filed, so that is what is checked. The optional
+        # `season`/`episode` fields are the model's own annotation and are routinely the
+        # release's numbers (or absent); reading them rejected correct plans on
+        # 2026-09-20 -- the model put `S01E06 -> S01E01.mp4`, the guard compared the
+        # FIELDS `(1, 6)` against the map's `(1, 1)` and rejected its own computed slot.
+        got = None
+        dm = re.search(r"Season\s+(\d+)/.*?S(\d+)E(\d+)",
+                       str(f.get("dst_rel") or ""))
+        if dm:
+            got = (int(dm.group(2)), int(dm.group(3)))
+        if got is None:
+            try:
+                got = (int(f.get("season")), int(f.get("episode")))
+            except (TypeError, ValueError):
+                got = None
         if got != tuple(exp):
             raise PlanError(
                 f"file[{idx}] {src_p.name!r}: this release's `S{m.group(1)}E{m.group(2)}` "
@@ -2429,6 +2448,13 @@ def _reject_comic_at_franchise_root(files):
                 f"it actually is, creating a new one if this series has none yet.")
 
 
+# A filename stem that is ONLY a marker (`c1151`, `v001`, `d1078`, `c1151.5`): no
+# series name, so nothing on the shelf or in the reader can place it. Refused at plan
+# time (10.5c follow-up, 2026-09-20) and purged as a duplicate by the reconciler.
+_BARE_MARKER_STEM = re.compile(
+    r"^(?:c|ch|chapter|v|vol|volume|d)\.?\s*\d{1,5}(?:[.\-]\d{1,4})?$", re.IGNORECASE)
+
+
 def _comic_marker(name):
     """`("volume"|"chapter", number)` a comic filename claims, or None."""
     m = re.search(r"\bv\.?\s*(\d{1,4})\b", name, re.IGNORECASE)
@@ -2487,6 +2513,34 @@ def _reject_manga_mislabels(plan, files):
         if marker is None or marker[0] not in ("volume", "chapter"):
             continue
         mtype, number = marker
+        # A destination that names ONLY the marker carries no identity. `c1151.cbz`
+        # sat beside `One Piece c1151.cbz` (2026-09-20) and the shelf read it as a
+        # second, nameless series member: unindexable by the reader, un-purgeable by
+        # the reconciler's series grouping, and the owner's complaint starts there.
+        if _BARE_MARKER_STEM.match(dst.stem):
+            raise PlanError(
+                f"file[{idx}] destination {dst.name!r} names only the chapter/volume "
+                f"marker and not the series. A comic destination must carry the series "
+                f"name (`<Series> c{number:04d}.cbz` / `<Series> v{number:03d}.cbz`); a "
+                f"bare marker is an orphan file the shelf and the reader cannot place.")
+        # A chapter number above a FINISHED series' chapter total cannot belong to that
+        # series. `Chapter 1093.zip` was filed as `Jujutsu Kaisen c1093.cbz`; Jujutsu
+        # Kaisen ended at 271 chapters, so the number itself proves the wrong series
+        # (it is One Piece's chapter). ONGOING series are exempt -- their total lags
+        # their latest chapter and a bound there would refuse real work.
+        if mtype == "chapter":
+            for cand in _comic_series_candidates(str(dst)):
+                total, finished = comicfacts.chapter_ceiling_for(cand)
+                if not finished or not total:
+                    continue
+                if number > total:
+                    raise PlanError(
+                        f"file[{idx}] {Path(f.get('src') or '').name!r} is filed as "
+                        f"c{number:04d} under {cand!r}, which is a FINISHED series of "
+                        f"{total} chapter(s) -- a chapter above the final number cannot "
+                        f"be one of its own. This is a different series' chapter (check "
+                        f"the number against the series that actually reaches it).")
+                break
         facts = None
         try:
             src = f.get("src")

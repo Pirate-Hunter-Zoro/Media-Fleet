@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -175,10 +176,25 @@ def _kind(rel: str, name: str):
     m = dbhook._VOL.search(name)
     if m:
         return "volume", int(m.group(1)), colored
+    # A fractional chapter (`c1151.5`) is NOT chapter 1151; without this the two
+    # collapsed into one number and the duplicate rule kept the wrong copy.
+    m = re.search(r"\b(?:c|ch|chapter|chap)\.?\s*(\d{1,4})\.(\d{1,2})\b",
+                  name, re.IGNORECASE)
+    if m:
+        return "chapter", float(f"{m.group(1)}.{m.group(2)}"), colored
     m = dbhook._CH.search(name) or dbhook._C_BARE.search(name) or dbhook._HASH.search(name)
     if m:
         return "chapter", int(m.group(1)), colored
     return None
+
+
+def _chapfmt(number) -> str:
+    """`c1151` / `c1151.5` for a chapter number that may be fractional."""
+    try:
+        n = float(number)
+    except (TypeError, ValueError):
+        return f"c{number}"
+    return f"c{int(n):04d}" if n.is_integer() else f"c{n:g}"
 
 
 def series_label_for_rel(rel_dir: str) -> str:
@@ -190,8 +206,15 @@ def series_label_for_rel(rel_dir: str) -> str:
     evidence. The chain ("Rurouni Kenshin Restoration") is what names the actual series,
     and it is the same longest-join `dbhook._comic_candidates` already uses.
     """
-    parts = str(rel_dir).split("/")
-    return " ".join(p for p in parts[2:] if p) or (parts[-1] if parts else "")
+    parts = [p for p in str(rel_dir).split("/")[2:] if p]
+    # A franchise's own series lives under a sub-folder named for itself once the
+    # franchise layout is in place (`Comics/Manga/One Piece/One Piece/`). The doubled
+    # leaf is ONE series, not a series called "One Piece One Piece" -- without this the
+    # nested files formed a separate label with no volume map, so the reconciler could
+    # never see that the master's volumes cover them (measured 2026-09-20).
+    if len(parts) >= 2 and _norm(parts[-1]) == _norm(parts[-2]):
+        parts = parts[:-1]
+    return " ".join(parts) or (parts[-1] if parts else "")
 
 
 def owned_manga(series: str | None = None, series_dir: str | None = None) -> dict:
@@ -266,13 +289,41 @@ def owned_manga(series: str | None = None, series_dir: str | None = None) -> dic
 
 # --- decisions (pure; the tests exercise this directly) ----------------------
 
+def _chapter_winner(label: str, rels: list) -> str:
+    """The copy of a duplicated chapter to keep: canonical name first, then shallower path.
+
+    `c1151.cbz` beside `One Piece c1151.cbz` (and a third inside a nested `One Piece/`
+    folder) is one chapter in three places. The copy whose stem names the series is the
+    shelf's convention and the one the reader indexes; among canonical copies the one
+    nearest the series root wins. Deletion still goes through the reconciler's own
+    `supersede_paths`, so every purge is the usual verified path.
+    """
+    leaf = _norm(label)
+
+    def score(item):
+        rel = item[0]
+        name = rel.rsplit("/", 1)[-1]
+        stem = name.rsplit(".", 1)[0]
+        canonical = 1 if leaf and _norm(stem).startswith(leaf) else 0
+        return (canonical, -len(rel.split("/")))
+
+    return max(rels, key=score)[0]
+
+
 def plan_decisions(series: str, owned: dict, entry: dict | None,
-                   policy: str, log=None) -> tuple[list, list]:
+                   policy: str, log=None, chapter_ceiling: int | None = None,
+                   global_cover: dict | None = None) -> tuple[list, list]:
     """What would be purged, and what is kept with a reason. Pure and deterministic.
 
     `owned` is `{rel: (mtype, number, colored)}` from `owned_manga`; every rel in it is
     present (that is what enumeration means). Returns `(purges, keeps)` where `keeps` is a
     list of `(rel, reason)`.
+
+    `chapter_ceiling` is the series' total chapter count when it is FINISHED/CANCELLED
+    (computed from the persisted map); `global_cover` maps a chapter number to the
+    `(series, volume)` that covers it anywhere on the shelf. Together they handle a
+    chapter filed into the WRONG series: a number above this series' final chapter that
+    another series' owned volume covers is a redundant copy of that volume and goes.
     """
     purges, keeps = [], []
 
@@ -308,6 +359,25 @@ def plan_decisions(series: str, owned: dict, entry: dict | None,
             for rel, _c in rels:
                 keep(rel, "keep rule: keep_chapters")
             continue
+        # A number above this FINISHED series' final chapter is not this series'. If an
+        # owned volume elsewhere on the shelf covers the number, the file is a redundant
+        # copy of that volume (the Jujutsu Kaisen c1093 case: Jujutsu Kaisen ends at 271
+        # and One Piece v108 owns c1089-1100). If nothing covers it, it is a misfile to
+        # report, never a silent purge.
+        if chapter_ceiling and number > chapter_ceiling:
+            gc = (global_cover or {}).get(number)
+            if gc and _norm(gc[0]) != _norm(series):
+                for rel, _c in rels:
+                    purges.append(rel)
+                    if log:
+                        log(f"{series}: purging {_chapfmt(number)} ({rel}); above "
+                            f"{series}'s {chapter_ceiling} chapter(s) and covered by "
+                            f"{gc[0]} v{gc[1]:02d}")
+                continue
+            for rel, _c in rels:
+                keep(rel, f"above {series}'s {chapter_ceiling} chapter(s) and not "
+                          f"covered elsewhere; true series unknown")
+            continue
         # The volume copies that will SURVIVE the colored-supersedes-grey rule above:
         # a number held in both editions is covered by its coloured copy only.
         def _keepers(rows):
@@ -330,23 +400,38 @@ def plan_decisions(series: str, owned: dict, entry: dict | None,
             if number in chset:
                 cover = (vnum, bool(keepers[0][1]))
                 break
-        for rel, ch_colored in rels:
-            if cover is not None:
+        if cover is not None:
+            for rel, ch_colored in rels:
                 # Owner rule (10.5d): a coloured chapter may only be superseded by a
                 # coloured volume. A grey chapter covered by any volume, and a coloured
                 # chapter covered by a coloured volume, are redundant and go.
                 if ch_colored and not cover[1]:
-                    keep(rel, f"colored chapter c{number:04d} covered only by grey "
+                    keep(rel, f"colored chapter {_chapfmt(number)} covered only by grey "
                               f"v{cover[0]:02d}; color would be lost")
                     continue
                 purges.append(rel)
                 if log:
-                    log(f"{series}: purging chapter c{number:04d} ({rel}); "
+                    log(f"{series}: purging chapter {_chapfmt(number)} ({rel}); "
                         f"covered by v{cover[0]:02d}")
-            elif unknown_volumes:
-                keep(rel, f"volume map unknown for v{unknown_volumes}; keep")
-            else:
-                keep(rel, "not covered by any owned volume")
+            continue
+        # Several files for one uncovered chapter are copies of the same chapter; keep
+        # the canonical one and purge the rest (bare `c1151.cbz`, a nested-folder twin).
+        if len(rels) > 1:
+            winner = _chapter_winner(series, rels)
+            for rel, _c in rels:
+                if rel == winner:
+                    keep(rel, "duplicate chapter: canonical copy kept")
+                    continue
+                purges.append(rel)
+                if log:
+                    log(f"{series}: purging duplicate chapter {_chapfmt(number)} ({rel}); "
+                        f"keeping {winner}")
+            continue
+        rel = rels[0][0]
+        if unknown_volumes:
+            keep(rel, f"volume map unknown for v{unknown_volumes}; keep")
+        else:
+            keep(rel, "not covered by any owned volume")
     return sorted(set(purges)), keeps
 
 
@@ -356,6 +441,33 @@ def reconcile(series: str | None = None, series_dir: str | None = None,
               apply: bool = False, allow_ai: bool = False, log_fn=print) -> dict:
     """Judge every manga series that holds both tiers. Dry run unless `apply`."""
     owned_all = owned_manga(series=series, series_dir=series_dir)
+    # chapter -> (series, volume) across EVERY series with a cached map, so a chapter
+    # filed into the wrong series can still be recognised as a redundant copy of the
+    # volume that owns it. The index is deliberately built from the WHOLE shelf even for
+    # a --series run: filtering here is how a Jujutsu Kaisen sweep missed that One
+    # Piece's v108 covers the c1093 sitting in the wrong folder. Cached only: the sweep
+    # never hydrates a map on the network.
+    index_all = owned_manga() if (series is not None and series_dir is None) else owned_all
+    global_cover: dict = {}
+    entries: dict = {}
+    for label, files in index_all.items():
+        e = mvm.get(label, allow_network=False, allow_ai=allow_ai)
+        entries[label] = e
+        if not e:
+            continue
+        vols: dict = {}
+        for rel, (k, n, c) in files.items():
+            if k == "volume":
+                vols.setdefault(n, []).append((rel, c))
+        for vnum, rows in vols.items():
+            keepers = [r for r in rows if r[1]] or rows
+            if len(keepers) != 1 or not mvm.volume_allowed(e, vnum):
+                continue
+            for ch in (mvm.known_volume(e, vnum) or []):
+                try:
+                    global_cover.setdefault(int(ch), (label, vnum))
+                except (TypeError, ValueError):
+                    continue
     out = {"series": 0, "purged": 0, "kept": 0, "no_map": 0, "actions": []}
     for label, files in sorted(owned_all.items()):
         kinds = {k for _r, (k, _n, _c) in files.items()}
@@ -366,14 +478,20 @@ def reconcile(series: str | None = None, series_dir: str | None = None,
             continue
         norm = _norm(label)
         policy = policy_for(label)
-        entry = mvm.get(label, allow_network=False, allow_ai=allow_ai)
+        entry = entries.get(label)
         if entry is None:
             enqueue_refresh(label, "reconcile: no cached map")
             out["no_map"] += 1
             log_fn(f"{label}: no cached volume map; refresh queued, nothing purged")
             continue
         out["series"] += 1
-        purges, keeps = plan_decisions(label, files, entry, policy, log=log_fn)
+        total = entry.get("total_chapters")
+        status = str(entry.get("anilist_status") or "").upper()
+        ceiling = total if (isinstance(total, int) and total > 0
+                            and status in ("FINISHED", "CANCELLED")) else None
+        purges, keeps = plan_decisions(label, files, entry, policy, log=log_fn,
+                                       chapter_ceiling=ceiling,
+                                       global_cover=global_cover)
         out["kept"] += len(keeps)
         if not purges:
             log_fn(f"{label}: {len(keeps)} chapter(s) kept, nothing to purge")

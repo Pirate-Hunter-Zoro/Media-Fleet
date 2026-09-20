@@ -711,7 +711,14 @@ _TITLE_MAP_MIN_ENTRIES = 4
 
 
 def release_title_entries(release_files):
-    """`[(rel, season, episode, title)]` for files named `SxxEyy (Title)`, or []."""
+    """`[(rel, season, episode, title)]` for files named `SxxEyy (Title)`, or [].
+
+    Bracket-only ON PURPOSE. A dash fallback (`SxxEyy - Title.ext`) was tried and
+    replayed: it swept up multi-episode markers (`S03E49-E40 - ...`), scene tags in
+    the title, and `S01E24-25-SP` shapes, producing 54 would-be rejections across
+    three historical plans. The bracket form is the reliable witness; anything else
+    is left to the model, which is the safe direction.
+    """
     out = []
     for item in release_files or ():
         rel = str(item[0] if isinstance(item, (tuple, list)) else item)
@@ -750,7 +757,7 @@ def _title_norm(text):
     return " ".join(w for w in re.sub(r"[^a-z0-9]+", " ", s).split())
 
 
-_RATIO_MATCH_MIN = 0.85
+_RATIO_MATCH_MIN = 0.84
 _RATIO_MATCH_MARGIN = 0.06
 
 

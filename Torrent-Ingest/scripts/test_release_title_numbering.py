@@ -118,6 +118,14 @@ try:
         plan_at("Shows/The Smurfs (1981)/Season 01/The Smurfs (1981) - S01E31.mp4",
                 1, 31), str(root), title_map=fmap)
     check("the computed slot is accepted", ok.get("title") == "The Smurfs")
+    # The DESTINATION decides. The same correct placement with the release's numbers
+    # left in the model's `season`/`episode` fields must also be accepted -- reading
+    # those fields rejected the harness's own computed slot live on 2026-09-20.
+    field_echo = plan_at(
+        "Shows/The Smurfs (1981)/Season 01/The Smurfs (1981) - S01E31.mp4", 1, 1)
+    ok2 = library.validate_plan(field_echo, str(root), title_map=fmap)
+    check("a correct destination with release-number fields is accepted",
+          ok2.get("title") == "The Smurfs")
     # An unmatched file is unconstrained (fail open).
     other = root / "The Smurfs S09E99 (Unknown Episode).mp4"
     other.write_bytes(b"x")

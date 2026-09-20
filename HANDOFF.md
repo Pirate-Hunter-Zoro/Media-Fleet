@@ -214,9 +214,9 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
 | Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
-| Mount | **One Piece is clean (measured 2026-09-20 08:10):** 197 shelf entries, **0 `vNNNN`**, 112 volume numbers **one edition each**, 61 chapters, **0 covered by an owned volume**. The reaper's 128-path batch completed (Media-Syncer resumed 07:57) — `verify_owner_report.py` reads **5 PASS, 0 FAIL, 1 PENDING** (the pending line is the Smurfs plan) |
-| `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; the queued purge's DB mirror completes via `dbhook.record_purge` from the reaper |
-| YacReader | open (Comics), hidden, 30-min self-update. The shelf it indexes reflects the repaired names as the purge drains; re-check `yacreader_rescan.py --files` after |
+| Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
+| `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
+| YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
 | In flight | The queued One Piece chapter drops are filing one by one through a provider-limited identify chain (429s on Gemini, empty text on some OpenRouter models). **The Smurfs `.torrent` was re-dropped 2026-09-20 08:00** (top level; no new download), record `downloading`; watch `state/tmp/6c413306…_identify.log` and the journal for the plan. Reaper batch complete (`reap.py` PID 1311; its next batch is separate) |
 | Parked re-drops | **Smurfs row 5 repaired live 2026-09-20 (session 2), fetch completing.** The run had three real defects, all now fixed and guarded: (a) the title map was computed against **TVMaze while Jellyfin scrapes TMDB** — 77 files were placed one slot away from the name the owner sees; (b) the intra-torrent collapse silently dropped 32 mapped files when an unmatched file's release number collided with a mapped file's computed slot; (c) **media_doctor's duplicate rule deleted the planner's `S01E01.mp4`-class files at 38 S01 slots**, because a same-stem pair shares ONE `.nfo` and the rule never asked the journal. Live repair: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten; the 30 dropped episodes + the 40 deleted S01 pack files are re-fetching from the pack's own torrent into `DirectIngest/` (see the `In flight` row). The old dvdrip S01 files now sit at their correct slots (E31 = The Smurfette) as the fallback content. |
 | Open work | The Smurfs re-fetch (70 files) is downloading from the swarm; when it lands, the 40 dvdrip S01 files are superseded through the mount and the drop files through the fixed pipeline. Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko's 8 blank plots were filled 2026-09-20 through `repair_metadata.py --no-ai` (0 blanks now). The free-AI upgrade (§10.10) is implemented. |
@@ -329,7 +329,12 @@ The matcher also gained a character-ratio pass with a part-digit rule
 (`Wild Side - pt1` -> `(1)`, pt2 -> `(2)`; a digitless query against several parts gets
 NO claim) and a collision-safe skeleton fallback: an unmatched file whose release number
 equals a matched file's computed slot is marked needs-mapping, never filed there.
-Replay: 14 titled-release plans in the journal, 0 contradictions.
+Replay: 15 titled-release plans in the journal, 0 contradictions. And
+`library._reject_title_numbering` now checks the DESTINATION slot, not the model's
+optional `season`/`episode` fields: on the re-fetch drop the model wrote the correct
+`S01E06 -> S01E01.mp4` while leaving `(1, 6)` in those fields, and the guard rejected
+its own computed slot (live, 2026-09-20). The fields are an annotation; the destination
+is what gets filed.
 
 **A same-stem duplicate is deleted only when the journal PROVES it is one.**
 `media_doctor._classify_slot_collision` asks `journal.source_titles()` (the source title
@@ -353,6 +358,37 @@ superseded. `journal.source_titles()` is shared by the doctor and `library`, so 
 file's identity follows it. Direct drops of 4+ videos are handed to `run_identify` as a
 RELEASE (`direct_ingest._release_files_for`), so the same pack cannot file one way
 through the torrent and another through `DirectIngest/`.
+
+### Shipped 2026-09-20 (session 2) — the manga shelf: bare markers, wrong-series chapters, franchise layout
+
+Owner report: odd One Piece chapters in Jujutsu Kaisen; covered repeats and bare
+`cNNNN.cbz` files in One Piece; a nested One Piece folder with more repeats; and
+`One Piece` + `One Piece - Ace's Story` should share a master. No hard-coded titles
+anywhere: every rule is a computed fact.
+
+* **`repair_manga_mislabels.py` created the bare markers.** Its rename wrote
+  `c{ch:04d}{ext}` alone, so the seven `vNNNN` mislabels became `c1078.cbz`..`c1176.cbz`
+  with no series. It now replaces the volume marker in the existing stem and prefixes
+  the series label when nothing else names it (`One Piece v1176.cbz` -> `One Piece
+  c1176.cbz`). `test_manga_mislabels.py` Part 5 pins it.
+* **`library.validate_plan` refuses a destination that names only the marker**
+  (`_BARE_MARKER_STEM`) and **a chapter above a FINISHED series' chapter total**
+  (`comicfacts.chapter_ceiling_for`, from the persisted AniList total + status; ONGOING
+  series have no bound). This is the guard that would have refused `Jujutsu Kaisen
+  c1093.cbz` at plan time. `manga_volume_map` now persists `anilist_status`.
+* **The reconciler learned duplicates, fractional chapters and wrong-series misfiles.**
+  Same-number chapter copies collapse to the canonical, shallowest one (`c1151.cbz` +
+  `c1151.5.cbz` no longer merge -- fractional chapters are distinct); a chapter above
+  its folder-series' FINISHED total that another series' owned volume covers is purged
+  as a redundant copy of that volume, otherwise reported. The coverage index is built
+  from the WHOLE shelf even for a `--series` run. `series_label_for_rel` collapses a
+  doubled master leaf, so `One Piece/One Piece/` is one series, not "One Piece One
+  Piece". `test_manga_chapter_reconcile.py` covers all four directions.
+* **The franchise layout is live**: `migrate_comics.sh --apply` moved 191 files
+  (verified 191/191) into `Manga/One Piece/One Piece/` and `Manga/One Piece/Ace's
+  Story/`, rewrote inventory/sync_state, and the empty old master/member folders were
+  removed. The table row is the generator's evidence-based one (`build_comic_franchises`
+  resolves it from the library; no title was typed in for this fix).
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 

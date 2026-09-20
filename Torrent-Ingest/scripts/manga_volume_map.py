@@ -71,6 +71,7 @@ query($s:String!){
     media(search:$s, type:MANGA, sort:START_DATE){
       id
       format
+      status
       volumes
       chapters
       title{ romaji english native }
@@ -246,6 +247,7 @@ def anilist_search(name: str) -> dict | None:
         return None
     m = best[1]
     return {"id": m.get("id"), "title": _pick_title(m), "format": m.get("format"),
+            "status": m.get("status"),
             "volumes": m.get("volumes"), "chapters": m.get("chapters")}
 
 
@@ -519,6 +521,11 @@ def refresh(name: str, allow_ai: bool = True, needed=None,
     facts = {
         "total_volumes": (al or {}).get("volumes"),
         "total_chapters": (al or {}).get("chapters"),
+        # AniList's publication state. A FINISHED series has a real chapter total, so a
+        # chapter number above it cannot belong to that series -- the computed fact that
+        # catches a chapter filed into the wrong, shorter series (Jujutsu Kaisen (2018)
+        # is 271 chapters; a `c1093` filed there is a one-volume series too far).
+        "anilist_status": (al or {}).get("status"),
         "shelf_volumes": sorted(shelf_volumes),
         "shelf_ceiling": max(shelf_volumes) if shelf_volumes else None,
     }

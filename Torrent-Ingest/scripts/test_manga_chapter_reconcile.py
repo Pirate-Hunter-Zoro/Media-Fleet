@@ -174,6 +174,47 @@ check("a colored chapter is purged by a colored volume",
       "Comics/Manga/Thing/Thing c0005.cbz" in purges7)
 
 print()
+print("=== duplicates, fractional chapters, and a chapter in the WRONG series ===")
+
+# `c1151.cbz` beside `One Piece c1151.cbz` and a nested twin: one chapter in three
+# places. The canonical, shallowest copy is kept; the rest go. `c1151.5` is a
+# DIFFERENT chapter and must not collapse into 1151.
+dupes = {
+    "Comics/Manga/One Piece/c1151.cbz": ("chapter", 1151, False),
+    "Comics/Manga/One Piece/One Piece c1151.cbz": ("chapter", 1151, False),
+    "Comics/Manga/One Piece/One Piece/One Piece c1151.cbz": ("chapter", 1151, False),
+    "Comics/Manga/One Piece/One Piece c1151.5.cbz": ("chapter", 1151.5, False),
+}
+p8, k8 = cvr.plan_decisions("One Piece", dupes, entry({}), "keep_volumes")
+check("the bare and nested duplicate chapters are purged",
+      set(p8) == {"Comics/Manga/One Piece/c1151.cbz",
+                  "Comics/Manga/One Piece/One Piece/One Piece c1151.cbz"})
+check("the canonical and the fractional chapter survive",
+      "Comics/Manga/One Piece/One Piece c1151.cbz" not in p8
+      and "Comics/Manga/One Piece/One Piece c1151.5.cbz" not in p8)
+
+# A chapter above a FINISHED series' total, covered by another series' volume, is a
+# redundant copy of that volume: Jujutsu Kaisen ends at 272; One Piece v108 owns
+# c1089-1100, so a `Jujutsu Kaisen c1093.cbz` is One Piece's chapter, already held.
+jjk = {"Comics/Manga/Jujutsu Kaisen/Jujutsu Kaisen c1093.cbz": ("chapter", 1093, False)}
+p9, _k9 = cvr.plan_decisions("Jujutsu Kaisen", jjk, entry({}), "keep_volumes",
+                             chapter_ceiling=272,
+                             global_cover={1093: ("One Piece", 108)})
+check("a chapter above a finished series' total covered elsewhere is purged",
+      p9 == ["Comics/Manga/Jujutsu Kaisen/Jujutsu Kaisen c1093.cbz"])
+p10, k10 = cvr.plan_decisions("Jujutsu Kaisen", jjk, entry({}), "keep_volumes",
+                              chapter_ceiling=272, global_cover={})
+check("without cover it is kept and reported, never guessed away",
+      p10 == [] and any("true series unknown" in r for _r, r in k10))
+p11, _k11 = cvr.plan_decisions("Jujutsu Kaisen", jjk, entry({}), "keep_volumes",
+                               chapter_ceiling=None,
+                               global_cover={1093: ("One Piece", 108)})
+check("no ceiling (ongoing/unknown series) refuses nothing", p11 == [])
+
+check("a doubled master leaf is ONE series label",
+      cvr.series_label_for_rel("Comics/Manga/One Piece/One Piece") == "One Piece")
+
+print()
 print("=== the shared supersede path deletes locally and queues the purge ===")
 
 tmp = Path(tempfile.mkdtemp(prefix="cvr-root-"))

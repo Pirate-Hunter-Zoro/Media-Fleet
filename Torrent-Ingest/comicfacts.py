@@ -341,6 +341,40 @@ def ceiling_for(series_label):
         return None
 
 
+def chapter_ceiling_for(series_label):
+    """`(total_chapters, finished)` for a series, or `(None, False)` (fail open).
+
+    THE FACT THAT CATCHES A CHAPTER IN THE WRONG SERIES. `Chapter 1093.zip` was filed as
+    `Jujutsu Kaisen c1093.cbz` (2026-09-20) -- but Jujutsu Kaisen ended at 271 chapters,
+    so 1093 cannot be one of its chapters; it is One Piece's. The total is a bound only
+    for a series AniList reports as FINISHED/CANCELLED: an ONGOING series (One Piece)
+    legitimately has chapters past its last collected volume, and refusing those would
+    reject the latest chapter every week. Unknown total or unknown status -> no bound.
+
+    Reads the persisted map directly, like `ceiling_for`, because `library.py` uses this
+    at plan-validation time.
+    """
+    try:
+        blob = json.loads(VOLUME_MAP_PATH.read_text(encoding="utf-8"))
+        series = blob.get("series") or {}
+        key = _norm_name(series_label)
+        entry = series.get(key)
+        if entry is None:
+            for k, v in series.items():
+                if _norm_name(k) == key:
+                    entry = v
+                    break
+        if not isinstance(entry, dict):
+            return None, False
+        total = entry.get("total_chapters")
+        status = str(entry.get("anilist_status") or "").upper()
+        if isinstance(total, int) and total > 0 and status in ("FINISHED", "CANCELLED"):
+            return total, True
+        return None, False
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return None, False
+
+
 def marker_from_name(name):
     """`("volume"|"chapter", int)` a filename claims, or None. Volume wins on `vNNNN`."""
     base = Path(str(name)).name
