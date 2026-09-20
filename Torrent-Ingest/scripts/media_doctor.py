@@ -1236,6 +1236,30 @@ def _journal_destinations():
     return out
 
 
+def _rel_from_library(path):
+    """A library-relative path for an absolute path under the mount or the SSD."""
+    p = str(Path(path))
+    for root in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
+        try:
+            return str(Path(p).resolve().relative_to(Path(root).resolve()))
+        except (ValueError, OSError):
+            continue
+    for marker in ("/MediaLibrary/", "/Media/"):
+        if marker in p:
+            return p.split(marker, 1)[-1]
+    return None
+
+
+def _journal_source_titles():
+    """{library-relative dst: episode title the plan that filed it came from}.
+
+    Thin wrapper over `journal.source_titles()` (the journal owns the cache and the
+    parse). See `_classify_slot_collision` for why a same-stem pair needs this witness.
+    """
+    import journal                                                     # noqa: PLC0415
+    return journal.source_titles()
+
+
 def _norm_title(t):
     return re.sub(r"[^a-z0-9]+", "", str(t or "").lower())
 
@@ -1355,6 +1379,60 @@ def _parse_span(name):
         return None
     s = int(m.group(1)); a = int(m.group(2)); b = int(m.group(3)) if m.group(3) else a
     return s, a, b
+
+
+def _classify_slot_collision(prev, v, season, episode):
+    """`(kind, detail, auto)` for two files claiming one SxxExx.
+
+    Three pieces of identity evidence, in order, and the verdict is only `auto` (a
+    mechanical keep-one/delete-one) when they agree the two files are the SAME episode:
+
+      1. each file's own `.nfo` span (`_nfo_covered_span`): different episodes is a
+         `misfiled_episode`, never a duplicate;
+      2. for SAME-STEM pairs there is one shared `.nfo`, which by definition cannot
+         separate them -- so the journal's source title per destination decides
+         (`_journal_source_titles`). A disagreement is a `misfiled_episode`;
+      3. anything unproven stays `duplicate_episode` with `auto=False`: reported, not
+         deleted.
+
+    The Smurfs (1981) loss of 2026-09-20 is the case: `S01E01.mkv` (content *The
+    Smurfette*) and `S01E01.mp4` (content *The Astrosmurf*, the plan's file) shared a
+    stem and a sidecar, the old rule kept the higher-ranked container and deleted the
+    plan's copy, and 38 episodes of the replacement pack were gone.
+    """
+    a_span = _nfo_covered_span(prev, _parse_span(Path(prev).name))
+    b_span = _nfo_covered_span(v, _parse_span(Path(v).name))
+    misfiled = [(pth, sp) for pth, sp in ((prev, a_span), (v, b_span))
+                if sp is not None and not _nfo_covers(sp, season, episode)]
+    if a_span and b_span and misfiled:
+        detail = "; ".join(
+            f"{Path(pth).name!r} is really S{sp[0]:02d}E{sp[1]:02d}"
+            for pth, sp in misfiled)
+        return ("misfiled_episode",
+                f"S{season:02d}E{episode:02d} has two files, but their own .nfo sidecars "
+                f"name DIFFERENT episodes -- {detail}. This is a placement fault, NOT a "
+                f"duplicate: re-file it, do not delete it.", False)
+    if Path(prev).stem != v.stem:
+        return ("duplicate_episode",
+                f"S{season:02d}E{episode:02d} covered by two files: "
+                f"{Path(prev).name!r} and {Path(v).name!r} (different stems; this is a "
+                f"judgment call, left for review)", False)
+    book = _journal_source_titles()
+    id_a = book.get(_rel_from_library(prev) or "")
+    id_b = book.get(_rel_from_library(v) or "")
+    if id_a and id_b and _norm_title(id_a) != _norm_title(id_b):
+        return ("misfiled_episode",
+                f"S{season:02d}E{episode:02d} has two same-stem files and one shared .nfo, "
+                f"so the sidecar cannot separate them; the ingest journal says "
+                f"{Path(prev).name!r} is {id_a!r} and {Path(v).name!r} is {id_b!r}. "
+                f"This is a placement fault, NOT a duplicate: re-file it, do not delete it.",
+                False)
+    auto = bool(id_a and id_b)
+    return ("duplicate_episode",
+            f"S{season:02d}E{episode:02d} covered by two files: "
+            f"{Path(prev).name!r} and {Path(v).name!r}"
+            + ("" if auto else " (identity not proven; left for review)"),
+            auto)
 
 
 def _filename_real_title(stem):
@@ -1677,33 +1755,9 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
             key = (s, n)
             if key in span_owner and span_owner[key] != v:
                 prev = span_owner[key]
-                # WHICH episode does each file say it is? A collision between two files
-                # whose own `.nfo`s name DIFFERENT episodes is not a duplicate at all --
-                # one of them is misfiled, and the fix is to re-file it, never to delete
-                # it. Saying "covered by two files" there invites exactly the deletion
-                # that would destroy the episode.
-                a_span = _nfo_covered_span(prev, _parse_span(Path(prev).name))
-                b_span = _nfo_covered_span(v, span)
-                # A file is MISFILED when its own `.nfo` says it does not cover the slot
-                # its filename claims -- judged against the file's whole span, so a
-                # legitimate multi-episode file is not accused of being two things at once.
-                misfiled = [(pth, sp) for pth, sp in ((prev, a_span), (v, b_span))
-                            if sp is not None and not _nfo_covers(sp, s, n)]
-                if a_span and b_span and misfiled:
-                    detail = "; ".join(
-                        f"{Path(pth).name!r} is really S{sp[0]:02d}E{sp[1]:02d}"
-                        for pth, sp in misfiled)
-                    add("misfiled_episode",
-                        f"S{s:02d}E{n:02d} has two files, but their own .nfo sidecars name "
-                        f"DIFFERENT episodes -- {detail}. This is a placement fault, NOT a "
-                        f"duplicate: re-file it, do not delete it.",
-                        auto=False, sev=3, files=[str(prev), str(v)])
-                else:
-                    same_stem = Path(prev).stem == v.stem
-                    add("duplicate_episode",
-                        f"S{s:02d}E{n:02d} covered by two files: "
-                        f"{Path(prev).name!r} and {v.name!r}",
-                        auto=same_stem, sev=2, files=[str(prev), str(v)])
+                kind, detail, auto = _classify_slot_collision(prev, v, s, n)
+                add(kind, detail, auto=auto, sev=3 if not auto else 2,
+                    files=[str(prev), str(v)])
             else:
                 span_owner.setdefault(key, v)
 

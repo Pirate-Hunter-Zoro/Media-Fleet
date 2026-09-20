@@ -700,7 +700,12 @@ def serial_numbering_block(content_root, release_files=None, wave_names=None):
 # release's own episode TITLES against the provider's list, states it in the prompt as
 # fact, and `validate_plan` refuses a plan that contradicts it. Fail open everywhere.
 
-_TITLE_TAG_RE = re.compile(r"[Ss](\d{1,3})[Ee](\d{1,4})\s*[\(\[]([^\)\]]{2,90})[\)\]]")
+_TITLE_TAG_RE = re.compile(
+    # The closing bracket may be missing: real packs ship `...(I Smurf to All Trees.mp4`
+    # (measured on the Smurfs pack), and dropping the whole title over one lost paren
+    # leaves the file unmapped and its release number colliding with a computed slot.
+    r"[Ss](\d{1,3})[Ee](\d{1,4})\s*[\(\[]([^\)\]]{2,90}?)(?:[\)\]]|\.(?:mp4|mkv|avi|m4v|mov)$)",
+    re.I)
 _TITLE_MAP_MIN_FRACTION = 0.6
 _TITLE_MAP_MIN_ENTRIES = 4
 
@@ -725,31 +730,70 @@ def _title_tokens(text):
             if len(w) > 2}
 
 
+_PART_RE = re.compile(r"(?:^|\s)(?:pt|part)\.?\s*(\d+)\b|\s*\((\d+)\)\s*$", re.I)
+
+
+def _title_norm(text):
+    """A comparison string with part markers canonicalized.
+
+    `A Smurf on the Wild Side - pt1` and `Smurf On The Wild Side (1)` must be the same
+    string, or a two-part story's titles never match the guide's names (measured on the
+    Smurfs pack). Digits survive; everything else is lowercased words.
+    """
+    s = str(text or "").lower()
+
+    def _part(m):
+        n = m.group(1) or m.group(2)
+        return f" part {n}" if n else " "
+
+    s = _PART_RE.sub(_part, s)
+    return " ".join(w for w in re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+_RATIO_MATCH_MIN = 0.85
+_RATIO_MATCH_MARGIN = 0.06
+
+
 def _match_titles(entries, guide):
-    """`{(season, episode): (guide_season, guide_episode)}` for uniquely matched titles."""
+    """`{(season, episode): (guide_season, guide_episode)}` for uniquely matched titles.
+
+    Three passes, each stricter about ambiguity than the last: exact token set, then a
+    character-ratio match for the spelling variants real releases carry ("Smurf Colored
+    Glasses" vs the guide's "Smurfed Coloured Glasses", "Smurphony In 'C'" vs
+    "Smurphony in 'C'"), and no claim at all on a near-tie. The 2026-09-20 Smurfs run
+    is why the ratio pass exists: the token matcher missed *Smurf Colored Glasses*, its
+    release number then collided with a matched file's computed slot, and the plan
+    collapse destroyed the mapped copy at 32 destinations.
+    """
     by_words = []
     for e in guide or ():
         name = str(e.get("name") or "")
         if not name:
             continue
         try:
-            by_words.append((_title_tokens(name), int(e["season"]), int(e["number"]),
-                             name))
+            by_words.append((_title_tokens(name), _title_norm(name),
+                             int(e["season"]), int(e["number"]), name))
         except (KeyError, TypeError, ValueError):
             continue
+    # A guide title carried by more than one episode (clip shows, "The Smurfette"
+    # remakes) is not an exact identity; those fall through to the ratio pass, where
+    # the closest spelling and the query's own part digit decide.
+    norm_count = {}
+    for _gt, gnorm, _gs, _ge, _gn in by_words:
+        norm_count[gnorm] = norm_count.get(gnorm, 0) + 1
     claims = {}
     for _rel, rs, re_, title in entries:
         toks = _title_tokens(title)
         if not toks:
             continue
         hit = None
-        for gtoks, gs, ge, _gname in by_words:
-            if toks == gtoks:
+        for gtoks, gnorm, gs, ge, _gname in by_words:
+            if toks == gtoks and norm_count.get(gnorm, 0) == 1:
                 hit = (gs, ge)
                 break
         if hit is None:
             best = None
-            for gtoks, gs, ge, _gname in by_words:
+            for gtoks, _gnorm, gs, ge, _gname in by_words:
                 if not gtoks:
                     continue
                 overlap = len(toks & gtoks)
@@ -762,6 +806,34 @@ def _match_titles(entries, guide):
                         break
             if best is not None:
                 hit = (best[1], best[2])
+        if hit is None:
+            import difflib as _difflib
+            norm = _title_norm(title)
+            scored = sorted(((_difflib.SequenceMatcher(None, norm, gnorm).ratio(), gs, ge,
+                              gnorm)
+                             for _gt, gnorm, gs, ge, _gn in by_words if gnorm),
+                            key=lambda x: -x[0])
+            if scored and scored[0][0] >= _RATIO_MATCH_MIN:
+                top = scored[0]
+                # The parts of a multi-part story are the same title modulo their digit
+                # ("Wild Side (1)/(2)"); a character ratio cannot separate them, but the
+                # query's own digit can, so those candidates do not count as a runner-up.
+                # A digitless query against several parts is genuinely undecidable
+                # (`Smurfs that Time Forgot` vs (1)/(2)/(3)) and gets NO claim -- the
+                # partless case must be resolved by a human or the model, never guessed.
+                base = re.sub(r"\d+", "#", top[3])
+                same_base = [x for x in scored
+                             if re.sub(r"\d+", "#", x[3]) == base]
+                if len(same_base) > 1 and not re.search(r"\d", norm):
+                    hit = None
+                else:
+                    second = 0.0
+                    for score, _gs, _ge, gnorm in scored[1:]:
+                        if re.sub(r"\d+", "#", gnorm) != base:
+                            second = score
+                            break
+                    if top[0] - second >= _RATIO_MATCH_MARGIN:
+                        hit = (top[1], top[2])
         if hit is None:
             continue
         key = (rs, re_)
@@ -779,25 +851,50 @@ def _match_titles(entries, guide):
     return claims
 
 
-def release_title_map(content_path, release_files, show_hint=None):
+def _guide_for(title, tmdb_id=None):
+    """The episode list the title map must be computed against, or None.
+
+    TMDB first when the show's id is known: that is the provider Jellyfin scrapes, and
+    the two disagree on real season numbering (The Smurfs S07: TVMaze names E41
+    *Locomotive Smurfs*, TMDB -- and Jellyfin -- E43). A map computed against the wrong
+    provider files every title in that season one place away from the slot the owner
+    sees. `epguide` (TVMaze) stays the fallback for shows with no pinned id and for the
+    tests that stub it; both sides fail open.
+    """
+    if tmdb_id:
+        try:
+            import tmdbguide
+            guide = tmdbguide.episode_names(tmdb_id)
+        except Exception:                                            # noqa: BLE001
+            guide = None
+        if guide:
+            return guide, "TMDB"
+    if not title:
+        return None, ""
+    try:
+        import epguide
+        guide = epguide.episodes(title)
+    except Exception:                                                # noqa: BLE001
+        return None, ""
+    return (guide, "TVMaze") if guide else (None, "")
+
+
+def release_title_map(content_path, release_files, show_hint=None, tmdb_id=None):
     """Computed release->broadcast slots for a title-named pack, or {} (fail open).
 
     Only returned when it actually DIFFERS from the release's own numbering somewhere
     -- an ordinary pack whose numbers already match must not get a scary "this is not
     broadcast order" block. Needs at least `_TITLE_MAP_MIN_ENTRIES` titled files and
     `_TITLE_MAP_MIN_FRACTION` of them matching a unique guide episode.
+
+    `tmdb_id` (the pinned id of the existing show folder, when there is one) makes the
+    map agree with Jellyfin's own episode names; without it the TVMaze fallback is used.
     """
     entries = release_title_entries(release_files)
     if len(entries) < _TITLE_MAP_MIN_ENTRIES:
         return {}
     title = show_hint or _release_title_guess(content_path, release_files)
-    if not title:
-        return {}
-    try:
-        import epguide
-        guide = epguide.episodes(title)
-    except Exception:                                                # noqa: BLE001
-        return {}
+    guide, _provider = _guide_for(title, tmdb_id)
     if not guide:
         return {}
     claims = _match_titles(entries, guide)
@@ -810,12 +907,15 @@ def release_title_map(content_path, release_files, show_hint=None):
 
 
 def title_numbering_block(content_path, release_files, wave_names=None,
-                          max_rows=80):
+                          max_rows=80, tmdb_id=None):
     """The computed title->broadcast numbering, stated to the model as fact, plus the map.
 
     Returns `(block_text, map)`. Empty block when nothing can be computed.
     """
-    title_map = release_title_map(content_path, release_files)
+    title = _release_title_guess(content_path, release_files)
+    _guide, provider = _guide_for(title, tmdb_id)
+    title_map = release_title_map(content_path, release_files, show_hint=title,
+                                  tmdb_id=tmdb_id)
     if not title_map:
         return "", {}
     entries = release_title_entries(release_files)
@@ -847,10 +947,11 @@ def title_numbering_block(content_path, release_files, wave_names=None,
             "RELEASE-ORDER NUMBERING -- COMPUTED BROADCAST NUMBERING\n"
             "======================================================================\n"
             "This release's `SxxEyy` is its OWN catalogue order, not the broadcast\n"
-            "order. Each file's real episode title is in parentheses, and the harness\n"
-            "matched those titles against the provider's episode list; the broadcast\n"
-            "slots below are what each file IS. File each file at the computed slot;\n"
-            "do NOT copy the release's `SxxEyy` onto the destination.\n"
+            f"order. Each file's real episode title is in parentheses, and the harness\n"
+            f"matched those titles against {provider or 'the provider'}'s episode list --\n"
+            "the same list Jellyfin will show -- so the broadcast slots below are what\n"
+            "each file IS. File each file at the computed slot; do NOT copy the release's\n"
+            "`SxxEyy` onto the destination.\n"
             + more + "\n".join(rows) + "\n"), title_map
 
 
@@ -864,6 +965,7 @@ def plan_skeleton(release_files, title_map=None, title="", kind="show"):
     """
     files = []
     non_episode_videos = 0
+    parsed = []          # (entry, release_key, target|None)
     for item in release_files or ():
         rel = str(item[0] if isinstance(item, (tuple, list)) else item)
         entry = {"src": rel, "dst_rel": "", "season": None, "episode": None}
@@ -871,10 +973,27 @@ def plan_skeleton(release_files, title_map=None, title="", kind="show"):
         if m:
             s, e = int(m.group(1)), int(m.group(2))
             target = (title_map or {}).get((s, e))
-            entry["season"], entry["episode"] = target or (s, e)
+            parsed.append((entry, (s, e), target))
         elif Path(rel).suffix.lower() in config.VIDEO_EXTENSIONS:
             non_episode_videos += 1
         files.append(entry)
+    # An unmatched file's RELEASE number is not trusted once the pack is known to be
+    # reordered: when it lands on a slot a matched file already claims, the two entries
+    # would collide and the intra-torrent collapse would silently decide between them
+    # (the 2026-09-20 Smurfs loss: 32 mapped files dropped for their fallback twins).
+    # Mark exactly those `None` so the merge refuses to guess and the model fills them.
+    claimed = {tuple(t) for _e, _k, t in parsed if t}
+    unmatched = {}
+    for _e, key, target in parsed:
+        if not target:
+            unmatched[key] = unmatched.get(key, 0) + 1
+    for entry, key, target in parsed:
+        if target:
+            entry["season"], entry["episode"] = target
+        elif key in claimed or unmatched.get(key, 0) > 1:
+            entry["season"], entry["episode"] = None, None
+        else:
+            entry["season"], entry["episode"] = key
     if non_episode_videos:
         kind = "mixed"
     return {"media_type": kind, "title": title, "files": files}
@@ -909,6 +1028,47 @@ def _show_folder_for(title, year):
 
 
 _EPISODE_VIDEO_EXT = {}
+
+
+def _pinned_show_tmdb_id(title, year=None):
+    """The TMDB id the library folder for `title` pins in `tvshow.nfo`, or None.
+
+    The release->broadcast title map must be computed against the same episode list
+    Jellyfin shows. Jellyfin's list comes from the id in `tvshow.nfo`, so the pinned id
+    is read here and handed to `release_title_map`; a show that is not in the library
+    (or pins no id) falls back to TVMaze inside the guide helper. Fail open everywhere:
+    an unreadable folder or nfo is simply "no pinned id".
+    """
+    if not title:
+        return None
+    try:
+        base = config.MEDIAFS_MOUNT / "Shows"
+        if not base.is_dir():
+            base = config.SHOWS_ROOT
+        want = library.normalize_folder_name(title)
+        if not want:
+            return None
+        for p in base.iterdir():
+            if not p.is_dir():
+                continue
+            stem = p.name
+            m = re.search(r"\((\d{4})\)\s*$", stem)
+            folder_year = int(m.group(1)) if m else None
+            if library.normalize_folder_name(re.sub(r"\s*\(\d{4}\)\s*$", "", stem)) != want:
+                continue
+            if year and folder_year and abs(int(year) - folder_year) > 1:
+                continue
+            nfo = p / "tvshow.nfo"
+            try:
+                text = nfo.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            m = re.search(r"<tmdbid>\s*(\d+)\s*</tmdbid>", text)
+            if m:
+                return m.group(1)
+    except Exception:                                                # noqa: BLE001
+        return None
+    return None
 
 
 def merge_skeleton_plan(plan, skeleton, log_fn=None):
@@ -1295,7 +1455,7 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                     series_hint=None, kind=None, failure_context=None, sections=None,
                     release_files=None, title_block="", skeleton_path=None,
                     require_count=0, skeleton_slotted=0, skeleton_unslotted=0,
-                    unslotted_files=None):
+                    unslotted_files=None, tmdb_id=None):
     """The engineered base prompt plus this torrent's concrete context.
 
     With `series_hint`/`kind` (the settled case) the library digest is scoped to that one
@@ -1321,7 +1481,8 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
     titles = title_block or ""
     if not titles and release_files:
         titles, _tm = title_numbering_block(content_path, release_files,
-                                            wave_names=_listing_names(file_listing))
+                                            wave_names=_listing_names(file_listing),
+                                            tmdb_id=tmdb_id)
     provider = _provider_season_block(content_path, release_files)
     arcs = _arc_season_block(content_path, release_files)
     specials = _specials_metadata_block(content_path, release_files,
@@ -1757,16 +1918,23 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         release_abs.append(str(Path(content_path) / _rel))
     title_block, title_map = "", {}
     large = bool(release_files) and len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES
+    show_title = arc_title or _release_title_guess(content_path, release_files)
+    # The map must agree with the list Jellyfin SHOWS, so when the library already holds
+    # the show its pinned tmdb id decides whose episode names the titles are matched
+    # against (TMDB vs TVMaze disagree on real season numbering; see `_guide_for`).
+    show_tmdb_id = _pinned_show_tmdb_id(show_title) if release_files else None
     if release_files and not serial_map:
         # When a skeleton follows, the block needs only the RULE and a few examples:
         # the skeleton carries every computed row, and a 400-row block plus a 400-file
         # listing pushed the Smurfs prompt to 125 KB -- over every free provider's
         # ceiling that could not otherwise serve it.
         title_block, title_map = title_numbering_block(
-            content_path, release_abs or release_files, max_rows=20 if large else 80)
+            content_path, release_abs or release_files, max_rows=20 if large else 80,
+            tmdb_id=show_tmdb_id)
         if title_map:
             _note(f"identify: computed release->broadcast numbering for "
-                  f"{len(title_map)} file(s) from their own titles")
+                  f"{len(title_map)} file(s) from their own titles"
+                  + (f" (matched against TMDB {show_tmdb_id})" if show_tmdb_id else ""))
     # Above the size floor the model gets a deterministic skeleton and a coverage
     # contract, because one Write cannot hold a plan that size and the old run wrote a
     # 24-file prefix of 409 and stopped (10.9).
@@ -1776,8 +1944,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         try:
             skeleton_path.write_text(json.dumps(
                 plan_skeleton(release_abs or release_files, title_map,
-                              title=arc_title or _release_title_guess(content_path,
-                                                                      release_files)),
+                              title=show_title),
                 indent=1), encoding="utf-8")
             _note(f"identify: wrote a {len(release_files)}-file skeleton for "
                   f"{skeleton_path.name}")
@@ -1866,7 +2033,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                  require_count=len(require_files),
                                  skeleton_slotted=skeleton_slotted,
                                  skeleton_unslotted=skeleton_unslotted,
-                                 unslotted_files=unslotted_files)
+                                 unslotted_files=unslotted_files,
+                                 tmdb_id=show_tmdb_id)
         # Per ATTEMPT, not per run: confirm mode below narrows these for the one provider
         # that needs it, and leaking that narrowing to the next provider would cap a run
         # that has no reason to be capped.
@@ -1884,7 +2052,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                       require_count=len(require_files),
                                       skeleton_slotted=skeleton_slotted,
                                       skeleton_unslotted=skeleton_unslotted,
-                                      unslotted_files=unslotted_files)
+                                      unslotted_files=unslotted_files,
+                                      tmdb_id=show_tmdb_id)
             if len(compact) < len(prompt):
                 _note(f"  {provider_name}: full prompt is {len(prompt)} chars, over its "
                       f"measured {_TOO_LARGE_CEILING[provider_name]}; retrying with the "
@@ -2049,7 +2218,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                             require_count=len(require_files),
                             skeleton_slotted=skeleton_slotted,
                             skeleton_unslotted=skeleton_unslotted,
-                            unslotted_files=unslotted_files)
+                            unslotted_files=unslotted_files,
+                            tmdb_id=show_tmdb_id)
                         if len(compact) < len(prompt) and _fits(provider_name, compact):
                             _note(f"  {provider_name}: retrying with the "
                                   f"{'+'.join(sections)} digest only "

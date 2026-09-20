@@ -354,8 +354,25 @@ run "serial-numbered releases compute their numbering" \
 # Release-order packs (The Smurfs: `S01E01 (The Smurfette)`, broadcast S01E31) compute
 # their broadcast slots from their own titles, the harness hands a skeleton to large
 # plans, and a truncated plan's missing slice is named before the run ends (HANDOFF 10.9).
+# Part 5 pins that the map is computed against the provider JELLYFIN SHOWS (TMDB, the
+# pinned id), not TVMaze -- the two disagree on real numbering and a TVMaze map placed 77
+# Smurfs files in slots Jellyfin named differently.
 run "release-order titles compute broadcast numbering" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_release_title_numbering.py
+# A same-stem duplicate (`E07.mkv` + `E07.mp4`) shares ONE .nfo, so the sidecar can never
+# separate the files -- and on 2026-09-20 the duplicate rule deleted the planner's copy at
+# 38 Smurfs S01 slots while the older wrong-slot file survived. The journal's per-file
+# source title is the third witness: a disagreement is a placement fault to re-file, and
+# only a proven same-episode pair may be auto-deleted.
+run "duplicates are deleted only on proven identity (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_duplicate_identity.py
+# The same-slot collision scan read the SSD only, so an EVICTED episode (the Smurfs'
+# 40 pool-only dvdrip S01 files) was invisible and the replacement pack applied beside
+# it. The scan now reads the MOUNT too, and a colliding file whose journal-recorded
+# content is a DIFFERENT episode parks the release instead of silently dropping the
+# planned copy. Same episode and unknown identity keep the historical collapse.
+run "same-slot collisions see the mount and check identity (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_existing_collision_identity.py
 # A provider id must name the show the plan says it does (HANDOFF 10.3). TZ (2019) was
 # filed with the TMDB id of *Too Cute* and the wrong TVDB id, and the wrong id authored
 # the nfo and picked the cover. A contradicted id is stripped; a network error fails open.

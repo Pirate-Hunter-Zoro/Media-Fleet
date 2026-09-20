@@ -280,6 +280,16 @@ def update_record(info_hash, moves, rearm=(), wave_started_at=None):
             cf[key] = mapping[rel]
             renamed += 1
     rec["chunk_filed"] = cf
+    # The PLAN is the record of what the bytes are and where they went. Rewriting only
+    # `applied` left the plan pointing at vacated paths, and media_doctor's journal-identity
+    # check (and the coverage audits) read the plan -- a moved file then had no identity
+    # evidence at its new path.
+    moved_plan = 0
+    for f in (rec.get("plan") or {}).get("files") or []:
+        rel = f.get("dst_rel")
+        if rel in mapping:
+            f["dst_rel"] = mapping[rel]
+            moved_plan += 1
     moved_applied = 0
     for entry in rec.get("applied") or []:
         rel = _rel_from_abs(entry.get("dst") or "")
@@ -450,12 +460,15 @@ def _apply_mapping(moves, rearm, args):
         return 1
     _rewrite_state(moves, "remap")
     if args.record:
+        # A repair can move files from MORE THAN ONE record: the Smurfs shelf held the
+        # replacement pack's files (one record) beside the old dvdrip's S01 files (a
+        # second record), and both moved to their computed slots in one ordered pass.
         import time as _time                                            # noqa: PLC0415
-        counts = update_record(args.record, moves, rearm,
-                               wave_started_at=_time.time())
-        print(f"  journal {args.record[:12]}: {counts['renamed']} chunk_filed path(s), "
-              f"{counts['applied']} applied entr(ies), re-armed "
-              f"{len(counts['rearmed'])} index(es) {counts['rearmed']}")
+        for h in [x.strip() for x in str(args.record).split(",") if x.strip()]:
+            counts = update_record(h, moves, rearm, wave_started_at=_time.time())
+            print(f"  journal {h[:12]}: {counts['renamed']} chunk_filed path(s), "
+                  f"{counts['applied']} applied entr(ies), re-armed "
+                  f"{len(counts['rearmed'])} index(es) {counts['rearmed']}")
     if args.show_title or args.show:
         purged, recorded = update_db(moves, args.show_title or args.show)
         print(f"  library.db: {purged.get('superseded', 0)} row(s) superseded, "
@@ -472,7 +485,8 @@ def main():
     ap.add_argument("--from", dest="frm", type=int)
     ap.add_argument("--to", type=int)
     ap.add_argument("--mapping", help="JSON list of {old,new} Shows/-relative pairs")
-    ap.add_argument("--record", help="info hash whose chunk_filed/applied to rewrite")
+    ap.add_argument("--record", help="info hash(es), comma-separated, whose plan/"
+                                     "chunk_filed/applied to rewrite")
     ap.add_argument("--rearm", default="",
                     help="comma-separated torrent indices to make re-fetchable")
     ap.add_argument("--rearm-only", action="store_true",

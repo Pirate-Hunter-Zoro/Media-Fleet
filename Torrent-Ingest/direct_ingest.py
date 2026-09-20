@@ -398,6 +398,30 @@ def _prune_empty_dirs(path: Path) -> None:
             pass
 
 
+def _release_files_for(p: Path):
+    """`[(relative, size)]` of a multi-video drop's files, or None.
+
+    A direct drop of several episodes IS a release, and its filenames carry the same
+    `SxxEyy (Title)` the torrent path computes a broadcast map from. This path used to
+    hand the model a bare listing, so the same pack could file one way through the
+    torrent and another through DirectIngest -- and the 70 re-fetched Smurfs files
+    (2026-09-20) are exactly that shape. At least four titled videos are needed for the
+    map to be meaningful; anything smaller is unchanged (fail open).
+    """
+    root = p if p.is_dir() else p.parent
+    files = p.rglob("*") if p.is_dir() else [p]
+    out = []
+    for f in sorted(files):
+        if not f.is_file() or f.suffix.lower() not in config.VIDEO_EXTENSIONS:
+            continue
+        try:
+            size = f.stat().st_size
+        except OSError:
+            size = None
+        out.append((str(f.relative_to(root)), size))
+    return out if len(out) >= 4 else None
+
+
 def process(p: Path) -> bool:
     cid = _synth_id(p)
     # For a FILE the content root is its parent (the plan may legitimately name a
@@ -405,7 +429,8 @@ def process(p: Path) -> bool:
     content_root = p if p.is_dir() else p.parent
     log(f"Ingesting {p.name} (id {cid})...")
     try:
-        plan, rationale = identify.run_identify(cid, str(p), log_fn=log)
+        plan, rationale = identify.run_identify(cid, str(p), log_fn=log,
+                                                release_files=_release_files_for(p))
         _attach_video_sidecars(plan, p)
         # An empty plan is normalised to the validator's own message so the verdict
         # handling below sees EVERY empty-plan shape (a model may write `{}`, omit

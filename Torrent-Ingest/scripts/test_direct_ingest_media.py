@@ -275,6 +275,32 @@ try:
     check("the show seed was written",
           (media / "Shows" / "Some Show (2020)" / "tvshow.nfo").exists(), True)
 
+    # ----------------------------------------------------------------------
+    print("\nPart 6 -- a multi-episode directory is handed to the run as a RELEASE")
+    # The torrent path computes the release->broadcast map from the files' own titles
+    # and enforces it; the direct path must see the same list or the same pack can file
+    # two different ways (the 70 re-fetched Smurfs files, 2026-09-20).
+    _reset_watch()
+    multi = watch / "The Smurfs (1981)"
+    multi.mkdir()
+    for i in range(1, 6):
+        (multi / f"The Smurfs S01E{i:02d} (Episode {i}).mp4").write_bytes(b"v" * 1024)
+    (multi / "notes.txt").write_text("x", encoding="utf-8")
+    rel = direct_ingest._release_files_for(multi)
+    check("every video in the directory is enumerated", len(rel), 5)
+    check("the relative paths are relative to the drop", rel[0][0].endswith("E01 (Episode 1).mp4"),
+          True)
+    check("non-video clutter is not", any(r[0].endswith(".txt") for r in rel), False)
+    three = watch / "three"
+    three.mkdir()
+    for i in range(1, 4):
+        (three / f"Show S01E{i:02d}.mkv").write_bytes(b"v")
+    check("fewer than four videos is no release (fail open)",
+          direct_ingest._release_files_for(three), None)
+    one = watch / "one.mkv"
+    one.write_bytes(b"v")
+    check("a single file is not a release", direct_ingest._release_files_for(one), None)
+
 finally:
     (direct_ingest.WATCH_DIR, direct_ingest.FAILED_DIR, direct_ingest.SKIPPED_DIR,
      direct_ingest.LOG_FILE, direct_ingest.identify.run_identify,

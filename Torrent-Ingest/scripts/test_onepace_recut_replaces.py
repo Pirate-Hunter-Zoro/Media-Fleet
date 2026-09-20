@@ -65,8 +65,13 @@ INHERIT = "One Pace (2013) - S13E05 - Inherited Will.mkv"
 
 tmp = Path(tempfile.mkdtemp(prefix="onepace-recut-test-")).resolve()
 saved_root = config.MEDIA_ROOT
+saved_mount = config.MEDIAFS_MOUNT
 try:
+    # The collision scan reads BOTH roots (the SSD cache and the mount that carries
+    # pool-only episodes). The fixture must own both, or the live library decides.
     config.MEDIA_ROOT = tmp
+    config.MEDIAFS_MOUNT = tmp / "mount"
+    config.MEDIAFS_MOUNT.mkdir(parents=True, exist_ok=True)
 
     def seed(rel_dir, *names):
         d = tmp / rel_dir
@@ -130,6 +135,7 @@ try:
 
 finally:
     config.MEDIA_ROOT = saved_root
+    config.MEDIAFS_MOUNT = saved_mount
     shutil.rmtree(tmp, ignore_errors=True)
 
 print()

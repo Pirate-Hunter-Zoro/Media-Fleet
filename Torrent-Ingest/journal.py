@@ -17,6 +17,7 @@ you make" requirement. Both files live under state/ and are gitignored.
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 import config
@@ -72,6 +73,62 @@ def load_records():
             if h:
                 records[h] = rec
     return records
+
+
+_TITLE_TAG_RE = re.compile(
+    r"[Ss]\d{1,3}[Ee]\d{1,4}\s*[\(\[]([^\)\]]{2,90}?)"
+    r"(?:[\)\]]|\.(?:mp4|mkv|avi|m4v|mov)$)", re.I)
+
+
+def title_from_release_name(name):
+    """The episode title a release SOURCE filename states, or "".
+
+    Both shapes the fleet's packs use: `The Smurfs S01E06 (The Astrosmurf).mp4` and the
+    dvdrip form `The Smurfs S01E01 -The Smurfette.mkv`. The title a plan filed FROM is
+    content identity evidence the destination sidecar cannot carry when two files share
+    a stem (`E07.mkv` + `E07.mp4` share one `.nfo`).
+    """
+    s = str(name or "")
+    m = _TITLE_TAG_RE.search(s)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"[Ss]\d{1,3}[Ee]\d{1,4}\s*[-–]\s*(.+?)"
+                  r"\.(?:mp4|mkv|avi|m4v|mov)$", s)
+    return m.group(1).strip() if m else ""
+
+
+_SOURCE_TITLES_CACHE: dict = {}
+
+
+def source_titles():
+    """`{library-relative dst: episode title the plan filed it from}`.
+
+    THE SMURFS LOSS THIS EXISTS FOR (2026-09-20). Two containers for one slot share ONE
+    `.nfo` stem, so the sidecar named the slot's correct episode for both files and a
+    duplicate cleanup deleted the planner's copy at 38 S01 slots while the older
+    wrong-slot file survived (HANDOFF 10.9). The journal is the third witness: each plan
+    records the SOURCE filename a destination was filed from, and the source title is
+    what the bytes actually contain. Rebuilt when the journal changes.
+    """
+    try:
+        st = config.JOURNAL_FILE.stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    if _SOURCE_TITLES_CACHE.get("key") == key:
+        return _SOURCE_TITLES_CACHE.get("map") or {}
+    out = {}
+    for rec in load_records().values():
+        for f in (rec.get("plan") or {}).get("files") or []:
+            d, s = f.get("dst_rel"), f.get("src")
+            if not d or not s:
+                continue
+            title = title_from_release_name(str(s).rsplit("/", 1)[-1])
+            if title:
+                out.setdefault(str(d), title)
+    _SOURCE_TITLES_CACHE["key"] = key
+    _SOURCE_TITLES_CACHE["map"] = out
+    return out
 
 
 def write_record(record):

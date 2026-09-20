@@ -218,8 +218,8 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; the queued purge's DB mirror completes via `dbhook.record_purge` from the reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The shelf it indexes reflects the repaired names as the purge drains; re-check `yacreader_rescan.py --files` after |
 | In flight | The queued One Piece chapter drops are filing one by one through a provider-limited identify chain (429s on Gemini, empty text on some OpenRouter models). **The Smurfs `.torrent` was re-dropped 2026-09-20 08:00** (top level; no new download), record `downloading`; watch `state/tmp/6c413306…_identify.log` and the journal for the plan. Reaper batch complete (`reap.py` PID 1311; its next batch is separate) |
-| Parked re-drops | **The Smurfs re-drop COMPLETED 2026-09-20 10:57** (`6c413306…`, 377 files applied, source under `finished/`). The skeleton merge filled 405 episode destinations and the record is terminal with the content on the mount. **BUT row 5 is NOT signed off:** the computed map covered 362/405 titled files; 41 kept their release numbers, and 32 of those collided with a mapped file's computed slot, where the intra-torrent duplicate collapse dropped the larger/cleaner copy — a subset of S01/S02/S03 slots may therefore hold the release-order episode instead of the guide-order one. The collision guard now parks both instead of choosing (commit after the run). The next session must CONTENT-VERIFY the Smurfs shelf (probe each file, match the title) and refile with `refile_season.py --mapping`; `state/journal.jsonl.bak-pack`'s 405-file plan resolves 34 of the 41 unmatched titles and is the mapping cross-check. Do not call row 5 done before that. |
-| Open work | §10.0's live acceptance for rows 1 and 3 completes when the reaper drain finishes; Toriko's live write waits for the mount to unpause; the free-AI upgrade (§10.10) is otherwise implemented |
+| Parked re-drops | **Smurfs row 5 repaired live 2026-09-20 (session 2), fetch completing.** The run had three real defects, all now fixed and guarded: (a) the title map was computed against **TVMaze while Jellyfin scrapes TMDB** — 77 files were placed one slot away from the name the owner sees; (b) the intra-torrent collapse silently dropped 32 mapped files when an unmatched file's release number collided with a mapped file's computed slot; (c) **media_doctor's duplicate rule deleted the planner's `S01E01.mp4`-class files at 38 S01 slots**, because a same-stem pair shares ONE `.nfo` and the rule never asked the journal. Live repair: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten; the 30 dropped episodes + the 40 deleted S01 pack files are re-fetching from the pack's own torrent into `DirectIngest/` (see the `In flight` row). The old dvdrip S01 files now sit at their correct slots (E31 = The Smurfette) as the fallback content. |
+| Open work | The Smurfs re-fetch (70 files) is downloading from the swarm; when it lands, the 40 dvdrip S01 files are superseded through the mount and the drop files through the fixed pipeline. Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko's 8 blank plots were filled 2026-09-20 through `repair_metadata.py --no-ai` (0 blanks now). The free-AI upgrade (§10.10) is implemented. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) still outstanding** |
 
 ### Shipped 2026-09-20 — the five computed facts, the verified self-heal, the scalable plan
@@ -310,6 +310,49 @@ whose destinations were collapsed (content-verification review) and terminal rec
 parking unaccounted files. Queued purges report PENDING; already-purged paths report PASS while the inventory catches up; only bytes still visible through the mount or on the SSD fail. Read-only, exit 0
 always, advisory in `verify_fleet.sh`. Its first run surfaced **the Smurfs collapse plus three legacy ones**
 the incident-coded version could not see — see §10.9's note.
+
+### Shipped 2026-09-20 (session 2) — the map follows Jellyfin, duplicates need proof, collisions see the mount
+
+Three tool fixes, each with a registered test (`verify_fleet.sh`: check #61
+`test_release_title_numbering.py` extended, #62 `test_duplicate_identity.py`, #63
+`test_existing_collision_identity.py`; the direct-ingest release list is Part 6 of
+`test_direct_ingest_media.py`). The full suite prints `ALL CHECKS PASSED`.
+
+**The title map is computed against the provider Jellyfin SCRAPES.** `tmdbguide.episode_names`
+(fetched, cached 7 days) now feeds `identify.release_title_map` whenever the library
+folder pins a `tmdbid`; `epguide` (TVMaze) is the fallback. THE MEASURED DISAGREEMENT:
+The Smurfs' *Locomotive Smurfs* is TVMaze S07E41 and TMDB/Jellyfin S07E43; TVMaze's S09
+is one slot short of TMDB's three-part opener; the four specials live in TMDB's S00.
+The July/September map placed 77 files one slot away from the title the owner sees, and
+Jellyfin's own `.nfo` titles (rewritten from the scrape) sat beside the wrong episodes.
+The matcher also gained a character-ratio pass with a part-digit rule
+(`Wild Side - pt1` -> `(1)`, pt2 -> `(2)`; a digitless query against several parts gets
+NO claim) and a collision-safe skeleton fallback: an unmatched file whose release number
+equals a matched file's computed slot is marked needs-mapping, never filed there.
+Replay: 14 titled-release plans in the journal, 0 contradictions.
+
+**A same-stem duplicate is deleted only when the journal PROVES it is one.**
+`media_doctor._classify_slot_collision` asks `journal.source_titles()` (the source title
+each destination was filed from) when the two files share one `.nfo`: different
+identities are a `misfiled_episode` (reported, never deleted), unknown identity is
+reported, and only a proven same-episode pair may be auto-deleted. This is the fix for
+the loss this session found: the old rule kept the higher-ranked container, deleted the
+planner's `.mp4` at 38 Smurfs S01 slots, and left the older wrong-slot `.mkv`.
+
+**A same-slot collision now sees the mount and checks identity.** `_collapse_existing_episode_collisions`
+scans `MEDIAFS_MOUNT` as well as `MEDIA_ROOT` (an evicted episode was invisible, so the
+replacement pack applied beside the pool-only dvdrip files), and when the journal says
+the existing file's content is a different episode it raises `PlanError` — the release
+parks, it is never a silent drop or an overwrite. Same-episode and unknown-identity cases
+keep the historical collapse, so no new parks for ordinary work.
+
+**The repair, through the tools.** `refile_season.py --mapping` (now accepting
+comma-separated `--record` hashes and rewriting the plan's `dst_rel` alongside
+`applied`/`chunk_filed`): 147 moves, 0 failures, 290 stale sidecars deleted, 142 db rows
+superseded. `journal.source_titles()` is shared by the doctor and `library`, so a moved
+file's identity follows it. Direct drops of 4+ videos are handed to `run_identify` as a
+RELEASE (`direct_ingest._release_files_for`), so the same pack cannot file one way
+through the torrent and another through `DirectIngest/`.
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 
@@ -652,7 +695,9 @@ is aired S01E31, and `S01E40` is the "Springtime Special" that belongs in S00. T
 Doctor Who (1963) renumber class again, unfixed. Evidence: the verified source torrent at
 `state/torrent_sources/27dba…torrent` (sha1 matches, 405 files); the bad plan at
 `state/tmp/27dba…_plan.json`; an Aug 12 plan in `state/journal.jsonl.bak-pack:108` that
-mapped the same 405 files correctly, proving the data was sufficient.
+mapped the same 405 files by title (this session measured that plan's provider ordering
+as TVDB-ish, NOT the TMDB order Jellyfin actually renders — do not use it as the
+authority; `tmdbguide.episode_names` is, see the session-2 section in §6).
 
 **Build.** A plan-coverage contract computed by the harness, never asked of the model:
 

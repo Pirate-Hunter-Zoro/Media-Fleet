@@ -514,6 +514,71 @@ def episode_overviews(tmdb_id, season):
     return out
 
 
+_EPISODES_CACHE_V = 1
+
+
+def episode_names(tmdb_id):
+    """`[{"season", "number", "name"}]` for every season TMDB lists, or None.
+
+    WHY THE TITLE MAP NEEDS THIS AND NOT TVMAZE. The release->broadcast map must agree
+    with the episode list JELLYFIN shows, because that is what the owner reads. Jellyfin
+    scrapes TMDB, and the providers disagree on real season numbering: for The Smurfs
+    (1981) TVMaze files *Locomotive Smurfs* at S07E41 while TMDB -- and Jellyfin --
+    file it at S07E43; TVMaze's S09 is one slot short of TMDB's three-part opener. A
+    map computed against TVMaze placed 77 files in slots Jellyfin names differently
+    (measured 2026-09-20), and the titles the owner sees did not match the episodes on
+    disk. Fail open: None on a missing key or any transport error, so the caller can
+    fall back to TVMaze.
+    """
+    if not tmdb_id:
+        return None
+    try:
+        tmdb_id = int(tmdb_id)
+    except (TypeError, ValueError):
+        return None
+    mem_key = ("episodes", tmdb_id)
+    if mem_key in _mem:
+        return _mem[mem_key]
+    p = _cache_path(tmdb_id).with_name(f"{tmdb_id}-episodes.json")
+    try:
+        blob = json.loads(p.read_text(encoding="utf-8"))
+        if blob.get("v") == _EPISODES_CACHE_V:
+            if time.time() - float(blob.get("fetched_at", 0)) < CACHE_TTL_SEC:
+                eps = blob.get("episodes")
+                _mem[mem_key] = eps
+                return eps
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+    shape = season_shape(tmdb_id)
+    if shape is None:
+        return None                       # transport: no cache write, no opinion
+    episodes = []
+    for season in sorted(shape):
+        data = _get_json(f"/tv/{tmdb_id}/season/{season}", {})
+        if not data or data.get("_http_error"):
+            continue
+        for e in data.get("episodes") or []:
+            name = str(e.get("name") or "").strip()
+            n = e.get("episode_number")
+            if not name or n is None:
+                continue
+            try:
+                episodes.append({"season": int(season), "number": int(n), "name": name})
+            except (TypeError, ValueError):
+                continue
+    if not episodes:
+        return None
+    try:
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"v": _EPISODES_CACHE_V, "fetched_at": time.time(),
+                                   "episodes": episodes}), encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+    _mem[mem_key] = episodes
+    return episodes
+
+
 def find_show(title, year=None):
     """Best TMDB series match for a title/year: `{id, name, year}` or None.
 

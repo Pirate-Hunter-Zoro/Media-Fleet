@@ -37,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import config                                                        # noqa: E402
+import journal                                                       # noqa: E402
+import library                                                       # noqa: E402
 import chapter_volume_reconcile as cvr                               # noqa: E402
 import audit_volume_chapter_coverage as audit                        # noqa: E402
 
@@ -182,6 +184,40 @@ def check_manga():
         line("one edition per volume", "PASS", f"{total} volume copy(ies), one per number")
 
 
+def _title_key(text):
+    return re.sub(r"[^a-z0-9]+", "", str(text or "").lower())
+
+
+def _present_titles(last):
+    """{normalized source title: title} for every filed episode resident in the library.
+
+    This is the content-verification the collapse review asks for, COMPUTED. A collapse
+    is verified when the dropped file's episode is already in the library under its own
+    title -- filed from another copy in the pack, or restored by a repair (the Smurfs
+    refile + re-fetch, 2026-09-20). The review reappears the moment one dropped episode
+    has no resident copy. The inventory decides the bulk and `_resident` catches an
+    SSD-only file the inventory has not synced yet.
+    """
+    inv_path = (Path.home() / "Developer/Media-Orchestrator/Media-Syncer"
+                / "remote_inventory.json")
+    try:
+        inventory = set(json.loads(inv_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        inventory = None
+    out = {}
+    for rec in last.values():
+        for f in (rec.get("plan") or {}).get("files") or []:
+            dst, src = f.get("dst_rel"), f.get("src")
+            if not dst or not src:
+                continue
+            title = journal.title_from_release_name(Path(str(src)).name)
+            if not title or _title_key(title) in out:
+                continue
+            if (inventory is not None and dst in inventory) or _resident(dst):
+                out[_title_key(title)] = title
+    return out
+
+
 def check_large_releases():
     """Journal outcomes for big packs: collapsed destinations, parked unfiled files."""
     last = {}
@@ -197,13 +233,29 @@ def check_large_releases():
     except OSError:
         line("large releases", "SKIP", "journal unreadable")
         return
+    present = _present_titles(last)
     review = []
     parked = []
+    verified = 0
     for rec in last.values():
         plan = rec.get("plan") or {}
-        if rec.get("status") == "completed" and (plan.get("_deduped_dropped") or []):
-            review.append(f"{rec.get('name', '?')[:48]} "
-                          f"({len(plan['_deduped_dropped'])} collapsed)")
+        drops = plan.get("_deduped_dropped") or []
+        if rec.get("status") == "completed" and drops:
+            missing = []
+            for d in drops:
+                title = journal.title_from_release_name(Path(str(d.get("src") or "")).name)
+                key = _title_key(title)
+                if key and key in present:
+                    continue
+                if title and any(library._titles_same_episode(title, t)
+                                 for t in present.values()):
+                    continue
+                missing.append(title or Path(str(d.get("src") or "")).name)
+            if missing:
+                review.append(f"{rec.get('name', '?')[:48]} "
+                              f"({len(missing)} of {len(drops)} collapsed unverified)")
+            else:
+                verified += 1
         if rec.get("status") in ("failed", "refused") and rec.get("unfiled_count"):
             parked.append(f"{rec.get('name', '?')[:48]} "
                           f"({rec['unfiled_count']} unfiled)")
@@ -212,12 +264,16 @@ def check_large_releases():
     elif review:
         # Biggest first: the Smurfs (32 collapsed) must be the name a reader sees, not
         # three one-file legacy records that happen to sort earlier.
-        review.sort(key=lambda s: int(re.search(r"\((\d+) collapsed\)", s).group(1)),
+        review.sort(key=lambda s: int(re.search(r"\((\d+) of", s).group(1)),
                     reverse=True)
         more = f" (+{len(review) - 3} more)" if len(review) > 3 else ""
         line("large releases", "REVIEW",
              "destination collapses need content verification: "
              + "; ".join(review[:3]) + more)
+    elif verified:
+        line("large releases", "PASS",
+             f"{verified} collapsed record(s) verified: every dropped episode is "
+             f"resident under its own title")
     else:
         line("large releases", "PASS")
 

@@ -21,6 +21,7 @@ from xml.sax.saxutils import escape
 
 import config
 import dbhook
+import journal
 
 # Pulls the season/episode out of a standard `- SxxExx` episode filename.
 _EP_RE = re.compile(r"[Ss](\d+)[Ee](\d+)")
@@ -1876,6 +1877,51 @@ def _identity_words(text):
             and len(w) > 1}
 
 
+def _titles_same_episode(a, b):
+    """Whether two recorded episode titles are the same episode, spellings aside."""
+    import difflib
+    na = re.sub(r"[^a-z0-9]+", " ", str(a or "").lower()).strip()
+    nb = re.sub(r"[^a-z0-9]+", " ", str(b or "").lower()).strip()
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return difflib.SequenceMatcher(None, na, nb).ratio() >= 0.85
+
+
+def _existing_episode_mismatch(planned, rel, collisions):
+    """A PlanError message when a colliding existing file is provably a different episode.
+
+    The journal records the source title every destination was filed from
+    (`journal.source_titles`), and the planned file's source title names its content.
+    When both are known and clearly different, the existing file is a wrong-slot copy:
+    dropping the planned file would file nothing and cement the misplacement. Returns
+    "" when identity cannot be proven different, so the historical duplicate-drop stands
+    for the ordinary same-episode / no-evidence cases.
+    """
+    plan_title = journal.title_from_release_name(
+        str(planned.get("src") or "").rsplit("/", 1)[-1])
+    if not plan_title:
+        return ""
+    book = journal.source_titles()
+    base = Path(*rel.parts[:3])
+    diffs = []
+    for existing in collisions:
+        have = book.get(str(base / existing.name))
+        if have and not _titles_same_episode(have, plan_title):
+            diffs.append((existing.name, have))
+    if not diffs:
+        return ""
+    detail = "; ".join(f"{name!r} holds {title!r}" for name, title in diffs)
+    dst_name = Path(str(planned.get("dst_rel") or "")).name
+    return (f"slot {rel.parts[2]}/S{_file_episode_key(planned)[0]:02d}"
+            f"E{_file_episode_key(planned)[1]:02d} is already held by a differently-named "
+            f"file whose recorded content contradicts this plan: {detail}, while the "
+            f"planned {dst_name!r} carries {plan_title!r}. This is a wrong-slot file, not "
+            f"a duplicate -- re-file it (scripts/refile_season.py --mapping), never "
+            f"silently drop the planned copy.")
+
+
 def _collapse_existing_episode_collisions(files):
     """Drop planned show episodes that duplicate an episode ALREADY on disk under the
     same season+episode number but a DIFFERENT filename.
@@ -1909,14 +1955,27 @@ def _collapse_existing_episode_collisions(files):
         if key is None:
             kept.append(f)
             continue
-        season_dir = config.MEDIA_ROOT / rel.parts[0] / rel.parts[1] / rel.parts[2]
-        if not season_dir.is_dir():
-            kept.append(f)
-            continue
-        try:
-            entries = list(season_dir.iterdir())
-        except OSError:
-            entries = []
+        # The MOUNT is the complete view: `~/Media` is only the SSD cache and an
+        # evicted episode does not exist there (HANDOFF §2.1). This scan used to read
+        # the SSD alone, so a pool-only file already holding the slot was invisible and
+        # the planned file landed beside it -- the Smurfs' 40 old dvdrip S01 files were
+        # evicted, the replacement pack's S01 files were applied next to them, and the
+        # duplicate then read as a cleanup decision (handed to media_doctor, 2026-09-20).
+        # Both roots are scanned; the mount wins on a name collision (same bytes).
+        entries: list[Path] = []
+        seen_names: set[str] = set()
+        for base in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
+            season_dir = base / rel.parts[0] / rel.parts[1] / rel.parts[2]
+            if not season_dir.is_dir():
+                continue
+            try:
+                listing = list(season_dir.iterdir())
+            except OSError:
+                continue
+            for p in listing:
+                if p.name not in seen_names:
+                    seen_names.add(p.name)
+                    entries.append(p)
         dst_name = rel.name
         # Every differently-named file already holding this slot. The COUNT matters
         # for the One Pace retarget below, so they are collected, not short-circuited.
@@ -1968,6 +2027,15 @@ def _collapse_existing_episode_collisions(files):
                       f"replaces at S{key[0]:02d}E{key[1]:02d}: {old_rel} -> "
                       f"{f['dst_rel']}", flush=True)
                 continue
+            # IDENTITY BEFORE DUPLICATION. A differently-named file at this number is
+            # only a duplicate when it is the SAME episode. The journal records the
+            # source title each destination was filed from, so when both sides are
+            # known and clearly different, the existing file is a wrong-slot copy and
+            # dropping the planned file would cement the misplacement. Park the release
+            # instead: the repair is a re-file, never a silent choice between contents.
+            mismatch = _existing_episode_mismatch(f, rel, collisions)
+            if mismatch:
+                raise PlanError(mismatch)
             dropped.append(f)
             print(f"[validate_plan] dropped duplicate of an existing episode "
                   f"S{key[0]:02d}E{key[1]:02d} (a differently-named file with that "

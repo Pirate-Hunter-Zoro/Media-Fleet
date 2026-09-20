@@ -89,6 +89,13 @@ print("Part 2 -- validate_plan refuses the copied release number")
 tmp = tempfile.TemporaryDirectory()
 try:
     root = Path(tmp.name)
+    # validate_plan's same-slot collision scan reads the library roots; own them so the
+    # live Smurfs shelf cannot decide this fixture's verdict.
+    saved_mount, saved_media = config.MEDIAFS_MOUNT, config.MEDIA_ROOT
+    config.MEDIAFS_MOUNT = root / "mount"
+    config.MEDIA_ROOT = root / "media"
+    (config.MEDIAFS_MOUNT / "Shows").mkdir(parents=True, exist_ok=True)
+    (config.MEDIA_ROOT / "Shows").mkdir(parents=True, exist_ok=True)
     src = root / "The Smurfs S01E01 (The Smurfette).mp4"
     src.write_bytes(b"x")
     base = {"media_type": "show", "title": "The Smurfs", "year": 1981, "tmdb_id": 5687}
@@ -148,6 +155,7 @@ try:
     check("an unreadable plan is left to the parse path (fail open)",
           ai_client._plan_missing(str(broken), names) == [])
 finally:
+    config.MEDIAFS_MOUNT, config.MEDIA_ROOT = saved_mount, saved_media
     tmp.cleanup()
 
 print("Part 4 -- a partial model plan is completed from the skeleton")
@@ -203,6 +211,109 @@ try:
     config.MEDIAFS_MOUNT, config.SHOWS_ROOT = saved_mount, saved_shows
 finally:
     tmp.cleanup()
+
+print("Part 5 -- the map follows the provider Jellyfin SCRAPES (TMDB), not TVMaze")
+import tmdbguide                                                    # noqa: E402
+import re as _re                                                    # noqa: E402
+
+# The Smurfs S07 disagreement is real (measured 2026-07-XX/2026-09-20): TVMaze files
+# *Locomotive Smurfs* at E41, TMDB -- and Jellyfin -- at E43. The map must be computed
+# against the list the owner's UI shows.
+TMDB_GUIDE = [
+    {"season": 7, "number": 43, "name": "Locomotive Smurfs"},
+    {"season": 7, "number": 1, "name": "Smurf On The Wild Side (1)"},
+    {"season": 7, "number": 2, "name": "Smurf On The Wild Side (2)"},
+    {"season": 9, "number": 1, "name": "The Smurfs That Time Forgot (1)"},
+    {"season": 9, "number": 2, "name": "The Smurfs That Time Forgot (2)"},
+    {"season": 9, "number": 3, "name": "The Smurfs That Time Forgot (3)"},
+    {"season": 6, "number": 40, "name": "I Smurf To The Trees"},
+    {"season": 1, "number": 31, "name": "The Smurfette"},
+    {"season": 1, "number": 35, "name": "Smurf-Colored Glasses"},
+]
+TVMAZE_GUIDE = [
+    {"season": 7, "number": 41, "name": "Locomotive Smurfs"},
+    {"season": 7, "number": 42, "name": "Little Big Smurf"},
+    {"season": 9, "number": 1, "name": "The Smurfs That Time Forgot"},
+    {"season": 9, "number": 3, "name": "Cave Smurfs"},
+    {"season": 1, "number": 31, "name": "The Smurfette"},
+]
+old_tmdb_names, old_eps = tmdbguide.episode_names, epguide.episodes
+tmdbguide.episode_names = lambda _tid: TMDB_GUIDE
+epguide.episodes = lambda _title: TVMAZE_GUIDE
+try:
+    title_release = [
+        "The Smurfs S07E01 (Locomotive Smurfs).mp4",
+        "The Smurfs S07E12 (A Smurf on the Wild Side - pt1).mp4",
+        "The Smurfs S07E16 (A Smurf on the Wild Side - pt2).mp4",
+        "The Smurfs S09E01 (Smurfs that Time Forgot).mp4",
+        "The Smurfs S06E06 (I Smurf to All Trees.mp4",
+        "The Smurfs S01E01 (The Smurfette).mp4",
+        "The Smurfs S03E24 (Smurfs Halloween).mp4",
+    ]
+    by_provider = identify.release_title_map("/tmp/The Smurfs", title_release,
+                                             show_hint="The Smurfs", tmdb_id=5687)
+    check("the TMDB guide wins when the show pins an id",
+          by_provider.get((7, 1)) == (7, 43))
+    check("the provider's part names resolve by the query's own digit",
+          by_provider.get((7, 12)) == (7, 1) and by_provider.get((7, 16)) == (7, 2))
+    check("a digitless title against several parts gets no claim",
+          (9, 1) not in by_provider)
+    check("a title missing its closing bracket still matches",
+          by_provider.get((6, 6)) == (6, 40))
+    check("a renamed title gets no claim", (3, 24) not in by_provider)
+    check("without a pinned id the TVMaze fallback is chosen",
+          identify._guide_for("The Smurfs")[1] == "TVMaze" and
+          identify._match_titles(identify.release_title_entries(title_release),
+                                 TVMAZE_GUIDE).get((7, 1)) == (7, 41))
+    # The skeleton may not fall back to the release number when that number is a
+    # computed slot of another file: that is the 2026-09-20 silent-collapse shape.
+    fmap_small = {(1, 1): (1, 31), (1, 2): (1, 35)}
+    skel_col = identify.plan_skeleton(
+        ["S01E01 (The Smurfette).mp4", "S01E02 (Smurf Colored Glasses).mp4",
+         "S01E31 (Some Unmatched Episode).mp4"],
+        title_map=fmap_small, title="The Smurfs")
+    entry = skel_col["files"][2]
+    check("an unmatched file colliding with a computed slot is marked needs-mapping",
+          entry["season"] is None and entry["episode"] is None)
+finally:
+    tmdbguide.episode_names, epguide.episodes = old_tmdb_names, old_eps
+
+print("Part 6 -- replay: the matcher never contradicts an accepted historical plan")
+jpath = Path(config.STATE_DIR) / "journal.jsonl"
+plans_seen = contradictions = 0
+if jpath.exists():
+    for line in jpath.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        files = [f for f in ((rec.get("plan") or {}).get("files") or [])
+                 if isinstance(f, dict) and f.get("src")]
+        entries = identify.release_title_entries([f["src"] for f in files])
+        if len(entries) < 4:
+            continue
+        guide, plan_slot = [], {}
+        for f in files:
+            m = _re.search(r"Season\s+(\d+)/.*?S(\d+)E(\d+)", f.get("dst_rel") or "")
+            t = identify.release_title_entries([f["src"]])
+            if not m or not t:
+                continue
+            key = (t[0][1], t[0][2])
+            guide.append({"season": int(m.group(2)), "number": int(m.group(3)),
+                          "name": t[0][3]})
+            plan_slot[key] = (int(m.group(2)), int(m.group(3)))
+        if len(guide) < 4:
+            continue
+        plans_seen += 1
+        claims = identify._match_titles(entries, guide)
+        for e in entries:
+            claimed = claims.get((e[1], e[2]))
+            filed = plan_slot.get((e[1], e[2]))
+            if claimed and filed and tuple(claimed) != tuple(filed):
+                contradictions += 1
+    print(f"  replayed {plans_seen} titled-release plan(s): "
+          f"{contradictions} contradiction(s)")
+    check("the matcher contradicts no accepted historical plan", contradictions == 0)
 
 print()
 if failures:
