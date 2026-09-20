@@ -880,6 +880,111 @@ def plan_skeleton(release_files, title_map=None, title="", kind="show"):
     return {"media_type": kind, "title": title, "files": files}
 
 
+def _show_folder_for(title, year):
+    """The library folder `Shows/<Title (Year)>` when it exists, else the canonical name.
+
+    Used to build episode destinations in a skeleton merge; a folder already in the
+    library (the Smurfs (1981)) must be continued, not re-invented."""
+    try:
+        base = config.MEDIAFS_MOUNT / "Shows"
+        if not base.is_dir():
+            base = config.SHOWS_ROOT
+        want = library.normalize_folder_name(title or "")
+        if not want:
+            return ""
+        for p in base.iterdir():
+            if not p.is_dir():
+                continue
+            stem = p.name
+            m = re.search(r"\((\d{4})\)\s*$", stem)
+            folder_year = int(m.group(1)) if m else None
+            if library.normalize_folder_name(re.sub(r"\s*\(\d{4}\)\s*$", "", stem)) != want:
+                continue
+            if year and folder_year and abs(int(year) - folder_year) > 1:
+                continue
+            return p.name
+    except Exception:                                                # noqa: BLE001
+        pass
+    return f"{title} ({int(year)})" if year else (title or "")
+
+
+_EPISODE_VIDEO_EXT = {}
+
+
+def merge_skeleton_plan(plan, skeleton, log_fn=None):
+    """Complete a partial model plan from the deterministic skeleton.
+
+    HANDOFF 10.9: a free model cannot re-type a 409-file plan. The skeleton is the
+    harness's enumeration -- every release file with its computed season/episode -- so
+    the merge keeps the model's entries where it supplied them, fills every other
+    EPISODE entry's destination from the computed slot, and leaves a file the harness
+    could not place (a movie/special with no episode number) out so the coverage guard
+    parks the release instead of guessing. Never raises; returns `(plan, filled, unresolved)`.
+    """
+    try:
+        skel_files = (skeleton or {}).get("files") or []
+    except AttributeError:
+        return plan, 0, []
+    if not skel_files:
+        return plan, 0, []
+    by_src = {}
+    by_name = {}
+    for f in plan.get("files") or []:
+        if isinstance(f, dict) and f.get("src"):
+            by_src[str(f["src"])] = f
+            by_name.setdefault(Path(str(f["src"])).name, []).append(f)
+    title = plan.get("title") or (skeleton or {}).get("title") or ""
+    year = plan.get("year") or (skeleton or {}).get("year")
+    folder = _show_folder_for(title, year)
+    ext_by_src = {}
+    for f in skel_files:
+        if isinstance(f, dict) and f.get("src"):
+            ext_by_src[str(f["src"])] = Path(str(f["src"])).suffix.lower() or ".mkv"
+    merged, filled, unresolved = [], 0, []
+    for sk in skel_files:
+        if not isinstance(sk, dict) or not sk.get("src"):
+            continue
+        entry = dict(sk)
+        src = str(sk["src"])
+        got = by_src.get(src)
+        if got is None:
+            # The model may have written the source with a different root (or relative);
+            # a UNIQUE basename match is unambiguous.
+            same = by_name.get(Path(src).name) or []
+            got = same[0] if len(same) == 1 else None
+        if got:
+            if got.get("src"):
+                entry["src"] = got["src"]
+            for key in ("dst_rel", "season", "episode", "episode_title", "plot",
+                        "tmdb_id", "type"):
+                if got.get(key) not in (None, ""):
+                    entry[key] = got[key]
+        dst = str(entry.get("dst_rel") or "")
+        if not dst and entry.get("season") is not None and entry.get("episode") is not None \
+                and folder:
+            ext = ext_by_src.get(src, ".mkv")
+            entry["dst_rel"] = (f"Shows/{folder}/Season {int(entry['season']):02d}/"
+                                f"{folder} - S{int(entry['season']):02d}"
+                                f"E{int(entry['episode']):02d}{ext}")
+            filled += 1
+        if not str(entry.get("dst_rel") or ""):
+            unresolved.append(src)
+            continue
+        merged.append(entry)
+    if not merged:
+        return plan, 0, unresolved
+    out = dict(plan)
+    top = dict(plan)
+    out.update({k: top[k] for k in top})
+    out["files"] = merged
+    out["_skeleton_merged"] = {"filled": filled, "unresolved": unresolved[:50],
+                               "model_entries": len(by_src)}
+    if filled and log_fn:
+        log_fn(f"  skeleton merge: filled {filled} episode destination(s); "
+               f"{len(unresolved)} file(s) still need a decision")
+    return out, filled, unresolved
+
+
 def _release_structure_block(content_path, release_files=None):
     """A factual summary of how the release is laid out, plus any split/numbering conflict.
 
@@ -1169,7 +1274,7 @@ def _release_title_guess(content_path, release_files=None):
 def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                     series_hint=None, kind=None, failure_context=None, sections=None,
                     release_files=None, title_block="", skeleton_path=None,
-                    require_count=0):
+                    require_count=0, skeleton_slotted=0, skeleton_unslotted=0):
     """The engineered base prompt plus this torrent's concrete context.
 
     With `series_hint`/`kind` (the settled case) the library digest is scoped to that one
@@ -1213,7 +1318,12 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                 "the computed destination slot where the harness could compute one, is at:\n"
                 f"{skeleton_path}\n"
                 "Read it, then write the plan: carry over its `files` entries and fill in\n"
-                "`dst_rel` (and any titles/ids). Do not re-investigate what it already states.")
+                "`dst_rel` (and any titles/ids). Do not re-investigate what it already states."
+                + (f"\nThe skeleton ALREADY carries the computed destination for "
+                   f"{skeleton_slotted} file(s) -- you do not need to rewrite those; the "
+                   f"harness merges them for you. Only the {skeleton_unslotted} file(s) "
+                   f"with no computed slot (movies/specials) need your destination."
+                   if skeleton_unslotted else ""))
         if require_count:
             bits.append(
                 f"COVERAGE IS REQUIRED. All {require_count} release file(s) must appear in\n"
@@ -1611,6 +1721,12 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                   else serial_release_map_for_content(content_path))
     # Release-order numbering for title-named packs (HANDOFF 10.9, The Smurfs). Serial
     # packs already have their binding map; do not stack two numbering blocks on one run.
+    # The skeleton's `src` must be the ABSOLUTE path the model will write back (plans
+    # carry absolute srcs); the release list itself arrives relative to the content root.
+    release_abs = []
+    for _item in release_files or ():
+        _rel = str(_item[0] if isinstance(_item, (tuple, list)) else _item)
+        release_abs.append(str(Path(content_path) / _rel))
     title_block, title_map = "", {}
     large = bool(release_files) and len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES
     if release_files and not serial_map:
@@ -1619,7 +1735,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         # listing pushed the Smurfs prompt to 125 KB -- over every free provider's
         # ceiling that could not otherwise serve it.
         title_block, title_map = title_numbering_block(
-            content_path, release_files, max_rows=20 if large else 80)
+            content_path, release_abs or release_files, max_rows=20 if large else 80)
         if title_map:
             _note(f"identify: computed release->broadcast numbering for "
                   f"{len(title_map)} file(s) from their own titles")
@@ -1631,7 +1747,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         skeleton_path = config.TMP_DIR / f"{info_hash}_skeleton.json"
         try:
             skeleton_path.write_text(json.dumps(
-                plan_skeleton(release_files, title_map,
+                plan_skeleton(release_abs or release_files, title_map,
                               title=arc_title or _release_title_guess(content_path,
                                                                       release_files)),
                 indent=1), encoding="utf-8")
@@ -1639,6 +1755,17 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                   f"{skeleton_path.name}")
         except OSError:
             skeleton_path = None
+    skeleton_slotted = skeleton_unslotted = 0
+    if skeleton_path is not None:
+        try:
+            _sk = json.loads(skeleton_path.read_text(encoding="utf-8"))
+            for _f in (_sk.get("files") or []):
+                if _f.get("season") is not None and _f.get("episode") is not None:
+                    skeleton_slotted += 1
+                else:
+                    skeleton_unslotted += 1
+        except (OSError, ValueError):
+            pass
     # The files the plan must account for, so ai_client can tell the model exactly what a
     # truncated plan left out BEFORE the run ends instead of parking after it (10.9).
     require_files = []
@@ -1699,7 +1826,9 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                  release_files=release_files,
                                  title_block=title_block,
                                  skeleton_path=str(skeleton_path) if skeleton_path else None,
-                                 require_count=len(require_files))
+                                 require_count=len(require_files),
+                                 skeleton_slotted=skeleton_slotted,
+                                 skeleton_unslotted=skeleton_unslotted)
         # Per ATTEMPT, not per run: confirm mode below narrows these for the one provider
         # that needs it, and leaking that narrowing to the next provider would cap a run
         # that has no reason to be capped.
@@ -1714,7 +1843,9 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                       release_files=release_files,
                                       title_block=title_block,
                                       skeleton_path=str(skeleton_path) if skeleton_path else None,
-                                      require_count=len(require_files))
+                                      require_count=len(require_files),
+                                      skeleton_slotted=skeleton_slotted,
+                                      skeleton_unslotted=skeleton_unslotted)
             if len(compact) < len(prompt):
                 _note(f"  {provider_name}: full prompt is {len(prompt)} chars, over its "
                       f"measured {_TOO_LARGE_CEILING[provider_name]}; retrying with the "
@@ -1876,7 +2007,9 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                             failure_context=rejections, sections=sections,
                             release_files=release_files, title_block=title_block,
                             skeleton_path=str(skeleton_path) if skeleton_path else None,
-                            require_count=len(require_files))
+                            require_count=len(require_files),
+                            skeleton_slotted=skeleton_slotted,
+                            skeleton_unslotted=skeleton_unslotted)
                         if len(compact) < len(prompt) and _fits(provider_name, compact):
                             _note(f"  {provider_name}: retrying with the "
                                   f"{'+'.join(sections)} digest only "
@@ -1911,8 +2044,27 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                 break
 
             saw_plan = True
+            # A large release's plan is completed from the deterministic skeleton BEFORE
+            # anything reads it (HANDOFF 10.9): the model supplies what it can (the
+            # slot-less movies/specials, titles, ids) and the harness fills every episode
+            # destination from the computed slot. A partial prefix therefore stops being
+            # a parked release and becomes a correct plan.
+            if skeleton_path is not None:
+                try:
+                    skeleton_data = json.loads(
+                        skeleton_path.read_text(encoding="utf-8"))
+                    plan, filled, unresolved = merge_skeleton_plan(plan, skeleton_data,
+                                                                   _note)
+                    if filled:
+                        rationale = ((rationale or "")
+                                     + f"\n\n[skeleton merge filled {filled} episode "
+                                       f"destination(s) from the computed slots]")
+                except (OSError, ValueError):
+                    pass
             # An empty plan is a legitimate "nothing to place" verdict (repeat/extras), NOT
             # a fixable mistake — the caller decides how to treat it. Return it unchanged.
+            # (With a skeleton, an empty model answer has just been replaced by the
+            # skeleton's entries, so this only fires when the release truly has none.)
             if not plan.get("files"):
                 globals()["_UNAVAILABLE_UNTIL"] = 0.0
                 _clear_rejections(info_hash)

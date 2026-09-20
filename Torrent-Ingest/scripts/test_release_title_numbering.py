@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config                                                        # noqa: E402
 import identify                                                      # noqa: E402
 import library                                                       # noqa: E402
 import epguide                                                       # noqa: E402
@@ -146,6 +147,48 @@ try:
     broken.write_text("{not json", encoding="utf-8")
     check("an unreadable plan is left to the parse path (fail open)",
           ai_client._plan_missing(str(broken), names) == [])
+finally:
+    tmp.cleanup()
+
+print("Part 4 -- a partial model plan is completed from the skeleton")
+tmp = tempfile.TemporaryDirectory()
+try:
+    root = Path(tmp.name)
+    saved_mount, saved_shows = config.MEDIAFS_MOUNT, config.SHOWS_ROOT
+    config.MEDIAFS_MOUNT, config.SHOWS_ROOT = root / "mount", root / "media" / "Shows"
+    (root / "mount" / "Shows").mkdir(parents=True)
+    rels = [r for r, _ in RELEASE]
+    for r, _ in RELEASE:
+        (root / r).parent.mkdir(parents=True, exist_ok=True)
+        (root / r).write_bytes(b"x")
+    abs_rels = [str(root / r) for r in rels]  # production builds absolute srcs
+    skel = identify.plan_skeleton(abs_rels, title_map=fmap, title="Fixture Show")
+    partial = {"media_type": "mixed", "title": "Fixture Show", "year": 2019,
+               "tmdb_id": 5687,
+               "files": [{"src": str(root / rels[0])}]}
+    merged, filled, unresolved = identify.merge_skeleton_plan(partial, skel)
+    by_src = {f["src"]: f for f in merged["files"]}
+    check("every episode entry got a destination", len(merged["files"]) == len(RELEASE))
+    check("the destinations use the computed broadcast slots",
+          by_src[str(root / rels[0])]["dst_rel"].endswith("S01E31.mp4")
+          and by_src[str(root / rels[2])]["dst_rel"].endswith("S02E05.mp4"))
+    check("the folder follows the library naming",
+          "Shows/Fixture Show (2019)/Season 01/" in by_src[str(root / rels[0])]["dst_rel"])
+    check("nothing unresolved for episode-only releases", unresolved == [])
+    check("the plan validates as a whole",
+          library.validate_plan(merged, str(root), title_map=fmap)["title"] == "Fixture Show")
+
+    # A movie the model did not place stays unresolved and is left OUT, so the coverage
+    # guard parks the release rather than guessing a destination.
+    skel2 = identify.plan_skeleton(abs_rels + [str(root / "Xtras" / "Movie.mp4")],
+                                   title_map=fmap, title="Fixture Show")
+    (root / "Xtras").mkdir(exist_ok=True)
+    (root / "Xtras" / "Movie.mp4").write_bytes(b"x")
+    merged2, filled2, unresolved2 = identify.merge_skeleton_plan(partial, skel2)
+    check("a slot-less file the model omitted is named unresolved", len(unresolved2) == 1)
+    check("and it is not invented into the plan",
+          len(merged2["files"]) == len(RELEASE))
+    config.MEDIAFS_MOUNT, config.SHOWS_ROOT = saved_mount, saved_shows
 finally:
     tmp.cleanup()
 
