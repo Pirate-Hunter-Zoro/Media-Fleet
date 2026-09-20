@@ -217,7 +217,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
-| In flight | The queued One Piece chapter drops are filing one by one through a provider-limited identify chain (429s on Gemini, empty text on some OpenRouter models). **The Smurfs `.torrent` was re-dropped 2026-09-20 08:00** (top level; no new download), record `downloading`; watch `state/tmp/6c413306…_identify.log` and the journal for the plan. Reaper batch complete (`reap.py` PID 1311; its next batch is separate) |
+| In flight | **The 70-file Smurfs re-fetch drop is in `DirectIngest/The Smurfs (1981)/` waiting on free-provider capacity** (Gemini 429, several OpenRouter models return empty text, nvidia calls take tens of minutes). One nvidia plan was rejected correctly (a real one-slot disagreement at S07E15) and the chain continues; the drop is local and safe and files when a provider serves. The queued One Piece chapter drops are filing through the same constrained chain; the Jujutsu Kaisen misfiles those produced were purged and the plan-time guard that refuses them is live (`library.validate_plan` chapter-ceiling). The reaper is draining (`reap.py` PID 1311) |
 | Parked re-drops | **Smurfs row 5 repaired live 2026-09-20 (session 2), fetch completing.** The run had three real defects, all now fixed and guarded: (a) the title map was computed against **TVMaze while Jellyfin scrapes TMDB** — 77 files were placed one slot away from the name the owner sees; (b) the intra-torrent collapse silently dropped 32 mapped files when an unmatched file's release number collided with a mapped file's computed slot; (c) **media_doctor's duplicate rule deleted the planner's `S01E01.mp4`-class files at 38 S01 slots**, because a same-stem pair shares ONE `.nfo` and the rule never asked the journal. Live repair: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten; the 30 dropped episodes + the 40 deleted S01 pack files are re-fetching from the pack's own torrent into `DirectIngest/` (see the `In flight` row). The old dvdrip S01 files now sit at their correct slots (E31 = The Smurfette) as the fallback content. |
 | Open work | The Smurfs re-fetch (70 files) is downloading from the swarm; when it lands, the 40 dvdrip S01 files are superseded through the mount and the drop files through the fixed pipeline. Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko's 8 blank plots were filled 2026-09-20 through `repair_metadata.py --no-ai` (0 blanks now). The free-AI upgrade (§10.10) is implemented. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) still outstanding** |
@@ -979,6 +979,11 @@ landing later can invalidate exactly those, and keep the rule that a colored cha
 only be superseded by a colored volume (10.5d) — the reconcile gate already carries a
 colored-author keep, so do not drop it.
 
+**10.5c — DONE live 2026-09-20 (session 2, see the session-2 shipped section).** Covered
+chapters purged, the repair now keeps the series in renamed files, bare markers refused
+at plan time and collapsed as duplicates by the reconciler, and the mismatch class is
+guarded by the finished-series chapter ceiling. The text below is the original brief.
+
 **10.5c — chapters yield to volumes, and mislabels are repaired by tool.** Once 10.5a/b
 land: the seven `vNNNN` files are renamed to `cNNNN` **by a repair tool that uses the same
 computed ceiling** and goes through `library.supersede_paths`-style machinery (mount
@@ -1032,6 +1037,12 @@ rows so the title can be re-acquired cleanly; (vi) run the fixed reconcile and v
 shelf keeps exactly the colored copy per volume (owner-visible acceptance in §10.0). If the
 owner wants the reaped colored `v100/v106` back, that is a re-acquire (10.7), not a
 fabrication.
+
+**10.5e — DONE live 2026-09-20 (session 2).** `migrate_comics.sh --apply` moved 191
+files into `Manga/One Piece/One Piece/` and `Manga/One Piece/Ace's Story/` (verified
+191/191); the table row was already the generator's evidence-based one, and
+`resolve_comic_folder` resolves both the master and the member's canonical name into the
+nested layout. The text below is the original brief.
 
 **10.5e — franchise grouping is computed: One Piece + Ace's Story in one folder (owner
 request, 2026-09-19).** `config.COMIC_FRANCHISES` has **no One Piece row**;
