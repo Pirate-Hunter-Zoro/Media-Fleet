@@ -916,10 +916,19 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
 
     HANDOFF 10.9: a free model cannot re-type a 409-file plan. The skeleton is the
     harness's enumeration -- every release file with its computed season/episode -- so
-    the merge keeps the model's entries where it supplied them, fills every other
-    EPISODE entry's destination from the computed slot, and leaves a file the harness
-    could not place (a movie/special with no episode number) out so the coverage guard
-    parks the release instead of guessing. Never raises; returns `(plan, filled, unresolved)`.
+    the merge keeps the model's entries where it supplied them and fills every other
+    EPISODE entry's destination from the computed slot. A file the harness could not
+    place (a movie/special with no episode number) is left out so the coverage guard
+    parks the release rather than guessing.
+
+    A destination TWO sources claim is a DISAGREEMENT, not a duplicate: it happens when
+    an unmapped file keeps its release number and a mapped file's computed slot lands
+    on that same number (the guide's order and the release's order differ). The
+    intra-torrent duplicate collapse would otherwise pick the larger copy and silently
+    delete the mapped episode; measured on the Smurfs pack. Both go to `unresolved`
+    (park) instead.
+
+    Never raises; returns `(plan, filled, unresolved)`.
     """
     try:
         skel_files = (skeleton or {}).get("files") or []
@@ -936,11 +945,8 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
     title = plan.get("title") or (skeleton or {}).get("title") or ""
     year = plan.get("year") or (skeleton or {}).get("year")
     folder = _show_folder_for(title, year)
-    ext_by_src = {}
-    for f in skel_files:
-        if isinstance(f, dict) and f.get("src"):
-            ext_by_src[str(f["src"])] = Path(str(f["src"])).suffix.lower() or ".mkv"
-    merged, filled, unresolved = [], 0, []
+    pending = []
+    unresolved = []
     for sk in skel_files:
         if not isinstance(sk, dict) or not sk.get("src"):
             continue
@@ -948,40 +954,54 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
         src = str(sk["src"])
         got = by_src.get(src)
         if got is None:
-            # The model may have written the source with a different root (or relative);
-            # a UNIQUE basename match is unambiguous.
             same = by_name.get(Path(src).name) or []
             got = same[0] if len(same) == 1 else None
         if got:
-            if got.get("src"):
-                entry["src"] = got["src"]
             for key in ("dst_rel", "season", "episode", "episode_title", "plot",
                         "tmdb_id", "type"):
                 if got.get(key) not in (None, ""):
                     entry[key] = got[key]
+            if got.get("src"):
+                entry["src"] = got["src"]
         dst = str(entry.get("dst_rel") or "")
         if not dst and entry.get("season") is not None and entry.get("episode") is not None \
                 and folder:
-            ext = ext_by_src.get(src, ".mkv")
+            ext = Path(src).suffix.lower() or ".mkv"
             entry["dst_rel"] = (f"Shows/{folder}/Season {int(entry['season']):02d}/"
                                 f"{folder} - S{int(entry['season']):02d}"
                                 f"E{int(entry['episode']):02d}{ext}")
-            filled += 1
         if not str(entry.get("dst_rel") or ""):
             unresolved.append(src)
             continue
-        merged.append(entry)
+        pending.append(entry)
+    seen = {}
+    for e in pending:
+        seen.setdefault(str(e["dst_rel"]), []).append(e)
+    merged, filled = [], 0
+    for dst, entries in seen.items():
+        if len(entries) > 1:
+            for e in entries:
+                unresolved.append(str(e.get("src")))
+            continue
+        e = entries[0]
+        if by_src.get(str(e.get("src"))) is None and not any(
+                sk.get("dst_rel") for sk in skel_files
+                if str(sk.get("src")) == str(e.get("src"))):
+            filled += 1
+        merged.append(e)
     if not merged:
         return plan, 0, unresolved
     out = dict(plan)
-    top = dict(plan)
-    out.update({k: top[k] for k in top})
     out["files"] = merged
     out["_skeleton_merged"] = {"filled": filled, "unresolved": unresolved[:50],
                                "model_entries": len(by_src)}
-    if filled and log_fn:
-        log_fn(f"  skeleton merge: filled {filled} episode destination(s); "
-               f"{len(unresolved)} file(s) still need a decision")
+    if log_fn:
+        if filled:
+            log_fn(f"  skeleton merge: filled {filled} episode destination(s); "
+                   f"{len(unresolved)} file(s) still need a decision")
+        if len(unresolved) > 0 and filled:
+            log_fn(f"  skeleton merge: {len(unresolved)} unresolved file(s) -- the "
+                   f"release will park rather than file a wrong slot")
     return out, filled, unresolved
 
 

@@ -188,6 +188,18 @@ try:
     check("a slot-less file the model omitted is named unresolved", len(unresolved2) == 1)
     check("and it is not invented into the plan",
           len(merged2["files"]) == len(RELEASE))
+    # A destination two sources claim parks BOTH: the size-based duplicate collapse
+    # must never silently choose (measured on the Smurfs pack, 2026-09-20).
+    a = root / "A Show S01E05 (Alpha).mkv"; a.write_bytes(b"a")
+    b = root / "A Show S01E06 (Beta).mkv"; b.write_bytes(b"b")
+    skel3 = {"files": [{"src": str(a), "season": 1, "episode": 5},
+                       {"src": str(b), "season": 1, "episode": 5}]}
+    partial3 = {"media_type": "show", "title": "A Show", "year": 2019,
+                "files": [{"src": str(a), "dst_rel": "Shows/A Show (2019)/Season 01/"
+                                                   "A Show (2019) - S01E05.mkv"}]}
+    _m3, _f3, unres3 = identify.merge_skeleton_plan(partial3, skel3)
+    check("a destination two sources claim parks both",
+          len(unres3) == 2)
     config.MEDIAFS_MOUNT, config.SHOWS_ROOT = saved_mount, saved_shows
 finally:
     tmp.cleanup()
