@@ -140,7 +140,11 @@ check("keep_all keeps everything",
       cvr.plan_decisions("Thing", owned, e, "keep_all")[0] == []
       and len(cvr.plan_decisions("Thing", owned, e, "keep_all")[1]) == len(owned))
 
-# Colored overrides grey at the same volume number, and never authors a chapter purge.
+# Colored overrides grey at the same volume number; the surviving colored volume DOES
+# cover chapters. The owner's rule (10.5d) is about the CHAPTER's colour, not the
+# volume's: a grey chapter covered by any owned volume is redundant, while a COLORED
+# chapter must never lose colour to a grey volume. The old "a colored volume covers
+# nothing" rule is what left all 104 One Piece chapters on the shelf (10.0 row 1).
 colored = {
     "Comics/Manga/Thing/Thing v01.cbz": ("volume", 1, False),
     "Comics/Manga/Thing/Thing v01 (Colored).cbz": ("volume", 1, True),
@@ -150,8 +154,24 @@ purges5, keeps5 = cvr.plan_decisions("Thing", colored, e, "keep_volumes")
 check("the grey duplicate is purged in favour of the colored copy",
       "Comics/Manga/Thing/Thing v01.cbz" in purges5
       and not any("Colored" in p for p in purges5))
-check("a colored volume does not author a chapter purge",
-      "Comics/Manga/Thing/Thing c0005.cbz" not in purges5)
+check("a grey chapter is covered by the surviving colored volume",
+      "Comics/Manga/Thing/Thing c0005.cbz" in purges5)
+
+# A COLORED chapter must never be superseded by a grey volume.
+colored_chapter = {
+    "Comics/Manga/Thing/Thing v01.cbz": ("volume", 1, False),
+    "Comics/Manga/Thing/Thing c0005.cbz": ("chapter", 5, True),
+}
+purges6, keeps6 = cvr.plan_decisions("Thing", colored_chapter, e, "keep_volumes")
+check("a colored chapter covered only by a grey volume is kept",
+      "Comics/Manga/Thing/Thing c0005.cbz" not in purges6
+      and any("color would be lost" in r for _rel, r in keeps6))
+# ... but a colored volume may supersede it.
+colored_both = dict(colored_chapter)
+colored_both["Comics/Manga/Thing/Thing v001 (Colored).cbz"] = ("volume", 1, True)
+purges7, _ = cvr.plan_decisions("Thing", colored_both, e, "keep_volumes")
+check("a colored chapter is purged by a colored volume",
+      "Comics/Manga/Thing/Thing c0005.cbz" in purges7)
 
 print()
 print("=== the shared supersede path deletes locally and queues the purge ===")

@@ -104,6 +104,13 @@ MAX_RESCAN_PER_CYCLE = int(os.environ.get("MEDIA_DOCTOR_MAX_RESCAN_PER_CYCLE", "
 # of them, so cap it and let a big backlog drain over several cycles.
 MAX_ART_FIX_PER_CYCLE = int(os.environ.get("MEDIA_DOCTOR_MAX_ART_FIX_PER_CYCLE", "40"))
 
+# How long to let a `RemoteSearch/Apply` re-identification settle before writing the
+# corrected nfos. Jellyfin's NFO saver runs asynchronously after the apply and will
+# overwrite freshly written files with the stale DB values if they are written first;
+# 20 s is generous for a series item (measured on TZ: the refresh touched the folder
+# for ~15 s). One show per repair, so the sleep is not on any hot path.
+REIDENTIFY_SETTLE_SEC = int(os.environ.get("MEDIA_DOCTOR_REIDENTIFY_SETTLE_SEC", "20"))
+
 # How long a provider's "I have no still for this episode" answer is believed before the
 # image is offered to it again. Thirty days, the same reasoning `epguide` uses for its
 # episode cache: the answer is a fact about a provider's CATALOGUE at a moment, not about
@@ -583,6 +590,274 @@ def _nfo_provider_ids(show_path):
         if m:
             ids[key] = m.group(1)
     return ids
+
+
+# --- series identity: does the id name the show the nfo claims? (HANDOFF 10.3) --
+#
+# THE INCIDENT. The Twilight Zone (2019) carried `<tmdbid>83135</tmdbid>` (correct)
+# but `<tvdbid>325542</tvdbid>`, `<premiered>2013-01-30</premiered>` and
+# `<originaltitle>萌宠成长记（精编版）</originaltitle>` -- the remnant of a plan whose ids
+# were the *Too Cute* ones. The local `folder.jpg` was byte-identical to TMDB 80979's
+# poster, and local art outranks remote, so the wrong cover and the wrong S01 year
+# survived every Jellyfin refresh. The doctor never looked at series identity fields
+# or title-level art at all -- `_scan_episode_art` only inspects episode stills --
+# which is why the fault could not self-heal.
+#
+# WHAT IS COMPUTED, AND WHY ONLY `premiered`. The provider is asked who the id is.
+# A `<year>` that is stale against TMDB is NOT a defect: measured 2026-09-20 over 299
+# live nfos, four shows carry a pilot/preview year (Assassination Classroom 2013 vs
+# 2015, Hazbin Hotel 2019 vs 2024, Yamato 2205, Star vs.) with a `premiered` that
+# matches TMDB exactly. A `<tvdbid>` that differs from TMDB's `external_ids` is not
+# sufficient either (six live shows: Doctor Who (2005), Hunter x Hunter (1999), The
+# Smurfs, The Venture Bros. -- all legitimate TVDB/TMDB divergences). The only signal
+# that flagged exactly one show across the whole library was `premiered` against
+# TMDB's `first_air_date`: TZ. So `premiered` is the trigger; the tvdb/originaltitle
+# disagreement becomes a repair TARGET once the trigger has fired.
+#
+# FAIL OPEN. No key, no id, a transport error or a 404 -> no opinion and no rewrite.
+# A dead pinned id is NOT flagged here: One Pace is intentionally identity-less and
+# carries its own art, and §7 already says "no TMDB is only a defect when the poster
+# is also missing", which `identity_missing` owns.
+
+def _nfo_text(show_dir):
+    try:
+        return (Path(show_dir) / "tvshow.nfo").read_text(encoding="utf-8",
+                                                         errors="ignore")
+    except OSError:
+        return ""
+
+
+def _nfo_identity(show_dir):
+    """The identity fields of a show's `tvshow.nfo` (missing keys are None)."""
+    text = _nfo_text(show_dir)
+    if not text:
+        return {}
+    out = {}
+    for key in ("title", "originaltitle", "year", "premiered"):
+        m = re.search(rf"<{key}>\s*(.*?)\s*</{key}>", text, re.I | re.S)
+        out[key] = m.group(1).strip() if m else None
+    ids = _nfo_provider_ids(show_dir)
+    out["tmdbid"] = ids.get("Tmdb")
+    out["tvdbid"] = ids.get("Tvdb")
+    return out
+
+
+def _title_art_files(show_dir):
+    """Title-level art on disk: the series cover/backdrop and every season poster."""
+    sd = Path(show_dir)
+    out = []
+    for name in ("folder.jpg", "poster.jpg", "landscape.jpg", "backdrop.jpg"):
+        p = sd / name
+        if p.exists():
+            out.append(p)
+    out.extend(sorted(sd.glob("season*-poster.*")))
+    return out
+
+
+def _series_identity_problem(show_dir, pids):
+    """`(detail, ident)` when TMDB contradicts the nfo's `premiered`, else None.
+
+    `ident` is the verified TMDB record with a `tmdb_id` key added, for the repair.
+    """
+    pids = pids or {}
+    nfo = _nfo_identity(show_dir)
+    tmdb_id = pids.get("Tmdb") or nfo.get("tmdbid")
+    if not tmdb_id:
+        return None
+    try:
+        import tmdbguide
+        ident = tmdbguide.show_identity(tmdb_id)
+    except Exception:                                            # noqa: BLE001
+        return None
+    if not ident or ident.get("dead"):
+        return None
+    first = str(ident.get("first_air_date") or "")[:4]
+    prem = str(nfo.get("premiered") or "")[:4]
+    if not (first.isdigit() and prem.isdigit()):
+        return None
+    if abs(int(first) - int(prem)) <= 1:
+        return None
+    ident = dict(ident)
+    ident["tmdb_id"] = str(tmdb_id)
+    why = [f"nfo premiered {nfo.get('premiered')} vs TMDB first air date "
+           f"{ident.get('first_air_date')}"]
+    if nfo.get("tvdbid") and ident.get("tvdb_id") \
+            and str(nfo["tvdbid"]) != str(ident["tvdb_id"]):
+        why.append(f"nfo tvdbid {nfo['tvdbid']} vs TMDB-records {ident['tvdb_id']}")
+    if nfo.get("originaltitle") and ident.get("original_name") \
+            and nfo["originaltitle"] != ident["original_name"] \
+            and nfo["originaltitle"] != ident.get("name"):
+        why.append(f"nfo originaltitle {nfo['originaltitle']!r} is neither name")
+    return (f"series identity is contaminated ({'; '.join(why)}) -- TMDB {tmdb_id} "
+            f"is {ident.get('name')!r} ({ident.get('year')}); the season year and the "
+            f"on-disk title art predate the correct match and will not be replaced "
+            f"on their own", ident)
+
+
+def _set_xml_tag(text, tag, value, root):
+    """Set a simple tag, or insert it before the closing `root` tag. `value=None` skips."""
+    if value is None:
+        return text
+    pat = re.compile(rf"<{tag}>.*?</{tag}>", re.S | re.I)
+    repl = f"<{tag}>{value}</{tag}>"
+    if pat.search(text):
+        return pat.sub(repl, text, count=1)
+    return text.replace(f"</{root}>", f"  {repl}\n</{root}>", 1)
+
+
+def _set_uniqueid(text, kind, value, default=False):
+    if not value:
+        return text
+    pat = re.compile(rf'<uniqueid[^>]*type="{kind}"[^>]*>.*?</uniqueid>', re.S | re.I)
+    attrs = f'type="{kind}"' + (' default="true"' if default else '')
+    repl = f"<uniqueid {attrs}>{value}</uniqueid>"
+    if pat.search(text):
+        return pat.sub(repl, text, count=1)
+    return text.replace("</tvshow>", f"  {repl}\n</tvshow>", 1)
+
+
+def _download_bytes(url, timeout=60):
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": getattr(config, "USER_AGENT", None)
+                          or "Torrent-Ingest/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:   # noqa: S310
+            return r.read()
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
+def _write_bytes_atomic(path, data):
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
+def _rewrite_series_identity(show_dir, ident):
+    """Rewrite tvshow.nfo identity fields from a verified TMDB record.
+
+    Surgical: plot, genres, actors, ratings and lockdata are untouched. The
+    show-level `<season>`/`<episode>` keys go -- Jellyfin's saver leaves them at -1
+    after a null-index scrape and they render the "Season Unknown" ghost row -- as do
+    the legacy `<id>`/`<episodeguide>` TVDB elements. Returns 1 when written.
+    """
+    nfo = Path(show_dir) / "tvshow.nfo"
+    try:
+        text = nfo.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return 0
+    if not text:
+        return 0
+    name = ident.get("name") or None
+    first = ident.get("first_air_date") or None
+    text = _set_xml_tag(text, "title", name, "tvshow")
+    text = _set_xml_tag(text, "originaltitle", ident.get("original_name") or name,
+                        "tvshow")
+    text = _set_xml_tag(text, "year", ident.get("year"), "tvshow")
+    text = _set_xml_tag(text, "premiered", first, "tvshow")
+    text = _set_xml_tag(text, "releasedate", first, "tvshow")
+    # `enddate` carries the old identity's last air date (TZ held Too Cute's
+    # 2013-03-06) and would otherwise survive every other field being corrected.
+    text = _set_xml_tag(text, "enddate", ident.get("last_air_date") or None, "tvshow")
+    text = _set_xml_tag(text, "tvdbid", ident.get("tvdb_id"), "tvshow")
+    text = _set_xml_tag(text, "tmdbid", ident.get("tmdb_id"), "tvshow")
+    text = _set_uniqueid(text, "tvdb", ident.get("tvdb_id"), default=True)
+    text = _set_uniqueid(text, "tmdb", ident.get("tmdb_id"))
+    text = re.sub(r"<season>-?\d+</season>\s*", "", text, flags=re.I)
+    text = re.sub(r"<episode>-?\d+</episode>\s*", "", text, flags=re.I)
+    text = re.sub(r"<id>\d+</id>\s*", "", text, flags=re.I)
+    text = re.sub(r"<episodeguide>.*?</episodeguide>\s*", "", text, flags=re.S | re.I)
+    library._atomic_write(nfo, text)
+    return 1
+
+
+def _rewrite_season_identity(show_dir, tmdb_id):
+    """Recompute every `season.nfo` year/dates from TMDB and lock it.
+
+    The season year is the season's OWN air date, not the series premiere. Locking is
+    what stops Jellyfin re-stamping the old identity over the repair. Returns the
+    number of season.nfo files written.
+    """
+    written = 0
+    try:
+        import tmdbguide
+    except Exception:                                            # noqa: BLE001
+        return 0
+    for sd in sorted(Path(show_dir).glob("Season *")):
+        m = re.search(r"(\d+)", sd.name)
+        season_nfo = sd / "season.nfo"
+        if not m or not season_nfo.exists():
+            continue
+        try:
+            text = season_nfo.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if not text:
+            continue
+        info = tmdbguide.season_info(tmdb_id, int(m.group(1)))
+        if not info:
+            continue
+        text = _set_xml_tag(text, "year", info.get("year"), "season")
+        text = _set_xml_tag(text, "premiered", info.get("air_date"), "season")
+        text = _set_xml_tag(text, "releasedate", info.get("air_date"), "season")
+        if "<lockdata>" in text:
+            text = re.sub(r"<lockdata>.*?</lockdata>", "<lockdata>true</lockdata>",
+                          text, count=1, flags=re.S | re.I)
+        library._atomic_write(season_nfo, text)
+        written += 1
+    return written
+
+
+def _replace_title_art(show_dir, tmdb_id, art_paths, ensure=()):
+    """Overwrite contaminated title-level art with the verified identity's own.
+
+    `art_paths` are the files to REPLACE (they exist and carry the old identity's
+    bytes). `ensure` names files to (re)create even when absent -- a repair that
+    re-identifies a show also restores its cover/backdrop, because Jellyfin's own
+    refresh may remove the local file and not save a replacement. A file the
+    provider has no image for is left alone: counted as failed only when it was a
+    replacement, skipped when it was merely being ensured, so a show whose provider
+    lacks a backdrop is not retried forever.
+
+    Returns `(fixed, failed)`.
+    """
+    try:
+        import tmdbguide
+        urls = tmdbguide.art_urls(tmdb_id)
+    except Exception:                                            # noqa: BLE001
+        urls = None
+    sd = Path(show_dir)
+    paths = [Path(p) for p in (art_paths or ())]
+    ensured = [sd / n for n in (ensure or ()) if (sd / n) not in paths]
+    if not urls:
+        return 0, len(paths)
+    fixed = failed = 0
+    for p in paths + ensured:
+        name = p.name.lower()
+        url = None
+        m = re.match(r"season0*(\d+)-poster", name)
+        if m:
+            info = tmdbguide.season_info(tmdb_id, int(m.group(1)))
+            url = info.get("poster_url") if info else None
+        elif "landscape" in name or "backdrop" in name:
+            url = urls.get("backdrop")
+        else:
+            url = urls.get("poster")
+        data = _download_bytes(url)
+        if not data:
+            if p in ensured:
+                continue                     # nothing to restore from; not a failure
+            failed += 1
+            continue
+        try:
+            _write_bytes_atomic(p, data)
+            fixed += 1
+        except OSError:
+            failed += 1
+    return fixed, failed
 
 
 # --- locally-generated series cover ------------------------------------------
@@ -1271,6 +1546,53 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
             "scrape poster/metadata against; needs (re-)identification",
             auto=False, sev=3)
 
+    # Series-level identity and title art (HANDOFF 10.3). Runs BEFORE the pool-only
+    # early return: a series whose videos are all evicted still shows the contaminated
+    # nfo and cover in the app. The trigger is computed against TMDB (`premiered` vs
+    # `first_air_date`); everything else in the nfo is a repair target, not a trigger.
+    try:
+        ident_hit = _series_identity_problem(show_dir, cur_pids)
+    except Exception as e:                                        # noqa: BLE001
+        _log(f"  {show_dir.name}: series identity check failed ({e})")
+        ident_hit = None
+    if ident_hit:
+        detail, ident = ident_hit
+        present_art = [str(p) for p in _title_art_files(show_dir)]
+        add("series_identity_stale", detail, auto=True, sev=3, ident=ident)
+        if present_art:
+            add("series_art_stale",
+                f"{len(present_art)} title-level image(s) (cover/backdrop/season "
+                f"poster) were fetched under the contaminated identity and are the "
+                f"other show's", auto=True, sev=3, art=present_art, ident=ident)
+    else:
+        # A previous pass corrected the identity but could not fetch every image
+        # (provider blip). The identity trigger is gone, so without this the
+        # contaminated bytes would stay forever -- keep the job alive.
+        st_show = (state or {}).get(show_dir.name) or {}
+        pending = st_show.get("art_pending") or {}
+        pend_art = [p for p in (pending.get("art") or []) if Path(p).exists()]
+        if pend_art:
+            add("series_art_stale",
+                f"{len(pend_art)} title-level image(s) still carry the contaminated "
+                f"identity's art (a previous provider fetch failed)",
+                auto=True, sev=3, art=pend_art, ident=pending.get("ident") or {})
+        else:
+            # The identity was repaired but a later Jellyfin image refresh removed
+            # the local cover/backdrop without saving replacements (measured
+            # 2026-09-20 on TZ: folder.jpg and landscape.jpg both vanished). The
+            # repaired identity is the standing fact; restore the missing art.
+            fixed_ident = (st_show.get("identity_fixed") or {}).get("ident") or {}
+            if not fixed_ident.get("tmdb_id") and st_show.get("identity_fixed_ts"):
+                fixed_ident = {"tmdb_id": _nfo_identity(show_dir).get("tmdbid")}
+            if fixed_ident.get("tmdb_id"):
+                missing = [n for n in ("folder.jpg", "landscape.jpg")
+                           if not (Path(show_dir) / n).exists()]
+                if missing:
+                    add("series_art_stale",
+                        f"title art missing after an identity repair ({', '.join(missing)}) "
+                        f"-- the verified identity's own art is restored",
+                        auto=True, sev=2, art=[], ident=fixed_ident)
+
     if disk_count == 0:
         return probs   # pool-only episodes; nothing further to reconcile on disk this pass
 
@@ -1392,13 +1714,23 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
     # then reads that junk over a good scraped title, which is how a title that
     # "was fine" silently reverts.
     jf_name = {}
+    jf_slot_null = 0
     for e in jf_with_path:
         try:
             jf_name[str(Path(e["Path"]).resolve())] = e.get("Name") or ""
+            # A filename that states SxxEyy but an item with a NULL index: Jellyfin
+            # renders the series name for the episode and can hold a "Season Unknown"
+            # ghost row. Setting the DTO indexes is the one cure that does not depend
+            # on the nfo being re-read (measured 2026-09-20).
+            _sp = _parse_span(Path(e["Path"]).name)
+            if _sp and (e.get("ParentIndexNumber") is None
+                        or e.get("IndexNumber") is None):
+                jf_slot_null += 1
         except Exception:                                             # noqa: BLE001
             pass
     janky_fixable = janky_escalate = nfo_stale = jf_stale = blank = unreadable = 0
     contradicts_fixable = 0
+    slot_missing = 0
     contradicts_review = []
     # WHICH episodes, not just how many. The escalation used to hand the model a COUNT
     # ("6 episode(s) with release-group/blank titles") and a folder path, though this very
@@ -1427,6 +1759,13 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
         rendered = jf_name.get(str(v.resolve()))
         stem = v.stem
         span = _parse_span(v.name)
+        # A sidecar that exists but carries no <season>/<episode>: Jellyfin reads
+        # IndexNumber null from it, shows the series name for the episode and can
+        # invent a "Season Unknown" row (the TZ S02 fault, HANDOFF 10.3). Jellyfin's
+        # own saver writes these when the item had null indexes at scrape time; the
+        # fleet's writer must put them back.
+        if text and span and _nfo_episode_slot(v) is None:
+            slot_missing += 1
         generic_ok = bool(span) and span[0] in generic_ok_seasons
         nfo_janky = _title_is_janky(nfo_title, stem, generic_ok)
         jf_janky = _title_is_janky(rendered, stem, generic_ok) if rendered is not None else False
@@ -1507,6 +1846,18 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
             f"that is the MOUNT, not the metadata. Nothing here needs re-identifying or "
             f"re-filling; re-check after the mount settles",
             auto=False, sev=2)
+    if slot_missing:
+        add("episode_slot_missing",
+            f"{slot_missing} episode sidecar(s) exist but carry no <season>/<episode>, "
+            f"so Jellyfin shows a null index and a ghost season; the writer must emit "
+            f"the slot the filename states",
+            auto=True, sev=3)
+    if jf_slot_null:
+        add("episode_index_missing",
+            f"{jf_slot_null} episode(s) resolve in Jellyfin with a NULL season/episode "
+            f"index although the filename states one -- the app shows the series name "
+            f"and a ghost season; the index is set on the item",
+            auto=True, sev=2)
     if blank:
         add("plot_blank", f"{blank} episode(s) blank for >48h (no synopsis)", auto=False, sev=1,
             items=blank_items)
@@ -1533,15 +1884,31 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
 
 # --- mechanical auto-fixes ---------------------------------------------------
 
-def _write_nfo_title(video, title, ep):
-    """Rewrite the episode .nfo <title>/<episode>, lock it. Deterministic fix for
-    a filename that already carries the real title."""
+def _write_nfo_title(video, title, ep, season=None):
+    """Rewrite the episode .nfo <title>, ENSURE <season>/<episode>, lock it.
+
+    The slot keys are not decoration: Jellyfin reads IndexNumber from the sidecar, and
+    a sidecar that lacks them renders a null index (the title falls back to the series
+    name) and can create a ghost "Season Unknown" row. Jellyfin's own saver writes
+    these sidecars without the keys when the item had null indexes at scrape time
+    (TZ S02, HANDOFF 10.3), so the fleet's writer inserts them when missing.
+    """
     nfo = library.episode_nfo_path(video)
     if not nfo.exists():
         return
     txt = nfo.read_text("utf-8-sig", "ignore")
-    if "<title>" in txt:
+    if title and "<title>" in txt:
         txt = re.sub(r"<title>.*?</title>", f"<title>{title}</title>", txt, flags=re.S)
+    for tag, val in (("season", season), ("episode", ep)):
+        if val is None:
+            continue
+        pat = re.compile(rf"<{tag}>.*?</{tag}>", re.S | re.I)
+        repl = f"<{tag}>{int(val)}</{tag}>"
+        if pat.search(txt):
+            txt = pat.sub(repl, txt, count=1)
+        elif "</episodedetails>" in txt:
+            txt = txt.replace("</episodedetails>",
+                              f"  {repl}\n</episodedetails>", 1)
     if "<lockdata>" in txt:
         txt = re.sub(r"<lockdata>.*?</lockdata>", "<lockdata>true</lockdata>", txt, flags=re.S)
     nfo.write_text(txt, encoding="utf-8")
@@ -1623,6 +1990,225 @@ def apply_auto_fixes(probs, jf, state, dry_run, cycle_budget):
 
     if probs["age"] < MIN_AGE_REFRESH_SEC:
         return acted                              # too fresh; give Jellyfin its turn
+
+    # --- series identity + title art (HANDOFF 10.3) ---
+    # Computed, not judged: `_series_identity_problem` only fires when the provider
+    # contradicts the nfo's own `premiered`. The repair is then total -- every identity
+    # field is rewritten from the verified record, the season years are recomputed and
+    # locked, the contaminated art is overwritten with the identity's own, and one
+    # recursive metadata+image refresh makes Jellyfin re-read the locked local files.
+    if "series_identity_stale" in kinds and sid:
+        payload = next(p for p in probs["problems"] if p["kind"] == "series_identity_stale")
+        ident = dict(payload.get("ident") or {})
+        tmdb_id = str(ident.get("tmdb_id") or "")
+        ident["tmdb_id"] = tmdb_id
+        art = next((p.get("art") for p in probs["problems"]
+                    if p["kind"] == "series_art_stale"), []) or []
+        acted.append(
+            f"rewrite tvshow.nfo identity from TMDB ({ident.get('name')!r}, "
+            f"{ident.get('year')})" + (f" and replace {len(art)} title image(s)"
+                                       if art else ""))
+        if not dry_run:
+            # ORDER IS THE WHOLE REPAIR (measured 2026-09-20 on TZ). Everything
+            # Jellyfin-side goes FIRST: the nfo files are written LAST, after
+            # Jellyfin's own refresh has settled, because `RemoteSearch/Apply`
+            # triggers an asynchronous metadata+image refresh whose NFO saver
+            # otherwise overwrites the fresh files with the stale DB values --
+            # an earlier attempt at this repair watched it revert tvshow.nfo,
+            # season.nfo (year 2013) and the S02 slot tags within seconds.
+            #
+            # 1) RE-MATCH THE JELLYFIN ITEM. The existing cure for a wrong
+            #    identity: sets ProviderIds and, with replaceAllImages, purges
+            #    the old show's artwork.
+            rematched = False
+            ids = {}
+            if tmdb_id:
+                ids["Tmdb"] = tmdb_id
+            if ident.get("tvdb_id"):
+                ids["Tvdb"] = str(ident["tvdb_id"])
+            if ids:
+                try:
+                    jf.apply_identification(sid, ident.get("name") or show, ids,
+                                            year=ident.get("year"),
+                                            replace_images=True)
+                    acted.append("re-match the Jellyfin item to the verified identity")
+                    rematched = True
+                except Exception as exc:                          # noqa: BLE001
+                    _log(f"  {show}: identity re-match failed: {exc}")
+            # 2) Correct the season ITEMS too. Jellyfin's saver writes season.nfo
+            #    from the season item, so rewriting the file alone is undone on the
+            #    next save (TZ S1 answered 2013 from the Too Cute match).
+            try:
+                import tmdbguide
+                for s in jf.get(f"Shows/{sid}/Seasons",
+                                userId=jf.user_id()).get("Items", []):
+                    n = s.get("IndexNumber")
+                    if n is None:
+                        continue
+                    info = tmdbguide.season_info(tmdb_id, n)
+                    if not info:
+                        continue
+                    fields = {"LockData": True}
+                    if info.get("year"):
+                        fields["ProductionYear"] = int(info["year"])
+                    if info.get("air_date"):
+                        fields["PremiereDate"] = f"{info['air_date']}T00:00:00.0000000Z"
+                    jf.update_item(s["Id"], **fields)
+            except Exception as exc:                              # noqa: BLE001
+                _log(f"  {show}: season field sync failed: {exc}")
+            # 3) Lock the corrected identity on the series item. `LockData` is the
+            #    durable half of the sidecar lock (OPERATING §5b). Only these names
+            #    are in Jellyfin's MetadataField enum; measured 2026-09-20,
+            #    OriginalTitle/ProductionYear/PremiereDate/Taglines answer 400 --
+            #    but those three are SETTABLE on the DTO, so they are written too.
+            try:
+                fields = {
+                    "LockData": True,
+                    "LockedFields": sorted({
+                        "Name", "Overview", "Genres", "Studios", "OfficialRating",
+                        "Tags", "Cast"}),
+                }
+                if ident.get("original_name"):
+                    fields["OriginalTitle"] = ident["original_name"]
+                if ident.get("year"):
+                    fields["ProductionYear"] = int(ident["year"])
+                if ident.get("first_air_date"):
+                    fields["PremiereDate"] = f"{ident['first_air_date']}T00:00:00.0000000Z"
+                jf.update_item(sid, **fields)
+                acted.append("lock the corrected identity on the Jellyfin item")
+                st["identity_fixed_ts"] = now
+                st["identity_fixed"] = {"ident": ident, "ts": now}
+            except Exception as exc:                              # noqa: BLE001
+                _log(f"  {show}: identity lock failed: {exc}")
+            # 4) Let the re-match's async refresh finish before writing files.
+            if rematched:
+                time.sleep(REIDENTIFY_SETTLE_SEC)
+            # 5) Rewrite the on-disk records through the tool, LAST.
+            try:
+                written = _rewrite_series_identity(path, ident)
+                seasons = _rewrite_season_identity(path, tmdb_id)
+                if written or seasons:
+                    _log(f"  {show}: identity rewritten from TMDB {tmdb_id} "
+                         f"({seasons} season.nfo)")
+            except Exception as exc:                              # noqa: BLE001
+                _log(f"  {show}: tvshow.nfo rewrite failed: {exc}")
+            # 6) Replace the contaminated title art with the identity's own bytes --
+            #    and restore the cover/backdrop/season posters a Jellyfin refresh may
+            #    have removed, so the owner-visible shelf is complete after a repair.
+            ensure = ["folder.jpg", "landscape.jpg"]
+            for sd_season in sorted(Path(path).glob("Season *")):
+                m = re.search(r"(\d+)", sd_season.name)
+                if m:
+                    ensure.append(f"season{int(m.group(1)):02d}-poster.jpg")
+            try:
+                fixed, failed = _replace_title_art(path, tmdb_id, art,
+                                                   ensure=ensure)
+                if fixed:
+                    acted.append(f"replaced/restored {fixed} title image(s) with the "
+                                 f"verified identity's art")
+                if failed:
+                    # Not all art could be fetched. Keep the job alive for a
+                    # later pass instead of dropping it: identity is now
+                    # correct on disk, so the trigger would never fire again.
+                    st["art_pending"] = {"ident": ident, "art": art}
+                    acted.append(f"{failed} title image(s) left as-is (provider "
+                                 f"had none this pass; retried next cycle)")
+                else:
+                    st.pop("art_pending", None)
+            except Exception as exc:                              # noqa: BLE001
+                st["art_pending"] = {"ident": ident, "art": art}
+                _log(f"  {show}: title art replace failed: {exc}")
+            folder = Path(path) / "folder.jpg"
+            if folder.exists():
+                try:
+                    jf.push_primary(sid, folder.read_bytes())
+                except Exception as exc:                          # noqa: BLE001
+                    _log(f"  {show}: poster push failed: {exc}")
+        else:
+            st["identity_fixed_ts"] = now
+
+    if "series_art_stale" in kinds and "series_identity_stale" not in kinds and sid:
+        payload = next(p for p in probs["problems"] if p["kind"] == "series_art_stale")
+        ident = dict(payload.get("ident") or {})
+        tmdb_id = str(ident.get("tmdb_id") or "")
+        art = payload.get("art") or []
+        acted.append(f"retry {len(art)} title image(s) still carrying the old "
+                     f"identity's art")
+        if not dry_run and tmdb_id:
+            ensure = ["folder.jpg", "landscape.jpg"]
+            for sd_season in sorted(Path(path).glob("Season *")):
+                m = re.search(r"(\d+)", sd_season.name)
+                if m:
+                    ensure.append(f"season{int(m.group(1)):02d}-poster.jpg")
+            fixed, failed = _replace_title_art(path, tmdb_id, art, ensure=ensure)
+            if fixed:
+                acted.append(f"replaced {fixed} title image(s)")
+            if failed:
+                st["art_pending"] = {"ident": ident, "art": art}
+                acted.append(f"{failed} still unavailable (retried next cycle)")
+            else:
+                st.pop("art_pending", None)
+                folder = Path(path) / "folder.jpg"
+                if folder.exists():
+                    try:
+                        jf.push_primary(sid, folder.read_bytes())
+                    except Exception as exc:                      # noqa: BLE001
+                        _log(f"  {show}: poster push failed: {exc}")
+
+    if ("episode_slot_missing" in kinds or "episode_index_missing" in kinds) and sid:
+        victims = []
+        for v in _episode_videos(Path(path)):
+            nfo = library.episode_nfo_path(v)
+            if not nfo.exists():
+                continue
+            try:
+                if _nfo_episode_slot(v) is not None:
+                    continue
+                span = _parse_span(v.name)
+                if not span:
+                    continue
+                victims.append((v, span[0], span[1]))
+            except OSError:
+                continue
+        if victims or "episode_index_missing" in kinds:
+            acted.append(f"add <season>/<episode> to {len(victims)} episode sidecar(s) "
+                         f"and the same index on the Jellyfin item(s)")
+            if not dry_run:
+                fixed = 0
+                for v, season, episode in victims:
+                    nfo = library.episode_nfo_path(v)
+                    title = library._xml_tag(nfo.read_text("utf-8", "ignore"), "title")
+                    try:
+                        _write_nfo_title(v, title or v.stem, episode, season=season)
+                        fixed += 1
+                    except OSError as exc:
+                        _log(f"  {show}: slot write failed for {v.name}: {exc}")
+                # The sidecar alone is not enough: Jellyfin's DB copy is what the app
+                # renders, and a scan does not necessarily re-read it. Set the item's
+                # own ParentIndexNumber/IndexNumber, which also makes Jellyfin's own
+                # saver emit the tags on its next write. LockData on the episode stops
+                # a later refresh reverting to the null index.
+                item_fixed = 0
+                for e in jf.episodes(sid):
+                    p = e.get("Path")
+                    if not p:
+                        continue
+                    span = _parse_span(Path(p).name)
+                    if not span:
+                        continue
+                    if e.get("ParentIndexNumber") == span[0] \
+                            and e.get("IndexNumber") == span[1]:
+                        continue
+                    try:
+                        jf.update_item(e["Id"], ParentIndexNumber=span[0],
+                                       IndexNumber=span[1], LockData=True)
+                        item_fixed += 1
+                    except Exception as exc:                      # noqa: BLE001
+                        _log(f"  {show}: index update failed for {Path(p).name}: {exc}")
+                # Deliberately NO metadata refresh here: the item indexes are set
+                # directly, and a `meta="Default"` refresh makes Jellyfin's NFO saver
+                # rewrite the sidecars (dropping the slot tags we just wrote) --
+                # measured 2026-09-20 on TZ. The app reads the DTO, not the file.
 
     # --- missing episodes ladder ---
     if "series_missing" in kinds:
@@ -2038,13 +2624,41 @@ def _episode_block(escalate_probs):
     return "\n".join(rows)
 
 
+def _metadata_repair_state(show_path):
+    """`(blank_plots, junk_titles)` on disk -- the postcondition an escalation must move.
+
+    HANDOFF 10.4 reason 3: `escalate()` counted any non-empty closing sentence as
+    success, so two timed-out/empty Toriko runs burned `escalate_n` and
+    `MAX_ESCALATIONS_PER_SIG` retired the show permanently. The budget is charged only
+    when the artifact actually changed.
+    """
+    blank = junk = 0
+    try:
+        videos = _episode_videos(Path(show_path))
+    except Exception:                                            # noqa: BLE001
+        return (0, 0)
+    for v in videos:
+        nfo = library.episode_nfo_path(v)
+        try:
+            text = nfo.read_text("utf-8", "ignore") if nfo.exists() else ""
+        except OSError:
+            continue
+        if not library._xml_tag(text, "plot"):
+            blank += 1
+        if _title_is_janky(library._xml_tag(text, "title") or "", v.stem):
+            junk += 1
+    return (blank, junk)
+
+
 def escalate(probs, dry_run):
     """Spawn one headless AI run to fix a show's judgment-level problems.
 
-    Returns True only when a run actually happened AND said something. An empty run is
-    NOT success: `escalate_n` is spent on the return value, and a show that burns
-    MAX_ESCALATIONS_PER_SIG on silent runs is never retried again. Every show repaired by
-    hand on 2026-09-03 was sitting at `escalate_n: 2` for exactly that reason.
+    Returns True only when a run actually happened, said something, AND the on-disk
+    artifact changed. An empty run is NOT success: `escalate_n` is spent on the return
+    value, and a show that burns MAX_ESCALATIONS_PER_SIG on silent runs is never retried
+    again. Every show repaired by hand on 2026-09-03 was sitting at `escalate_n: 2` for
+    exactly that reason. The postcondition check is the second half of that lesson
+    (HANDOFF 10.4): a run that talks but writes nothing must not retire the show either.
     """
     escalate_probs = [p for p in probs["problems"] if not p["auto"]]
     if not escalate_probs:
@@ -2066,8 +2680,9 @@ def escalate(probs, dry_run):
            "--max-turns", "80", "--timeout", "1740"]
     if config.AI_MODEL:
         cmd += ["--model", config.AI_MODEL]
+    before = _metadata_repair_state(probs.get("path"))
     _log(f"  escalating '{probs['show']}' to a headless AI run "
-         f"({len(escalate_probs)} problem(s))...")
+         f"({len(escalate_probs)} problem(s); before blank/junk={before})...")
     try:
         proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                               timeout=1800, env=_ai_env(), cwd=str(config.PROJECT_ROOT))
@@ -2091,7 +2706,18 @@ def escalate(probs, dry_run):
         _log(f"  {probs['show']}: escalation produced nothing "
              f"(exit {proc.returncode}); NOT counted against its retry budget: {why}")
         return False
-    _log(f"  {probs['show']}: escalation finished -- {result[:300]}")
+    # VERIFY THE POSTCONDITION BEFORE CHARGING THE BUDGET (HANDOFF 10.4). A run that
+    # returns a confident paragraph but leaves the .nfo files unchanged has not
+    # repaired anything, and counting it is how Toriko reached escalate_n=2 and was
+    # retired for good. Only a real reduction in blank plots / junk titles counts.
+    after = _metadata_repair_state(probs.get("path"))
+    if after >= before:
+        _log(f"  {probs['show']}: escalation finished but the sidecars did not change "
+             f"(blank/junk {before} -> {after}); NOT counted against its retry budget "
+             f"-- it will be retried when providers recover")
+        return False
+    _log(f"  {probs['show']}: escalation repaired metadata on disk "
+         f"(blank/junk {before} -> {after}) -- {result[:200]}")
     return True
 
 

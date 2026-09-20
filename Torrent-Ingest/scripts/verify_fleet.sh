@@ -337,6 +337,11 @@ run "comic kind splits fold + fail open (both ways)" \
 # subprocess now).
 run "manga chapters yield to volumes (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_manga_chapter_reconcile.py
+# The manga tiers are COMPUTED from the archives (HANDOFF 10.5a-d): volume ceiling,
+# volume->chapter sets, colour from entry names, and a mislabel that is refused and
+# repairable. This is the guard that makes "One Piece v1176 should be c1176" a fact.
+run "manga tiers are computed from the archives (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_manga_mislabels.py
 # A release that names every part of a story with the same `SxxEyy` (the SERIAL) was
 # misfiled twice by two different models: once on the original ingest, then again on the
 # re-fetch waves (28 files). The harness now COMPUTES the broadcast numbers from the
@@ -346,6 +351,23 @@ run "manga chapters yield to volumes (both ways)" \
 # produces no map, so the guard cannot touch normal plans.
 run "serial-numbered releases compute their numbering" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_serial_release_numbering.py
+# Release-order packs (The Smurfs: `S01E01 (The Smurfette)`, broadcast S01E31) compute
+# their broadcast slots from their own titles, the harness hands a skeleton to large
+# plans, and a truncated plan's missing slice is named before the run ends (HANDOFF 10.9).
+run "release-order titles compute broadcast numbering" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_release_title_numbering.py
+# A provider id must name the show the plan says it does (HANDOFF 10.3). TZ (2019) was
+# filed with the TMDB id of *Too Cute* and the wrong TVDB id, and the wrong id authored
+# the nfo and picked the cover. A contradicted id is stripped; a network error fails open.
+run "provider ids are verified before they can pick art (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_provider_id_verify.py
+# Series-level identity and title art self-heal (HANDOFF 10.3). The doctor never looked
+# at tvshow.nfo identity fields or folder/landscape/season posters before this, which is
+# why TZ kept the Too Cute cover through every refresh. Trigger is computed against TMDB
+# (`premiered` vs `first_air_date`); a stale `<year>` with a matching premiere does not
+# fire (four live shows carry that harmless shape).
+run "series identity + title art heal (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_series_identity_heal.py
 # The arc->season mapping the harness now COMPUTES, and the two guards that enforce it.
 # This is the acceptance gate's own check: Monogatari failed three runs because nothing
 # married the release's arcs to the provider's seasons, and the counts lined up perfectly
@@ -374,6 +396,11 @@ run "chunked progress is proven, not remembered (both ways)" \
 # to prove the new rules refuse nothing the old ones accepted.
 run "English-only language gates (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_language_gate.py
+# Metadata self-heal must SEE a pool-only show (the audit read the local SSD and Toriko
+# was evicted), accept name-only guide rows, have a synopsis source, and charge the AI
+# escalation budget only when the sidecars actually change (HANDOFF 10.4).
+run "metadata heal sees the mount and verifies writes (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_metadata_heal.py
 # This repository is public. It used to track the MEGA account pool (822 remotes with
 # user/pass) and a live Jellyfin API key in nine plists; both moved to machine-local
 # `.env`/an untracked conf on 2026-09-19. A `.gitignore` rule is not a guard against
@@ -395,6 +422,20 @@ else
   echo "DARK -- see below (does not block shipping)"
   echo "$gate_out" | sed 's/^/      /'
 fi
+
+# ---- advisory: the owner's five verified failures (10.10F) -------------------
+# §2.6: a fix is real only where the owner can see it. Checks the actual artifacts
+# (TZ art bytes and nfo, the One Piece shelf, the Smurfs plan) and prints PASS/FAIL.
+# Never blocks shipping: the Smurfs pack is deliberately parked until the plan tool
+# ships, and a reaper purge may still be draining when this runs.
+echo
+printf '%-46s' "owner report (advisory)"
+if own_out="$(env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/verify_owner_report.py 2>&1)"; then
+  echo "see below"
+else
+  echo "report failed to run (does not block shipping)"
+fi
+echo "$own_out" | sed 's/^/      /'
 
 # ---- advisory: can identify RUN at all? -------------------------------------
 # Not blocking, for the same reason as the gate advisory: an exhausted daily cap is a

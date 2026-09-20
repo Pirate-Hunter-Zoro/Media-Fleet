@@ -260,9 +260,11 @@ def _backup_nfo(video_path, backup_root):
 def _guide_index(show_title):
     """(season, episode) -> (title, plot) from TVMaze, or {} when it cannot be had.
 
-    Only episodes carrying BOTH a name and a summary are indexed: repair writes a locked
-    .nfo and a locked sidecar with half the answer in it is worse than a blank one, because
-    nothing will ever revisit it.
+    NAME-ONLY ROWS ARE ACCEPTED (HANDOFF 10.4). Requiring both name and summary is why
+    Toriko -- 146 episode names and ZERO summaries on TVMaze -- produced an empty index
+    and repaired nothing. The title is real metadata and is written; a missing summary
+    is handled separately by the synopsis fallbacks, which must never overwrite the
+    guide's title with a model's guess.
     """
     try:
         eps = epguide.episodes(show_title)
@@ -272,9 +274,69 @@ def _guide_index(show_title):
     for e in eps or []:
         name = (e.get("name") or "").strip()
         plot = (e.get("summary") or "").strip()
-        if name and plot and isinstance(e.get("season"), int) and isinstance(e.get("number"), int):
+        if name and isinstance(e.get("season"), int) and isinstance(e.get("number"), int):
             idx[(e["season"], e["number"])] = (name, plot)
     return idx
+
+
+_JUNK_TITLE = re.compile(r"\[[^\]]+\]|x26[45]|\b\d{3,4}p\b|\b(?:webrip|web-dl|bluray|"
+                         r"aac|hevc)\b", re.IGNORECASE)
+
+
+def _is_junk_title(title):
+    return not title or bool(_JUNK_TITLE.search(title))
+
+
+def _fill_synopses(show, todo, backup_root):
+    """Fill blank `<plot>`s from TMDB episode overviews, keeping the on-disk title.
+
+    The second source in the 10.4 priority order (provider guide -> TMDB/TVDB -> free
+    AI). Only rows still blank after the guide are attempted, and a model summary can
+    never overwrite a provider one because this path writes the title already on disk.
+    Returns `(fixed, residue)`.
+    """
+    tmdb_id = show.get("tmdb_id")
+    if not tmdb_id:
+        return 0, todo
+    by_season = {}
+    for e in todo:
+        by_season.setdefault(e.get("season"), []).append(e)
+    fixed, residue = 0, []
+    for season, rows in sorted(by_season.items(), key=lambda kv: (kv[0] is None, kv[0])):
+        if season is None:
+            residue.extend(rows)
+            continue
+        try:
+            import tmdbguide
+            overviews = tmdbguide.episode_overviews(tmdb_id, season)
+        except Exception:                  # noqa: BLE001
+            overviews = {}
+        for e in rows:
+            plot = overviews.get((e.get("season"), e.get("episode")))
+            if not plot:
+                residue.append(e)
+                continue
+            video = Path(e["video"])
+            title = e.get("title") or ""
+            if not title:
+                nfo = library.episode_nfo_path(video)
+                try:
+                    title = library._xml_tag(nfo.read_text("utf-8", "ignore"), "title")
+                except OSError:
+                    title = ""
+            try:
+                _backup_nfo(video, backup_root)
+                library.write_locked_episode_nfo(video, show.get("show", ""), {
+                    "season": e["season"], "episode": e["episode"],
+                    "episode_title": title or f"Episode {e['episode']}", "plot": plot})
+            except Exception:              # noqa: BLE001
+                residue.append(e)
+                continue
+            if library.episode_is_blank(video, show.get("show", "")):
+                residue.append(e)
+            else:
+                fixed += 1
+    return fixed, residue
 
 
 def _fill_from_guide(show_title, todo, backup_root):
@@ -300,18 +362,31 @@ def _fill_from_guide(show_title, todo, backup_root):
             continue
         name, plot = hit
         video = Path(e["video"])
+        entry = {"season": e["season"], "episode": e["episode"], "episode_title": name}
+        if plot:
+            entry["plot"] = plot
         try:
             _backup_nfo(video, backup_root)
-            library.write_locked_episode_nfo(video, show_title,
-                                             {"season": e["season"], "episode": e["episode"],
-                                              "episode_title": name, "plot": plot})
+            library.write_locked_episode_nfo(video, show_title, entry)
         except Exception:                  # noqa: BLE001
             residue.append(e)
             continue
-        if library.episode_is_blank(video, show_title):
-            residue.append(e)              # the write did not take -- let the AI try
-        else:
-            fixed += 1
+        # Verify the TITLE landed (not `episode_is_blank`, which is plot-centric):
+        # a name-only row is a real partial fill and stays in the residue so the
+        # synopsis sources still visit it, without losing the guide's title.
+        try:
+            text = library._read_text(library.episode_nfo_path(video)) or ""
+        except Exception:                  # noqa: BLE001
+            text = ""
+        if library._xml_tag(text, "title") != name:
+            residue.append(e)              # the write did not take -- let a later pass retry
+            continue
+        if plot and library.episode_is_blank(video, show_title):
+            residue.append(e)              # plot write did not take
+            continue
+        fixed += 1
+        if not plot:
+            residue.append(dict(e, title=name))
     return fixed, residue
 
 
@@ -372,7 +447,15 @@ def repair_show(show, backup_root, batch_size, dry_run, min_age_sec):
         guide_fixed, todo = _fill_from_guide(title, todo, backup_root)
         if guide_fixed:
             print(f"      guide: filled {guide_fixed} deterministically "
-                  f"({len(todo)} left for the AI)")
+                  f"({len(todo)} left for the synopsis source/AI)")
+        # Source 2 (10.4): TMDB episode overviews, for the rows TVMaze named but did
+        # not summarize (Toriko: 146 names, 0 summaries).
+        if todo:
+            syn_fixed, todo = _fill_synopses(show, todo, backup_root)
+            if syn_fixed:
+                guide_fixed += syn_fixed
+                print(f"      TMDB overviews: filled {syn_fixed} synopsis(es) "
+                      f"({len(todo)} left for the AI)")
     if not todo:
         return guide_fixed, guide_fixed, skipped
 
@@ -402,6 +485,17 @@ def repair_show(show, backup_root, batch_size, dry_run, min_age_sec):
             plot = str(obj.get("plot") or "").strip()
             if not e or not ep_title or not plot:
                 continue                   # unmatched or blank -> never written
+            # A MODEL SUMMARY NEVER OVERWRITES A PROVIDER ONE (10.4 source priority):
+            # when the guide already gave a real title, keep it -- the run is here for
+            # the synopsis, not to re-guess what TVMaze answered exactly.
+            try:
+                nfo = library.episode_nfo_path(Path(e["video"]))
+                existing = library._xml_tag(
+                    (library._read_text(nfo) or "") if nfo.exists() else "", "title")
+            except Exception:              # noqa: BLE001
+                existing = ""
+            if existing and not _is_junk_title(existing) and existing != ep_title:
+                ep_title = existing
             entry = {"season": e["season"], "episode": e["episode"],
                      "episode_title": ep_title, "plot": plot}
             library.write_locked_episode_nfo(Path(e["video"]), title, entry)
@@ -652,7 +746,7 @@ def _load_worklist(args):
         data = json.loads(Path(args.worklist).read_text("utf-8"))
         shows = data["shows"]
     else:
-        show_dirs = sorted(p for p in config.SHOWS_ROOT.iterdir() if p.is_dir())
+        show_dirs = sorted(p for p in audit.shows_root().iterdir() if p.is_dir())
         if args.show:
             needles = [n.lower() for n in args.show]
             show_dirs = [d for d in show_dirs if any(n in d.name.lower() for n in needles)]

@@ -1281,9 +1281,11 @@ drops are safe. Consistency within a show matters more than any single episode.
   rewritten). This closes the case where a folder was seeded before its ids were
   known, or Jellyfin wrote an un-pinned `tvshow.nfo` first.
 - **Comics/manga** — the easy case. A `comic` plan is title + designator number:
-  `Comics/Manga/<Series>/<Series> vNN.cbz` (volume), `… cNNNN.cbz` (chapter),
-  `Comics/Manga/<Series> Colored/<Series> Colored vNN.cbz` (colored volume), or
-  `Comics/<Series>/...` (western). No seasons, no specials, no `.nfo`, no metadata —
+  `Comics/Manga/<Series>/<Series> vNN.cbz` (volume), `… cNNNN.cbz` (chapter), or
+  `Comics/<Series>/...` (western). A colored volume is the SAME path — a folder is
+  named for the series, never the edition; colour is a file property read from the
+  archive's own entries and tracked on the `media` row (`<Series> Colored/` is the
+  deleted layout, 2026-09-05). No seasons, no specials, no `.nfo`, no metadata —
   YACReader reads the folder and file names directly. The ground-truth rule still
   applies: match an existing series folder and continue its numbering. **Manga is
   shelved at three tiers — colored volume > black-and-white volume > chapter — and

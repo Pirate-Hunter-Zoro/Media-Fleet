@@ -115,9 +115,12 @@ Comics / manga (served by YACReader — much simpler, metadata-insensitive):
   chapter is a legitimate shelf item now, not junk:
   - **Volume (B/W):** `Comics/Manga/<Series>/<Series> vNN.cbz` (title + two-digit
     volume number — the library's existing convention).
-  - **Colored volume:** `Comics/Manga/<Series> Colored/<Series> Colored vNN.cbz`
-    (colored lives in its own ` Colored` series folder, matching the existing
-    `Slam Dunk Colored` layout — a separate series, not a file suffix).
+  - **Colored volume:** `Comics/Manga/<Series>/<Series> vNN.cbz` — THE SAME FOLDER.
+    A folder is named for the SERIES, never for the edition; colour is a property of
+    the FILE (the fleet reads it from the archive's own entries and tracks it in the
+    library DB). `Comics/Manga/<Series> Colored/` is the OLD layout, it is forbidden,
+    and when a colored and a non-colored copy of one volume coexist the colored copy
+    is the one kept.
   - **Chapter:** `Comics/Manga/<Series>/<Series> cNNNN.cbz` (title + chapter
     number, zero-padded to four digits). File it; its volume supersedes it later.
 
@@ -128,6 +131,12 @@ Comics / manga (served by YACReader — much simpler, metadata-insensitive):
   - Bare series name + a plain number and NO volume marker (e.g. `Sakamoto Days
     217.cbz`, `Guarding the Globe 003 (2011).cbr`) and noticeably smaller than
     the collections in the same release. File as a chapter (`c0217.cbz`).
+  - **VOLUME CEILING — a computed fact, when the runtime context states one.** If
+    a series is shown with "N volumes", then a bare number above N is a CHAPTER and
+    may never be filed as `vNNNN`; a `v` marker above N is a mislabel the harness
+    refuses. A pack named `... v1078` whose files are chapter pages is 104 chapters,
+    not volume 1078. When no ceiling is stated, use name+size as above; never invent
+    a volume number past the last one the library holds.
 
 - **Western comics use the same three tiers, with a collection ladder.** A trade
   paperback / collected volume (`vNN`, `Vol. 1`, `TPB`, `Compendium`) is a volume

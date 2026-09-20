@@ -455,17 +455,24 @@ def upsert_media(conn, series_id: int, mtype: str, season=None, number=None, tit
 
     `add_media` is left exactly as it was: it is the right primitive for a caller that
     genuinely wants a new row, and the acceptance-gate tests build fixtures with it.
+
+    COLOUR IS PART OF A COMIC'S IDENTITY (HANDOFF 10.5d). A coloured `v01` and a grey
+    `v001` used to collapse into one row and `MAX(colored, ?)` made the flag sticky:
+    a stale coloured row could never clear, a grey filing could never be recorded as
+    grey beside it, and superseding one deleted the other. They are two files and now
+    two rows. Episodes/movies are unaffected (`colored` is ignored for them).
     """
-    ident = item_key(mtype, season, number)
+    ident = item_key(mtype, season, number, colored)
     for row in conn.execute(
-            "SELECT id, mtype, season, number, resolution FROM media WHERE series_id = ?",
+            "SELECT id, mtype, season, number, resolution, colored FROM media "
+            "WHERE series_id = ?",
             (series_id,)).fetchall():
-        if item_key(row["mtype"], row["season"], row["number"]) != ident:
+        if item_key(row["mtype"], row["season"], row["number"], row["colored"]) != ident:
             continue
         conn.execute(
             "UPDATE media SET title = COALESCE(?, title), "
             "resolution = MAX(resolution, ?), dual_audio = MAX(dual_audio, ?), "
-            "colored = MAX(colored, ?), info_hash = COALESCE(?, info_hash), "
+            "colored = ?, info_hash = COALESCE(?, info_hash), "
             "path = COALESCE(?, path), status = ?, updated_at = ? WHERE id = ?",
             (title, int(resolution or 0), int(bool(dual_audio)), int(bool(colored)),
              info_hash, path, status, now(), row["id"]))
@@ -565,8 +572,8 @@ def library_episode_list(conn, series_id: int) -> list[dict]:
 
 def coverage(conn, series_id: int) -> dict:
     """A compact per-series coverage index, shaped like the searcher expects:
-    seasons -> {str(s): [episode...]}, max_season, volumes -> {n: colored}, chapters -> [n],
-    movies -> best resolution tier."""
+    seasons -> {str(s): [episode...]}, max_season, volumes -> {n: "grey"|"colored"|"both"},
+    chapters -> [n], movies -> best resolution tier."""
     cov = {"seasons": {}, "max_season": 0, "volumes": {}, "chapters": [],
            "movies_res": 0}
     for m in owned_media(conn, series_id):
@@ -577,7 +584,11 @@ def coverage(conn, series_id: int) -> dict:
             cov["seasons"].setdefault(str(s), set()).add(n)
             cov["max_season"] = max(cov["max_season"], s)
         elif mt == "volume" and n is not None:
-            cov["volumes"][n] = bool(cov["volumes"].get(n) or m["colored"])
+            cur = cov["volumes"].get(n)
+            if cur is None:
+                cov["volumes"][n] = "colored" if m["colored"] else "grey"
+            elif (cur == "colored") != bool(m["colored"]):
+                cov["volumes"][n] = "both"
         elif mt == "chapter" and n is not None:
             cov["chapters"].append(n)
         elif mt == "movie":
@@ -587,14 +598,23 @@ def coverage(conn, series_id: int) -> dict:
     return cov
 
 
-def item_key(mtype: str, season, number) -> tuple:
+def item_key(mtype: str, season, number, colored=None) -> tuple:
     """The stable identity of one owned item: (mtype, season, number). Movies collapse to
     (movie, None, None); episodes key on (episode, season, number); volumes/chapters on
-    their number. This is the granularity the acceptance rule (a)/(b) compares on."""
+    their number AND, when known, their edition.
+
+    `colored=None` is the LEGACY colour-agnostic key, and the inventory-driven passes
+    need it: `remote_inventory.json` records paths, not editions, so its keys must match
+    either copy. Filings and `owned_items` pass the row's/file's own colour, so a
+    coloured `v01` and a grey `v001` are two rows that a purge can tell apart
+    (HANDOFF 10.5d). This is the granularity the acceptance rule (a)/(b) compares on.
+    """
     if mtype == "episode":
         return ("episode", season or 1, number)
     if mtype in ("volume", "chapter"):
-        return (mtype, None, number)
+        if colored is None:
+            return (mtype, None, number)
+        return (mtype, 1 if colored else 0, number)
     if mtype == "movie":
         return ("movie", None, None)
     return (mtype, season, number)
@@ -607,6 +627,10 @@ def owned_items(conn, series_id: int) -> dict:
     {resolution, dual_audio, colored}."""
     out: dict = {}
     for m in owned_media(conn, series_id):
+        # Colour-AGNOSTIC on purpose: the searcher asks "do we own this number", and it
+        # must say yes whichever edition is held (a coloured `v01` covers a grey `v001`
+        # candidate). The colour still lives on the row and the supersede SQL matches on
+        # it, so a purge stays edition-precise; only this lookup collapses.
         key = item_key(m["mtype"], m["season"], m["number"])
         q = {"resolution": m["resolution"] or 0,
              "dual_audio": bool(m["dual_audio"]),
@@ -623,11 +647,21 @@ def owned_items(conn, series_id: int) -> dict:
 
 
 def mark_superseded(conn, series_id: int, mtype: str, season=None,
-                    min_number: int | None = None, max_number: int | None = None) -> int:
+                    min_number: int | None = None, max_number: int | None = None,
+                    colored=None) -> int:
     """Mark owned `mtype` rows superseded (a volume replacing its chapters, a higher
-    definition replacing a lower one, ...). Returns rows affected."""
+    definition replacing a lower one, ...). Returns rows affected.
+
+    For volume/chapter rows the colour is part of the match. `colored=None` means the
+    caller does not know the purged file's edition, and then ONLY grey rows match --
+    the owner's rule is that a grey or unknown file may never supersede a coloured one
+    (HANDOFF 10.5d).
+    """
     q = "UPDATE media SET status = 'superseded' WHERE series_id = ? AND mtype = ?"
     args: list = [series_id, mtype]
+    if mtype in ("volume", "chapter"):
+        q += " AND colored = ?"
+        args.append(1 if colored else 0)
     if season is not None:
         q += " AND season = ?"
         args.append(season)

@@ -54,12 +54,18 @@ Violating any of these has destroyed data or burned a day. They are not style pr
 2. **Never restart the reaper mid-drain.** `pgrep -f 'Torrent-Ingest/reap.py'` — any output
    means leave it alone. A single drain has run for five days.
 3. **`bash Torrent-Ingest/scripts/verify_fleet.sh` must print `ALL CHECKS PASSED` before any
-   deploy.** It is the gate. 53 blocking checks.
+   deploy.** It is the gate. 54 blocking checks.
 4. **Never deploy while an identify run is in flight** — `pgrep -f ai_runner.py`. The run is
    a subprocess of the daemon; a deploy kills it *and* the provider's daily budget with it.
 5. **The model PROPOSES, the harness DISPOSES.** `library.validate_plan` re-derives every
    destination and rejects a bad plan whatever wrote it. **Do not weaken that seam to make a
    model's answer fit.** If a plan is being rejected, the plan is usually wrong.
+6. **A fix is real only where the owner can see it.** A log line, a worklist entry, a green
+   test or a "shipped" commit is not acceptance. The artifact the owner uses — the YacReader
+   shelf/index, the Jellyfin API, the bytes on disk (md5/counts) — must be checked after the
+   repair, and the check output pasted into the commit message, before anything is called
+   fixed. The five faults in §10.0 survived earlier sessions because "fixed" was claimed
+   from logs. A session that cannot show the owner-visible before/after has not shipped.
 
 **Deploying:** `bash ~/Developer/Media-Orchestrator/ship-fleet.sh "what changed"` (or `bash
 scripts/ship.sh`) — commits once at the monorepo root, pushes, and restarts every daemon in
@@ -197,24 +203,92 @@ code cites these files by section number.
 
 ---
 
-## 6. State, verified 2026-09-19 09:05 CDT
+## 6. State, verified 2026-09-20 08:00 CDT
 
-Every number below was measured this session.
+Rows marked **measured** were verified this session (the owner's five, §10.0).
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, 54 blocking checks (2026-09-19, after the §10.1/10.2/10.6 + YacReader-hide work, the public-repo secrets extraction and the rename) |
-| `fleet_doctor` / `fleet_health` | refresh after the post-ship `mediadoctor` pass; see §10.8 for what should read clean |
-| `media_doctor` | Toriko (2011) title/plot faults and the TZ (2019) art faults are §10.3/10.4 — still open |
-| Repo | one monorepo at `~/Developer/Media-Orchestrator`, shipping `aa70cc5` + the 2026-09-19 coverage/rearm/orphan work, the secrets extraction for going public and the directory rename (§11) |
-| Jellyfin | 313 series, 20,052 episodes, 448 movies |
-| Mount | Shows 312 dirs, Movies 449 video files, Manga 102 series — primed and serving |
-| `library.db` | 24,415 owned rows, 2,221 series rows |
-| YacReader | **open (Comics) and hidden; self-updates every 30 min (enforced); no longer restarted for filed comics.** A seen update now proves the library open for the rest of the app run, so a scan that finishes in seconds no longer triggers the "opened no library" alert (false alarm fixed 2026-09-19; loads on the supervisor's next start). Re-opening Comics by hand is needed only after a crash/reboot/deploy |
-| In flight | the **Smurfs identify is retrying** (`6c413306…`; all free providers were capped ~15:00, the wave keeps bytes and retries) and the **reaper is draining** (`reap.py` PID 1229) — do not bounce the reaper (§2.2), and wait for an identify run before any deploy (§2.4). The 2026-09-19 session shipped 10.1/10.2/10.6 plus the YacReader hide/periodic policy, then ran the repairs in §10.7b |
-| Parked re-drops | both are back IN the pipeline and `~/Downloads` is clean: DW (2005) `74c608c7…` re-armed (140/178 carried) and re-dropped, the Smurfs replacement pack `6c413306…` dropped and downloading — watch `state/decisions.log` and the journal for their outcome |
-| Open work | **§10.3–10.5e** (TZ art/ids, Toriko metadata, the One Piece manga/DB/franchise cluster). 10.1, 10.2 and 10.6 are shipped — read the section below before re-doing any of them |
-| Pending after reboot | **§12**: the owner rebooted on 2026-09-19 so launchd would pick up the renamed agents. Confirm every daemon runs from `~/Developer/Media-Orchestrator`, then remove the `~/Developer/Media-Fleet` symlink. The reboot deliberately bounced the in-flight Smurfs identify and the reaper drain (§2.2/§2.4 waived for that boot) — verify recovery, do **not** deploy again |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, **59 blocking checks** (2026-09-20, after 10.3/10.4/10.5/10.9 and the owner report; 5 checks added) |
+| `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
+| `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
+| Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF |
+| Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
+| Mount | One Piece shelf 322 entries: 100 two-digit + 111 three-digit volumes, 103 chapters, **1 `vNNNN`**, plus 6 renamed `cNNNN` from the mislabel repair. The reconcile queued **127 supersedes** (`c1078` already purged); the reaper's batch is draining them — the mount still lists the queued paths because Media-Syncer is paused inside `purge_batch` (§2.2: do not bounce) |
+| `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; the queued purge's DB mirror completes via `dbhook.record_purge` from the reaper |
+| YacReader | open (Comics), hidden, 30-min self-update. The shelf it indexes reflects the repaired names as the purge drains; re-check `yacreader_rescan.py --files` after |
+| In flight | **no identify run** (`pgrep -f ai_runner.py` empty, 2026-09-20 07:55). Reaper draining a deletion batch (`reap.py` PID 1311, `mediafs_deletions.jsonl.processing` = 128 paths) — do not bounce it (§2.2) |
+| Parked re-drops | The Smurfs pack is unchanged in `~/Downloads/.torrent-ingest/` + `Torrents/failed/`; the plan tooling it needs (§10.9) is shipped and its computed map is verified (362/405 titles matched, 347 differ; release `S01E01 (The Smurfette)` -> broadcast `S01E31`; 409-file skeleton). **Re-drop after the ship** |
+| Open work | §10.0's live acceptance for rows 1 and 3 completes when the reaper drain finishes; Toriko's live write waits for the mount to unpause; the free-AI upgrade (§10.10) is otherwise implemented |
+| Pending after reboot | §12: rename close-out verified done; **rotation (item 6) still outstanding** |
+
+### Shipped 2026-09-20 — the five computed facts, the verified self-heal, the scalable plan
+
+Five registered tests (check #55–#59): `test_provider_id_verify.py`,
+`test_series_identity_heal.py`, `test_manga_mislabels.py`,
+`test_release_title_numbering.py`, `test_metadata_heal.py`. The report
+`scripts/verify_owner_report.py` prints the owner-visible acceptance per §10.0 and is
+advisory in `verify_fleet.sh` (a parked Smurfs or a draining purge must not gate).
+
+**10.3 — a provider id is verified before it can pick art.** `tmdbguide.show_identity`
+fetches the provider record (`/tv/{id}` + `/external_ids`); `library.verify_provider_ids`
+(now called by `identify` on the model's plan, before `validate_plan` — deliberately not
+inside `validate_plan`, which tests and offline tools call without network) strips a tmdb
+id that answers 404 or names a different year (>1), and a tvdb id that disagrees with
+TMDB's own mapping. A network error fails open. Live: TZ (2019)'s `tmdb_id 80979`
+(*Too Cute*) / `tvdb_id 325542` would have been stripped at filing.
+
+**10.3 — media_doctor owns series identity and title art.** The trigger is computed:
+`premiered` vs TMDB `first_air_date` (a stale `<year>` with a matching premiere is
+harmless — four live shows carry that shape). The repair re-matches the Jellyfin item
+FIRST (`RemoteSearch/Apply`, order measured: a `replaceAllMetadata` refresh after the nfo
+write made Jellyfin rewrite tvshow.nfo and the S02 nfos from its stale DB rows), syncs
+season items, locks the item (`LockData`, valid `LockedFields` only), then writes nfos
+LAST and replaces `folder.jpg`/`landscape.jpg`/`seasonNN-poster.jpg` with the verified
+identity's art. `_write_nfo_title` now always emits/repairs `<season>`/`<episode>`, and
+null Jellyfin indexes are set on the item DTO.
+
+**10.5a–e — the manga tiers are computed from the archives.** New `comicfacts.py` reads
+volume associations (`(vNNN)`), chapter markers (`cNNNN`/`dNNNN`, bare `1176-001`),
+edition (`[Digital CC] [PZG]` vs `[VIZ Media] [1r0n]`) and the mislabel shape from the
+entries themselves, cached in `state/comic_archive_facts.json`. `manga_volume_map`
+persists `total_volumes`/`total_chapters`/`shelf_volumes`/`shelf_ceiling` and merges the
+shelf's exact sets over MangaDex; `comicfacts.ceiling_for` gives the plan-time ceiling
+(the larger of AniList's total and the shelf's). `validate_plan` refuses a `vNNNN` above
+the ceiling whose archive is chapter pages, and refuses a grey copy superseding a
+coloured file. `librarydb.item_key` is colour-aware for volume/chapter (two rows for two
+editions; `mark_superseded`/`_supersede` with unknown colour match grey only — a grey or
+unknown file may never kill the coloured row). `chapter_volume_reconcile` reads colour
+from `comicfacts` and lets a surviving coloured volume cover chapters; a coloured chapter
+is still only superseded by a coloured volume. The One Piece franchise row is in
+`config.COMIC_FRANCHISES` (Ace's Story nests; a flat master that already holds the
+master's own files stays flat until the owner decides on the migration), and
+`resolve_comic_folder(colored=True)` no longer bypasses the table. `identify.md` and
+`README.md` teach the current layout.
+
+**10.9 — release-order packs compute their broadcast numbering, and plans scale.**
+`identify.release_title_map` matches each `SxxEyy (Title)` filename against TVMaze and
+returns the broadcast slots only when they actually differ; the block is stated in the
+prompt as fact and `validate_plan(..., title_map=)` refuses a copied release number. Above
+`IDENTIFY_SKELETON_MIN_FILES` (150) the harness writes a deterministic skeleton of every
+release file (all computed slots) and the prompt names it; `ai_client` now checks plan
+coverage against a `--require-list` manifest before the run ends and asks for the exact
+missing slice twice. The coverage guard still parks as the last line of defense. Measured
+on the Smurfs pack: 362/405 titles matched, 347 differ, `S01E01 (The Smurfette)` ->
+`S01E31`, 409-file skeleton (49.7 KB).
+
+**10.4 — metadata self-heal sees the mount and verifies its writes.**
+`audit_metadata.shows_root()` is the mediafs mount (Toriko's 147 videos are evicted from
+`~/Media`, which is why the audit found 0 episodes); `repair_metadata._guide_index`
+accepts name-only TVMaze rows (Toriko: 146 names, 0 summaries); `_fill_synopses` fills
+plots from TMDB episode overviews (49 available) without overwriting the provider title;
+`media_doctor.escalate()` snapshots `(blank_plots, junk_titles)` before the AI run and
+charges `escalate_n` only when the sidecars actually improve.
+
+**10.10F — `scripts/verify_owner_report.py`** computes the five §10.0 checks (TZ md5s and
+nfo, no `vNNNN`, zero covered chapters, one edition per volume, Smurfs coverage once a
+plan exists) and prints PASS/FAIL/PENDING. Read-only, exit 0 always, advisory in
+`verify_fleet.sh`.
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 
@@ -448,6 +522,9 @@ scripts/manga_volume_map.py          --series X [--refresh] [--all] # cached vol
 scripts/refile_season.py             --mapping <json> [--record <ih>] [--rearm i,j] [--apply]
                                                                    # reviewed per-file episode refile
 scripts/yacreader_rescan.py         [--files] [--apply]            # reader scan flags + unindexed shelf
+scripts/repair_manga_mislabels.py    --series X [--all] [--apply]   # vNNNN whose contents are chapters
+scripts/verify_owner_report.py      (read-only)                    # the owner's five failures, PASS/FAIL per line
+comicfacts.py                       (module)                       # archive-content facts: colour, volume, chapters, ceiling
 scripts/yacreader_index_repair.py   [--apply]                      # crash rows in the reader index; --apply WRITES
 scripts/identify_capacity.py        --probe                       # which providers can serve
 scripts/audit_free_only.py                                        # the billing invariant
@@ -461,7 +538,7 @@ retired ids into `state/ai_model_overrides.json` at runtime; anything in that fi
 
 ---
 
-## 10. Open work — the 2026-09-19 incident batch: upgrade the tools, do not hand-fix
+## 10. Open work — the owner's five verified failures, then the free-AI upgrade
 
 **Owner's standing instruction, and it outranks every repair instinct you are carrying:**
 do not repair these faults by editing files. Each is a missing computed fact, a
@@ -485,15 +562,55 @@ every new test in `scripts/verify_fleet.sh` (§8.3); fail open on network errors
 weaken `validate_plan` to make a model's answer fit (§2.5). Match the house style — the
 dense *why* comments are the codebase's memory, not decoration.
 
-**Right now** (state table §6): an identify run is in flight (`ai_runner.py` PID 5341) and
-the reaper is draining (`reap.py` PID 1229). Wait for the AI run before any deploy; do not
-bounce the reaper. `verify_fleet.sh` prints `ALL CHECKS PASSED` as of 09:05 — it must still
-when you are done.
+**Right now** (state table §6, measured 2026-09-20 05:30): no identify run is in flight,
+the reaper is draining (PID 1311), and the Smurfs replacement pack has already failed once
+on a truncated plan (§10.9). Do not re-drop it, and do not deploy, until the tool work
+below ships.
 
-Suggested order: **10.1, 10.2 first** (they are data-destroying classes and each is a
-prerequisite for the owner's re-drops in 10.7), then 10.6 (small), then 10.5 (the manga
-cluster), then 10.3 / 10.4, then the 10.5e migration (it needs mediafs paused), then run
-every repaired tool over the live library and re-verify.
+Suggested order: **§10.0 is the contract** — the owner's five faults, each tied to the
+subsection that fixes it. Do 10.3 (TZ) and 10.5a–10.5e (One Piece) first, because both are
+live-repair-and-guard pairs; then 10.9 (the Smurfs, which is the proving ground for the
+plan-assembly upgrade); then 10.10 (the systemic free-AI upgrade those pieces are all
+instances of); then 10.4 (Toriko) and the 10.5e migration. Run every repaired tool over
+the live library, verify against the owner-visible artifacts (§2.6), then re-run the
+checks and paste the output.
+
+### 10.0 The owner's five verified failures — the work order, with the evidence
+
+The owner reported these on 2026-09-20. Each was re-verified this session at the path
+named; each has survived at least one prior session that treated its guard as the fix.
+They are ordered as the owner listed them. **Do not mark any of these done in a later
+edit of this file without pasting the acceptance command and its output beside it.**
+
+| # | fault (owner's words) | verified state 2026-09-20 | fix |
+|---|---|---|---|
+| 1 | repetitive One Piece chapters already covered by volumes are still in YacReader | `~/MediaLibrary/Comics/Manga/One Piece/` = **322 files**: 100 two-digit volumes (v00–v99), 111 three-digit (v001–v111), 7 four-digit mislabels, **104 chapters**. `ChapterReconcile.log` last run 2026-09-20 04:35: "One Piece: 104 chapter(s) kept, nothing to purge". The map (`state/manga_volume_map.json`) covers only v1, v2, v10, v11 (partial sets) | 10.5b, 10.5c |
+| 2 | a non-colored volume does not get replaced by a colored one | the shelf holds both overlapping runs and **mixed colour inside each** (measured by archive contents: v01/v02/v50/v51/v91/v98/v99/v101/v102 are COLORED; v89/v90 are grey fan scans; the 1r0n v001–v111 are grey). `library.db` has **one** `colored=1` volume row (number 100). `chapter_volume_reconcile.plan_decisions` *has* a "colored supersedes grey" rule (#5) but `_kind` detects colour **from the filename only** (`dbhook._COLOR`), and these filenames carry none — so the rule can never fire | 10.5d |
+| 3 | `One Piece v1176` should be `c1176` — there are not that many volumes | all seven are live on the shelf and in `library.db` as `volume` rows: `v1078`, `v1151`, `v1152`, `v1161`, `v1162`, `v1171`, `v1176`. Sampled `v1078.cbz` contents are `d1078` chapter pages (15 pages). No volume ceiling is persisted anywhere, so nothing can reject them | 10.5a, 10.5c |
+| 4 | TZ (2019) still shows *Too Cute* as its show cover | `folder.jpg` md5 = `05520557851cb23ea38e121ed2713514` — byte-identical to the TMDB 80979 (*Too Cute*) poster. `tvshow.nfo` still carries `<originaltitle>萌宠成长记（精编版）</originaltitle>`, `<tvdbid>325542</tvdbid>`, `<premiered>2013-01-30</premiered>` (its `<tmdbid>` is now the correct 83135). `Season 01/season.nfo` year 2013; S02 episode `.nfo`s have **no `<season>`/`<episode>`**; the doctor worklist has no TZ entry at all | 10.3 |
+| 5 | the Smurfs torrent is failing and it should not be | failed 2026-09-19 22:36 CDT: `plan accounts for 24 file(s) but leaves 385 release file(s) unfiled`. The 24-file plan is S01E01–10, S02E01–10 and the 4 Xtras; the identify log shows a 36-turn investigation, then two tiny writes. The 24 are also **wrong numbering** (release order ≠ broadcast order; *The Smurfette* is broadcast S01E31). The full 54.8 GB pack is retained (51 GiB by `du`); the `.torrent` is in `failed/` | 10.9 |
+
+**Status 2026-09-20 (this session).** Row 4 is **done live** (TZ: art md5s differ from
+both Too Cute hashes, identity rewritten, 2 seasons / 20 indexed episodes / no ghost
+season). Row 5's tooling is **shipped**; the `.torrent` re-drops after the deploy. Rows
+1–3 are **applied through the tools** — the 7 mislabels renamed, the reconcile queued 127
+supersedes, `c1078` already purged — but the final shelf census cannot read clean until
+the reaper's batch finishes purging the remotes (a 15h-old drain adopted the queue; §2.2
+forbids bouncing it). The commit message pastes what was measured; do not mark rows 1/3
+"done" in a later edit until `verify_owner_report.py` prints PASS for them.
+
+**The acceptance rule for all five (this is §2.6 in practice).** A repair is done when the
+owner's artifact is checked and the output is pasted into the commit message:
+
+* comics — the shelf listing and the YacReader-visible result (`scripts/yacreader_rescan.py
+  --files`, `scripts/audit_volume_chapter_coverage.py`): zero `vNNNN`, zero chapters
+  covered by an owned volume, exactly one copy per volume, colour correct;
+* TZ — `md5 -q` of `folder.jpg`/`landscape.jpg` is neither Too Cute hash, `grep` of
+  `tvshow.nfo`/`season.nfo` shows the correct title/year/ids, S02 episodes have
+  `<season>`/`<episode>`, and `GET /Shows` via the Jellyfin API shows the corrected art and
+  no ghost season;
+* Smurfs — `state/tmp/6c413306…_plan.json` covers all 409 release files, all 405 episode
+  slots are broadcast-correct, and the record ends terminal with the content on the mount.
 
 ### 10.1 P0 — a partial plan must never authorize deleting unfiled bytes (The Smurfs) — **SHIPPED 2026-09-19**
 
@@ -580,7 +697,7 @@ Evidence: `state/tmp/74c…-w0_plan.json` (the 1963 destinations), the original 
 verify 178/178 with no drops — all through the fixed tool, not by editing the journal by
 hand. 60.9 GB re-fetches; **no new download source is needed.**
 
-### 10.3 P1 — provider IDs are verified before they can pick art (The Twilight Zone (2019))
+### 10.3 P1 — provider IDs are verified before they can pick art (The Twilight Zone (2019)) — **SHIPPED 2026-09-20, repaired live**
 
 **Damage (verified).** Both TZ-2019 plans (`state/tmp/25d44d51…_plan.json`,
 `state/tmp/a3a6e4ca…_plan.json`) carry `tmdb_id: 80979`, `tvdb_id: 325542`; the run log says
@@ -597,6 +714,19 @@ only ever looks at episode stills, so series art reads healthy. `tvshow.nfo` and
 `tvdbid 325542`; Jellyfin's S1 shows "Season 1, 2013" and a **ghost "Season Unknown" row**.
 The S02 episode `.nfo`s carry real titles but **no `<season>`/`<episode>`**, so Jellyfin
 shows IndexNumber `null` and the series name for every S02 episode.
+
+**Re-verified 2026-09-20 (owner's report — this is still live).** The shelf `folder.jpg`
+still md5s `05520557851cb23ea38e121ed2713514` (the Too Cute poster). `landscape.jpg` now
+md5s `ace480b21fbaae4b9679aa8a158c7050` — not the Too Cute file recorded above, but it has
+**not** been verified against TZ identity either; the tooling must decide that, not a human
+eye. `tvshow.nfo` now carries the correct `<tmdbid>83135</tmdbid>` but still
+`<tvdbid>325542</tvdbid>`, `<originaltitle>萌宠成长记（精编版）</originaltitle>` and
+`<premiered>2013-01-30</premiered>`; `Season 01/season.nfo` is still year 2013; every S02
+episode `.nfo` still lacks `<season>`/`<episode>`; and `state/doctor_worklist.json`
+(2026-09-20 05:06) contains **no TZ entry at all**, which is why this cannot self-heal:
+`_scan_episode_art` only looks at episode stills. Repairing the files by hand would leave
+the self-heal blind and the fault would return on the next Jellyfin re-scrape. The fix is
+the doctor's title-level check, then run it.
 
 **Build.**
 
@@ -621,7 +751,14 @@ show → the doctor detects and replaces, and an offline run does nothing. Repla
 verification over the journal and count (do not enforce) how many historical plans carry
 ids a live lookup contradicts.
 
-### 10.4 P1 — metadata self-heal must see pool-only episodes and survive a flaky provider (Toriko)
+**Acceptance (owner-visible, §2.6).** After the fixed doctor runs: `md5 -q` of
+`folder.jpg`/`landscape.jpg` differs from both Too Cute hashes recorded above;
+`grep -E 'originaltitle|tvdbid|premiered'` on `tvshow.nfo` and `Season 01/season.nfo` shows
+the TZ (2019)/83135 identity and no 2013 date; every `Season 02/*.nfo` carries
+`<season>2</season>` and a real `<episode>`; and `GET /Shows?searchTerm=Twilight` answers
+two seasons with the corrected image. Paste that output in the commit message.
+
+### 10.4 P1 — metadata self-heal must see pool-only episodes and survive a flaky provider (Toriko) — **SHIPPED 2026-09-20**
 
 **Damage (verified).** All 147 videos are correct; 8 episode `.nfo`s carry the literal
 release-group title `[Judas] x265 10b` (S01E133, E134, E135, E136, E138, E139, E142, E143)
@@ -662,21 +799,37 @@ the show folder ("Fixed 40 episodes…") is a lie — it records intent, not ver
 **Proof.** Synthetic pool-only show with a blank plot and a release-group title → audit
 finds it, repair fills it, escalation counts only on a verified write. No re-download.
 
-### 10.5 P0 — the manga tiers are computed, and the DB can hold both colors (One Piece)
+### 10.5 P0 — the manga tiers are computed, and the DB can hold both colors (One Piece) — **SHIPPED 2026-09-20**
 
-**Verified state.** The shelf holds `Comics/Manga/One Piece/` with **322 files**: the
-2-digit `v01–v106` run (measured: `v01`, `v50`, `v90`, `v99`, `v101` are **COLORED** — PZG
-/ Colored Council / AKT / Gido; internal folders say "Colored"), the new 3-digit
-`v001–v111` run from "One Piece (Digital) (1r0n)" (measured **GREY** — VIZ), the seven
-mislabelled one-chapter volumes **`v1078`, `v1151`, `v1152`, `v1161`, `v1162`, `v1171`,
-`v1176`** (which are chapters and must be `cNNNN`), and ~103 `cNNNN` chapters. The
-`One Piece Colored` series folder **no longer exists**; its `v100`, `v106` and `c0424` files
-were unlinked **through the mount** on 2026-09-04 20:26 and again 2026-09-13 11:09
-(`~/Library/Logs/MediaFS.err:100659-100661`, `:111149-111151`), then reaped from two
-remotes (`state/reap_purges.log:28256-28258`); `library.db` still shows their series (1262)
-rows as `owned`. The 1r0n pack applied all 154 files (111 volumes + 43 chapters) —
-**no re-download is needed for coverage**, but 37 of its chapter copies were skipped in
-favour of older/larger scans and `v101–v105` were skipped in favour of the colored files.
+**Verified state 2026-09-20 (re-measured; the 09-19 description flattened this).** The
+shelf `Comics/Manga/One Piece/` holds **322 files**, exactly: **100 two-digit volumes
+`v00–v99`**, **111 three-digit volumes `v001–v111`**, the **7 four-digit mislabels**
+(`v1078`, `v1151`, `v1152`, `v1161`, `v1162`, `v1171`, `v1176`), and **104 `cNNNN`
+chapters**. The two volume runs overlap on v01–v99 (~99 duplicate numbers), and the
+overlap is **mixed colour**, which the old description flattened:
+
+* 2-digit run, measured by archive contents: `v01`, `v02`, `v50`, `v51`, `v91`, `v98`,
+  `v99` are COLORED (PZG / "Digital Colored Comics" / Colored Council / Gido); `v89`, `v90`
+  are grey fan scans ("Davy Jones Edition"); `v00` is unclassified (one image).
+* 3-digit run: the 1r0n volumes are grey VIZ (`v001→c0001` … `v111→c1123`), but `v101`
+  and `v102` are the colored PZG files, and the archives' own chapter markers show the
+  volume→chapter boundaries (`v099→c0995`, `v100→c1005`, `v110→c1121`).
+* `library.db` series 1261 has **119 volume rows and only one `colored=1`** (number 100);
+  series 1262 `One Piece Colored` still exists and still owns v100, v106 and c0424 as
+  `owned` even though those files were unlinked through the mount on 2026-09-04 and
+  2026-09-13 (`~/Library/Logs/MediaFS.err:100659-100661`, `:111149-111151`) and reaped
+  (`state/reap_purges.log:28256-28258`).
+
+The 1r0n pack applied all 154 files (111 volumes + 43 chapters) — **no re-download is
+needed for coverage** — but 37 of its chapter copies were skipped in favour of older/larger
+scans and v101–v105 were skipped in favour of the colored files.
+
+**The single most useful fact for all of 10.5:** the owned archives themselves carry the
+chapter numbering (`One Piece - c0001 (v001) - …`, `One Piece - Digital Colored Comics -
+c0471 (v049)` …), and their first entries name the edition. A volume→chapter map for One
+Piece is therefore **computable offline from the shelf**, and colour is detectable from the
+archive contents — neither needs a model or MangaDex. Build the map that way first
+(10.5b), providers second, the AI only for what remains.
 
 **10.5a — a computed volume ceiling decides volume vs chapter.** Today the only rule is
 prose in `prompts/identify.md:124-130` ("large ⇒ volume"), and the model filed `c1077`
@@ -690,6 +843,14 @@ above the ceiling is a mislabel the validator refuses. Replay over the journal t
 the guard does not reject legitimate high-numbered volumes for series whose AniList count
 is stale (fail open when the ceiling is unknown).
 
+**Measured 2026-09-20:** all seven mislabels are still on the shelf and in `library.db` as
+`volume` rows, and `state/manga_volume_map.json` persists no total for any series. The
+ceiling is also derivable offline from the shelf: the highest real volume archive's chapter
+marker (`v111→c1123`) plus the number of single chapters after it. Use AniList's total when
+fresh, the shelf when it is not, and fail open when neither exists — never invent one. This
+is the guard that makes the owner's "there are not that many One Piece volumes" a computed
+fact instead of a judgment call.
+
 **10.5b — the volume→chapter map must actually cover the volumes.** The One Piece map entry
 is `source=mangadex, confidence=0.0` with only `v1, v2, v10, v11` mapped — 4 of 119 owned
 volumes. MangaDex's One Piece aggregate carries almost no integer volume tags, so
@@ -700,6 +861,17 @@ existing one-shot AI completion path) with per-volume chapter **sets**, the same
 confidence/TTL/fail-open contract, and make the refresh able to reach 111. Do not hand-edit
 the JSON — the tool must fetch it.
 
+**Measured 2026-09-20:** the map still holds only v1, v2, v10, v11 (partial sets;
+`source=mangadex`, `confidence=0.0`), so `ChapterReconcile` keeps all 104 chapters every
+6 hours ("nothing to purge"). The build order is now fixed: **(1) compute from the owned
+archives' embedded chapter markers** — offline, deterministic, covers all 111 volumes, and
+it is the §5 "compute the answer" step; (2) fill gaps from AniList volume/chapter ranges or
+an official listing; (3) only what remains may use the existing AI fallback with its
+confidence marker. Record in the entry which volumes were shelf-derived so a better scan
+landing later can invalidate exactly those, and keep the rule that a colored chapter may
+only be superseded by a colored volume (10.5d) — the reconcile gate already carries a
+colored-author keep, so do not drop it.
+
 **10.5c — chapters yield to volumes, and mislabels are repaired by tool.** Once 10.5a/b
 land: the seven `vNNNN` files are renamed to `cNNNN` **by a repair tool that uses the same
 computed ceiling** and goes through `library.supersede_paths`-style machinery (mount
@@ -708,24 +880,51 @@ unlink + reaper queue + `dbhook.record_purge`) rather than `mv`; then
 `c1077–c1133`-style chapters covered by `v107–v111`. Add a fixture where a chapter above
 the volume ceiling sits alongside a mapped volume and assert the reconcile now purges it.
 
-**10.5d — colour is a file property, and a grey file may never eat a colored one.** This is
-the fault the owner actually suspects. `librarybrain/librarydb.py:586-596` keys media on
-`(mtype, None, number)` — colour and path excluded — and `upsert_media` does
-`colored = MAX(colored, ?)` (`:464`). So the old colored `v01` and the new grey `v001`
-collapse to one row, a stale `colored=1` can never clear, and both tiers cannot coexist in
-the DB. Worse, the prompt still teaches the **old** layout: `prompts/identify.md:113-122`
-says a colored volume lives in `<Series> Colored/`, while the owner rule of 2026-09-05
-(`library.py:102-123`, "a folder is named for the SERIES, never for the edition") forbids
-that and makes colour a file property; `README.md:1268-1280` teaches the old layout too.
-Fix all four parts: (i) give media a colour-aware identity (or a path/file key) and stop
+**Measured 2026-09-20:** the reconcile runs every 6 hours and says "One Piece: 104
+chapter(s) kept, nothing to purge"; YacReader still lists them. The acceptance is the shelf
+census (`audit_volume_chapter_coverage.py`) **and** the reader's own index via
+`yacreader_rescan.py` — not the daemon's log line.
+
+**10.5d — colour is a file property, the colored copy replaces the grey one, and a grey
+file may never eat a colored one.** This is the fault the owner actually suspects, and the
+2026-09-20 re-verification found the concrete mechanism. `librarybrain/librarydb.py` keys
+media on `(mtype, None, number)` — colour and path excluded — and `upsert_media` does
+`colored = MAX(colored, ?)` (`:468`). So the colored `v01` and the grey `v001` collapse to
+one row, a stale `colored=1` can never clear, and the two tiers cannot coexist in the DB
+(measured: 119 volume rows, exactly one `colored=1`). Worse, the prompt still teaches the
+**old** layout: `prompts/identify.md:113-122` says a colored volume lives in
+`<Series> Colored/`, while the owner rule of 2026-09-05 (`library.py:102-123`, "a folder is
+named for the SERIES, never for the edition") forbids that and makes colour a file
+property; `README.md:1268-1280` teaches the old layout too.
+
+The reconcile daemon already contains the right rule — `plan_decisions` rule 5, "a colored
+volume supersedes a same-numbered grey volume" — but **it can never fire on One Piece**
+because `chapter_volume_reconcile._kind` reads colour from the **filename**
+(`dbhook._COLOR = colored|full[- ]?color|colour`), and these filenames carry no colour
+marker. The shelf's own archives do: the first entries name the edition
+(`One Piece v002 (Colored) (Digital) (PZG)`, `One Piece - Digital Colored Comics - c0471
+(v049)`, `One Piece - c0001 (v001) - … [VIZ Media] [Digital] [1r0n]`). That is the fix:
+detect colour where the fact lives.
+
+**Owner direction, 2026-09-20 (it overrides the older "colored is a separate series" design
+in every direction):** when a colored and a non-colored copy of the same volume coexist,
+**the colored copy is the one kept and the non-colored file is superseded**; a grey file may
+never supersede a colored one; and no future plan may re-file a colored volume into a
+`<Series> Colored/` sibling (the 2026-09-05 folder rule stands).
+
+Fix all six parts: (i) give media a colour-aware identity (or a path/file key) and stop
 `MAX(colored)`; (ii) make the supersede path refuse any plan that would delete a colored
-file in favour of a grey same-numbered one, and trace which tool queued the 09-13
-unlinks (candidate: the purge batch that wrote
-`library.db.bak-purge-batch2-20260913-110358`; MediaFS logs at `:111149`) — that tool gets a
-guard and a regression test; (iii) rewrite the prompt and README so the free AI is told the
-current rule, not the deleted one; (iv) reconcile the stale `One Piece Colored` DB rows so
-the title can be re-acquired cleanly. If the owner wants the reaped colored `v100/v106`
-back, that is a re-acquire (10.7), not a fabrication.
+file in favour of a grey same-numbered one, trace which tool queued the 09-13 unlinks
+(candidate: the purge batch that wrote
+`library.db.bak-purge-batch2-20260913-110358`; MediaFS logs at `:111149`), and pin that tool
+with a guard and a regression test; (iii) detect colour from the **archive contents**
+(first entries / ComicInfo) and use it in `_kind`, reconcile rule 5 and the DB — a
+filename-based detector is the bug; (iv) rewrite the prompt and README so the free AI is
+told the current rule, not the deleted one; (v) reconcile the stale `One Piece Colored` DB
+rows so the title can be re-acquired cleanly; (vi) run the fixed reconcile and verify the
+shelf keeps exactly the colored copy per volume (owner-visible acceptance in §10.0). If the
+owner wants the reaped colored `v100/v106` back, that is a re-acquire (10.7), not a
+fabrication.
 
 **10.5e — franchise grouping is computed: One Piece + Ace's Story in one folder (owner
 request, 2026-09-19).** `config.COMIC_FRANCHISES` has **no One Piece row**;
@@ -788,8 +987,8 @@ fresh download.
 
 | torrent | verdict |
 |---|---|
-| **The Smurfs Complete Seasons 1-9** | **Re-download required** — 365/405 files were deleted by the partial-plan cleanup. The owner's replacement torrent (MP4, hash `6c413306…`, verified below) is parked at `~/Downloads/The Smurfs (Complete cartoon series in MP4 format.).torrent` (see 10.7b); the original dvdrip mirror is `Torrent-Ingest/state/torrent_sources/27dba…torrent` as a fallback. Move it to the watch root **after 10.1 ships**, or the same cleanup can repeat. The existing 40 S01 files must be superseded by the correct plan. |
-| **Doctor Who Seasons 1 to 13** (2005, `74c608c7…`) | **No re-acquire.** 38 files / 60.9 GB re-fetch from the same `.torrent` after 10.2's re-arm is fixed and tested; the `.torrent` is parked at `~/Downloads/Doctor Who Seasons 1 to 13 Mp4 1080p.torrent` (see 10.7b). The fix session re-arms `1–31, 41, 55–59, 92` first. |
+| **The Smurfs Complete Seasons 1-9** | **No new download; the bytes are already here and parked.** The replacement MP4 pack (`6c413306…`, 409 files, 54.8 GB) was dropped 2026-09-19 and **failed on the plan-coverage guard the same night** (24-file plan of 409, §10.9) — nothing was deleted, the full 54.8 GB pack (51 GiB by `du`) sits in `~/Downloads/.torrent-ingest/` and the `.torrent` is in `Torrents/failed/`. Fix the plan-assembly tool (10.9), then move the `.torrent` from `failed/` to the watch root's top level. The original dvdrip mirror (`Torrent-Ingest/state/torrent_sources/27dba…torrent`, 405 files) stays as the fallback. The existing 40 wrong-slot S01 files must be superseded by the correct plan. |
+| **Doctor Who Seasons 1 to 13** (2005, `74c608c7…`) | **Done — no re-acquire.** Re-armed and re-dropped 2026-09-19; the journal's final line is `completed` with `chunk_done=178`, `chunk_dropped=0`, `chunk_failed=0` (verified 2026-09-20). The 38 re-fetched files are on the mount. |
 | **One Piece (Digital) (1r0n)** (`12873efd…`) | **No re-download for coverage** — all 154 files applied. The work is rename/reconcile, not fetch. |
 | **One Piece Colored v100/v106/c0424** | **Gone from the pool** (reaped 2026-09-04/09-13, see 10.5d). Only if the owner wants the colored run restored does anything need re-acquiring; the fleet has no source. |
 | **One Piece 1177/1178 in `queued/`** | **No download** — already filed and owned (10.6); safe to delete or move to `finished/`. |
@@ -797,55 +996,162 @@ fresh download.
 
 ### 10.7b Parked re-drops — where they are and where they go (recorded 2026-09-19)
 
-The owner parked both re-downloads **by hand, outside the pipeline**, so neither can be
-ingested before its prerequisite guard ships. They are in `~/Downloads/` — which the
-pipeline does **not** watch (`DirectIngest/` is the only watched folder under Downloads).
-**Do not move either into the watch root until 10.1/10.2 is tested and deployed.**
+The owner parked both re-downloads **by hand, outside the pipeline**, so neither could be
+ingested before its prerequisite guard shipped. Both have since been dropped: DW is
+`completed` (10.7), and the Smurfs failed on plan assembly and now sits in
+`Torrents/failed/`. `~/Downloads/` is no longer a parking spot — the only re-drop left is
+the Smurfs, **after 10.9 ships** (below). `~/Downloads/` is not watched by the pipeline
+(`DirectIngest/` is the only watched folder under Downloads).
 
 | release | parked at | move where, when |
 |---|---|---|
-| Doctor Who (2005), "Doctor Who Seasons 1 to 13 Mp4 1080p" (info hash `74c608c7…`, 178 files, 281.4 GB) | `~/Downloads/Doctor Who Seasons 1 to 13 Mp4 1080p.torrent` (moved 2026-09-19 from `Torrents/finished/74C608C7…torrent`; the pipeline's mirror is untouched at `Torrent-Ingest/state/torrent_sources/74c608c7….torrent`) | **After 10.2:** re-arm `1–31, 41, 55–59, 92` with `refile_season.py --record 74c608c7ba56dd4b3f2c04ab3999f045d767013f`, then copy the parked `.torrent` to the **top level** of `iCloud Drive/Torrents/` (never `queued/` — dropping a terminal hash at the top level is the deliberate retry path). It re-downloads 60.9 GB and must end 178/178 with `chunk_dropped` empty. |
-| The Smurfs Complete Seasons 1-9 — **the owner's replacement pack**, not the original dvdrip (info hash `6c413306e7053dbb8f1dabf7dcc845f509ec3027`, 409 files, 54,806,198,752 bytes = 54.8 GB) | `~/Downloads/The Smurfs (Complete cartoon series in MP4 format.).torrent` (dropped 2026-09-19 09:11; parsed and verified this session). Contents: 409 `.mp4` — S1=40, S2=35, S3=51, S4=48, S5=41, S6=63, S7=65, S8=24, S9=38 (405 episodes, counts identical to the original release) plus 4 Xtras: `The Smurfs - The Lost Village (movie).mp4`, `… A Christmas Carol (special).mp4`, `… The Legend of Smurfy Hallow (special).mp4`, `… The Smurfs and the Magic Flute (movie).mp4`. The original dvdrip mirror (`27dba035…`, 405 `.mkv`, 34.9 GB, `Torrent-Ingest/state/torrent_sources/27dba035….torrent`) stays as the fallback. | **After 10.1:** copy to the **top level** of `iCloud Drive/Torrents/`. It re-downloads 54.8 GB. The 4 Xtras must be planned, not parked by 10.1's unresolved-file calc — expect S00/Movies placements and treat a plan that drops them as a test failure. The resulting plan must supersede/re-number the 40 wrong-slot S01 files from the old release. |
+| Doctor Who (2005), "Doctor Who Seasons 1 to 13 Mp4 1080p" (info hash `74c608c7…`, 178 files, 281.4 GB) | **DONE.** Re-armed 2026-09-19 (`refile_season.py --record 74c608c7ba56dd4b3f2c04ab3999f045d767013f --rearm 1-31,41,55-59,92`), re-dropped to the watch root's **top level**, final journal line `completed` with `chunk_done=178`, `chunk_dropped=0` (verified 2026-09-20). The pipeline mirror stays at `Torrent-Ingest/state/torrent_sources/74c608c7….torrent`. | Nothing left to move. |
+| The Smurfs Complete Seasons 1-9 — **the owner's replacement pack**, not the original dvdrip (info hash `6c413306e7053dbb8f1dabf7dcc845f509ec3027`, 409 files, 54,806,198,752 bytes = 54.8 GB) | **`Torrents/failed/The Smurfs (Complete cartoon series in MP4 format.).torrent`** since the 2026-09-19 22:36 failure; content retained at `~/Downloads/.torrent-ingest/The Smurfs (Complete cartoon series in MP4 format.)/` (51 GiB on disk by `du`; 54,806,198,752 bytes by the torrent). Contents: 409 `.mp4` — S1=40, S2=35, S3=51, S4=48, S5=41, S6=63, S7=65, S8=24, S9=38 (405 episodes, counts identical to the original release) plus 4 Xtras: `The Smurfs - The Lost Village (movie).mp4`, `… A Christmas Carol (special).mp4`, `… The Legend of Smurfy Hallow (special).mp4`, `… The Smurfs and the Magic Flute (movie).mp4`. The original dvdrip mirror (`27dba035…`, 405 `.mkv`, 34.9 GB, `Torrent-Ingest/state/torrent_sources/27dba035….torrent`) stays as the fallback. | **After 10.9 ships:** move the `.torrent` from `failed/` to the **top level** of `iCloud Drive/Torrents/` (never `queued/`). It must produce a 409/409 plan (405 episodes + 4 Xtras) and supersede the 40 wrong-slot S01 files. |
 
-Two checks before either move, because a truncated `.torrent` is a silent no-op: verify
-the info hash parses to the expected value (bencode + sha1, the `_ensure_source` convention)
-and count the `files` list — **178 for Doctor Who, 409 for this Smurfs pack** (not 405; the
-old mirror is the 405-file one). After the upload finishes, confirm each record's last
-journal line is terminal and that the content is on the mount — `library_health.txt` /
-`media_doctor` should show no placement faults for either show. One naming caveat: this
-pack's filenames carry the release's own `SxxExx` numbering (e.g. `S01E01 (The Smurfette)`),
-which is the same scheme as the deleted dvdrip, so the compute-the-numbering rules of §5
-apply before any file is trusted over the provider.
+One check before the Smurfs re-drop, because a truncated `.torrent` is a silent no-op:
+verify the info hash parses to the expected value (bencode + sha1, the `_ensure_source`
+convention) and count the `files` list — **409 for this pack** (not 405; the old mirror is
+the 405-file one). After it files, confirm the record's last journal line is terminal and
+the content is on the mount. One naming caveat, unchanged and now load-bearing: this pack's
+filenames carry the release's own `SxxExx` numbering (e.g. `S01E01 (The Smurfette)`), which
+is the same scheme as the deleted dvdrip, so the compute-the-numbering rules of §5 and
+§10.9 apply before any file is trusted over the provider.
 
 ### 10.8 Acceptance for this batch
 
-**Progress 2026-09-19 (this session):**
+**Progress 2026-09-19:** 10.1, 10.2 and 10.6 shipped with registered tests #51/#52; the
+replay surfaced **Yamato 2202** (26 real episodes a partial plan never accounted for,
+nobody had noticed). DW (2005) was re-armed and re-dropped; the outcome is in the journal.
 
-* 10.1, 10.2 and 10.6 are shipped with registered tests #51/#52 and the replay results
-  recorded above and in the commit message. `verify_fleet.sh` = 53 checks, ALL PASSED.
-* The replay surfaced **Yamato 2202**: 26 real episodes a partial plan never accounted for
-  and the old cleanup deleted — a Smurfs-class loss nobody had noticed. Recorded above.
-* Repairs run by the shipped tools this session: DW (2005) re-armed
-  (`refile_season.py --rearm-only --record 74c608c7… --rearm 1-31,41,55-59,92`) and both
-  parked `.torrent`s returned to the watch root; outcome is in the journal/decisions log.
-* **Still open: 10.3, 10.4, 10.5a–e** (TZ art and ids, Toriko metadata, the One Piece
-  manga/DB/franchise cluster). Their acceptance items below remain the checklist.
+**Progress 2026-09-20:** the tooling for all five is shipped with 59 registered checks.
+§10.0's status block says exactly which live artifacts are verified and which await the
+reaper drain / the Smurfs re-drop; do not claim more than it says.
 
 1. Every new guard has a registered test in `scripts/verify_fleet.sh` and a journal replay
    result in its commit message; `ALL CHECKS PASSED`.
-2. The repairs were performed by the upgraded tools, not by hand: Smurfs' parked 409-file
-   pack fully planned (405 episodes + 4 Xtras) and filed, superseding the 40 wrong-slot S01
-   files; DW (2005) back to 178/178 with `chunk_dropped` empty; TZ (2019) has two correct
-   seasons, correct art on disk, no ghost season; Toriko
-   has 0 release-group titles and 0 blank plots (or a bounded, logged queue for the rest);
-   One Piece has `c1078` plus the six other renamed chapters, chapters covered by
-   `v107–v111` superseded through the normal queue, a colour-correct DB, and the One Piece
-   franchise folder holding both series; `queued/` is empty.
+2. The five owner-visible faults in §10.0 are fixed **and each acceptance command from
+   §10.0 is run and pasted, with its output, into the commit message.** Specifically:
+   * Smurfs' 409-file pack fully planned (405 episodes + 4 Xtras) and filed, superseding
+     the 40 wrong-slot S01 files, record terminal, content on the mount;
+   * TZ (2019) has two seasons, correct art on disk (**md5 differs from both Too Cute
+     hashes**), a clean `tvshow.nfo`/`season.nfo`, no ghost season, S02 episodes numbered;
+   * One Piece has zero `vNNNN`, zero chapters covered by an owned volume, exactly one
+     copy per volume with the coloured copy winning, a colour-correct DB, and the One
+     Piece franchise folder holding both series; the YacReader shelf reflects it;
+   * Toriko has 0 release-group titles and 0 blank plots (or a bounded, logged queue for
+     the rest); `queued/` is empty.
 3. `verify_fleet.sh`, `fleet_health`, `fleet_doctor`, `library_health.txt` and
    `media_doctor` (with the Jellyfin credentials from §4) all read clean or name only
    known-accepted items from §7.
 4. The next session that reads this file can tell from `state/decisions.log` and the test
-   names exactly which tool prevented which fault — that trace is the deliverable.
+   names exactly which tool prevented which fault — that trace is the deliverable. A fix
+   with no such trace and no owner-visible before/after is not done (§2.6).
+
+### 10.9 P0 — the Smurfs: a plan the harness computes, and a plan the model can finish writing — **SHIPPED 2026-09-20, re-drop pending**
+
+**Failure (verified 2026-09-20).** `6c413306…` (409 files, 54.8 GB) was dropped
+2026-09-19 09:11 and failed the same night. `state/tmp/6c413306…_plan.json` is 8,388 bytes
+and contains **24 files**: S01E01–E10, S02E01–E10 and the four Xtras. The journal's
+terminal line (2026-09-19 22:36 CDT; `updated_at 2026-09-20T03:36:02Z`) is `failed` with
+`plan accounts for 24 file(s) but leaves 385 release file(s) unfiled … the release is
+parked intact` — §10.1's guard did its job. The identify log ends: turn 36 "finished
+WITHOUT writing … asking for it (1/2)", turns 38/39 two tiny `Write`s, turn 40
+"done (stop)". All bytes are still on disk; the `.torrent` is in `Torrents/failed/`.
+
+**Two independent defects; fix both.**
+
+1. **Nothing computes the mapping this pack needs.** The filenames carry SxxExx in the
+   *release's* order, which is not broadcast order — the dvdrip mirror's own history proves
+   it: release S01E01 "The Smurfette" is broadcast S01E31 (§10.1). The 24-file plan maps
+   release S01E01 → broadcast S01E01, so even a complete plan written this way would file
+   S01 wrong. This is the `serial_release_map`/`arcmap` class: the harness must compute
+   release→broadcast episode numbers from the provider's episode list (match the release
+   file's own episode title against the guide), state the block in the prompt as fact, and
+   have `validate_plan` refuse a plan that contradicts it. Fail open when the guide is
+   unavailable.
+2. **A single `Write` cannot hold 409 entries.** The model spent 36 turns investigating,
+   then wrote a truncated prefix; the harness accepted it because the JSON was valid, and
+   only the POST-run coverage check saw the missing 385. Plan assembly must scale:
+   * the prompt must say the plan may be written in parts (append via `Edit`, or a
+     `files_part` schema), and `identify`/`ai_client` must merge parts, detect a
+     truncated/partial plan **before the run ends**, and ask for the missing slice with the
+     explicit unfiled list instead of finishing;
+   * above a size floor (~150 files) the harness must hand the model a deterministic
+     skeleton — every release file enumerated with its computed destination (or an
+     explicit `needs_mapping` marker) — so it fills titles/ids/gaps instead of re-typing the
+     listing;
+   * a cut plan is a **retryable state, not a terminal `failed`**: bounded retries with the
+     missing slice, then park with the reason. The coverage guard stays the last line of
+     defense (§10.1), it is not the first.
+
+**Repair.** After the tool ships: move the `.torrent` from `failed/` to the watch root's
+top level. The full 409-file plan (405 episodes + 4 Xtras) files the pack; the 40
+wrong-slot S01 files from the old dvdrip are superseded by plan evidence (the renumber
+precedent in §6/§10.2); end state: every episode slot occupied with broadcast-correct
+numbers, the 4 Xtras placed (S00/Movies), the record terminal.
+
+**Proof.** Fixture release whose filenames are deliberately not in broadcast order → the
+computed mapping block is in the prompt, the plan is rejected when it contradicts the block
+and accepted when it follows it. Fixture release of >300 files → the skeleton is complete,
+the model writes it in parts, coverage is 100% before the run ends. Replay both over
+`state/journal.jsonl`; register the tests in `verify_fleet.sh`.
+
+### 10.10 P0 — the free-AI upgrade: computed facts, completable plans, verified self-heal — **IMPLEMENTED 2026-09-20**
+
+The five failures in §10.0 are one shape repeated: **the harness let the model do
+arithmetic/enumeration it cannot do, and the self-heal that should have caught the result
+was blind.** This section is the systemic fix the owner asked for and the umbrella over
+10.3, 10.5 and 10.9. Do not treat the pieces as separate nice-to-haves; each is the
+difference between a fault returning and not.
+
+**A. Compute before the model runs, and state it as fact.** Every block follows the
+`arcmap`/`serial_numbering_block` pattern — computed by the harness, injected into
+`_runtime_prompt`, enforced by `validate_plan`, fail-open:
+
+* manga volume ceiling (AniList total, shelf fallback) and the `vNNNN`-above-ceiling
+  rejection (10.5a);
+* volume→chapter sets from the owned archives, providers second, AI last (10.5b);
+* colour per file from archive contents, and colored-supersedes-grey in both the reconcile
+  and the plan validator (10.5d);
+* franchise membership from `config.COMIC_FRANCHISES` (10.5e);
+* release→broadcast numbering for season packs (10.9);
+* provider ids verified (TMDB/TVDB title+year fetch) before any id may pick art; a mismatch
+  strips the id and logs the rejection; a network error fails open but the unverified id
+  cannot pick art (10.3).
+
+**B. Plans the model can actually finish.** Enumerate the release in the harness (it does
+this for coverage already); require the plan to cover it; support part-written plans with
+merge + truncation detection; above a size floor hand the model a deterministic skeleton;
+reject with the explicit missing list; bound retries; park — never terminal-fail — when
+only assembly failed.
+
+**C. The prompt tells the truth.** `prompts/identify.md` must lose the stale rules (the
+`<Series> Colored/` layout at :113-122 is the live example) and gain every computed block.
+Anything a human has had to say twice belongs in the prompt or the validator.
+
+**D. Validation with evidence.** Every new rejection is replayed over
+`state/journal.jsonl`, with the false-positive count printed in the commit message (§5);
+tests are registered in `scripts/verify_fleet.sh`. No guard ships on a hunch.
+
+**E. Self-heal that verifies itself.** `media_doctor` must see series/title art and nfo
+identity (10.3); `audit_metadata` must enumerate pool-only media from the mount/inventory,
+accept name-only guide rows and have a synopsis fallback (10.4); `escalate()` must verify
+the postcondition (fields actually changed) before charging its budget; provider caps
+park, never retire; `chapter_volume_reconcile` purges covered chapters once the map exists
+and logs before/after; every repair writes a `decisions.log` entry with its evidence.
+
+**F. The verification gate for "fixed".** Add `scripts/verify_owner_report.py` (name it
+what it is): it computes the five §10.0 checks — Too Cute md5s absent, no `vNNNN` on the
+shelf, zero covered One Piece chapters, colour-correct volume pairs, Smurfs plan coverage
+once a plan exists — and prints PASS/FAIL per line. Read-only; registered in
+`verify_fleet.sh` as a report check (it must not gate a deploy on the parked Smurfs). Run
+it at the end of the session and paste the output into the commit message. Then add the
+regression tests that fail if any of the five returns.
+
+**G. Definition of done for this batch.** §10.8 item 2. The measure is not that the symptom
+is gone today; it is that the tool that computes the fact, the guard that enforces it and
+the self-heal that repairs it all exist and are tested, and that the owner-visible artifact
+is clean.
 
 ---
 
@@ -925,31 +1231,22 @@ the exact values the code previously hardcoded, so the running daemons see no ch
 
 ---
 
-## 12. After the reboot: close out the Media-Orchestrator rename (owner-scheduled)
+## 12. After the reboot (2026-09-19) — close-out verified 2026-09-20
 
 The owner rebooted on 2026-09-19 so launchd would re-read the refreshed agents. The
-rename itself is DONE and pushed (`aa70cc5`); `ship-fleet.sh` cannot put it into effect
+rename itself is DONE and pushed (`aa70cc5`); `ship-fleet.sh` could not put it into effect
 because `kickstart -k` restarts the LOADED job definition, which still names the old path
-(measured: `program = .../Developer/Media-Fleet/...`). The reboot also bounced the
-in-flight Smurfs identify and the reaper drain — the owner knowingly waived §2.2/§2.4 for
-this one boot, so this checklist is about proving recovery and finishing the rename, **not
-deploying again**.
+(measured: `program = .../Developer/Media-Fleet/...`). The reboot also bounced the in-flight
+Smurfs identify and the reaper drain — the owner knowingly waived §2.2/§2.4 for this one
+boot, so this checklist is about proving recovery and finishing the rename, **not deploying
+again**.
 
-1. **Every daemon must be on the new path before anything is removed:**
-   ```bash
-   pgrep -fl 'Developer/Media-Fleet'                      # MUST be empty
-   pgrep -fl 'Developer/Media-Orchestrator' | wc -l
-   ```
-   If a process still shows the old path, its loaded definition was not refreshed —
-   reload just that agent (`launchctl bootout gui/$(id -u)/<label>`, then `launchctl
-   bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist`) rather than rebooting
-   again.
-2. **Remove the compatibility symlink** (only once step 1 is empty):
-   ```bash
-   rm /Users/mikeyferguson/Developer/Media-Fleet     # plain rm — no -rf, no trailing slash
-   ```
-   `rm -rf Media-Fleet/` with a trailing slash can follow the link and delete the real
-   repo. Leave the `-p:Media-Fleet` line in `~/Developer/.megaignore`; it is now insurance.
+1. **Every daemon must be on the new path before anything is removed — DONE**, verified
+   2026-09-20: `pgrep -fl 'Developer/Media-Fleet'` is empty and no live process resolves
+   the old path.
+2. **Remove the compatibility symlink — DONE.** `~/Developer/Media-Fleet` no longer exists
+   (verified 2026-09-20). Leave the `-p:Media-Fleet` line in `~/Developer/.megaignore`; it
+   is now insurance.
 3. **Prove the fleet healthy:** `bash Torrent-Ingest/scripts/verify_fleet.sh` must print
    `ALL CHECKS PASSED`; `fleet_doctor --once --dry-run` and `fleet_health --once` clean or
    naming only §7/§10 known items. After boot the mount and Jellyfin take ~2 minutes to
@@ -961,9 +1258,11 @@ deploying again**.
    resumes Media-Syncer and clears it; check `media_sync.log` for the resume rather than
    removing the marker by hand. The drain restarts its probe from the beginning; that is
    the reboot's cost, not damage.
-5. **Smurfs/identify recovery:** `6c413306…` was mid-retry and the wave keeps its bytes;
-   confirm the journal advances and `state/tmp/6c413306…_plan.json` eventually appears
-   (decisions.log). A killed run costs provider budget (§2.4) — nothing to repair by hand.
+5. **Smurfs/identify recovery — it ran, and it failed for a new reason.** `6c413306…`
+   produced a 24-file plan for a 409-file release and the coverage guard parked it intact
+   at 2026-09-19 22:36. That is the §10.9 defect, not a transient: **do not re-drop the
+   `.torrent` until the plan-assembly tool ships**, and do not hand-file any of the 54.8 GB pack (51 GiB by `du`)
+   still in `~/Downloads/.torrent-ingest/`.
 6. **Rotation is still outstanding from §11:** regenerate the Jellyfin API key and change
    the shared MEGA password. For the key: update `.env`, then re-run
    `bash Torrent-Ingest/startup.sh` at a quiet moment (it re-substitutes the key into the

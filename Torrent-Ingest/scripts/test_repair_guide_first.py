@@ -14,9 +14,14 @@ changed, so a filler that returns 5 while writing 3 fails here.
 
 Both directions (§7), because "the AI got less work" and "the repair silently did nothing"
 produce the same tidy log line:
-  * an episode the guide covers is filled, verified on disk, and NOT handed to the AI;
-  * an episode the guide does not cover, or covers with a title but no plot, is left in the
-    residue for the AI rather than written half-resolved into a LOCKED sidecar;
+  * an episode the guide covers with a name AND a summary is filled, verified on disk, and
+    NOT handed to the AI;
+  * an episode the guide covers with a NAME ONLY is a real partial fill since 2026-09-20
+    (HANDOFF 10.4 -- TVMaze's Toriko has 146 names and 0 summaries, and the old
+    both-required rule made the filler a no-op): the title is written and locked, the
+    episode stays in the residue so the synopsis source/AI still visits it, and the
+    provider title must survive that later pass;
+  * an episode the guide does not cover is left in the residue untouched;
   * a show the guide knows nothing about changes nothing and hands back every episode.
 
 No network: `epguide.episodes` is stubbed. Fixtures are built and torn down here.
@@ -53,7 +58,7 @@ SHOW = "Fixture Show"
 GUIDE = [
     {"season": 1, "number": 1, "name": "The First",  "summary": "A real synopsis."},
     {"season": 1, "number": 2, "name": "The Second", "summary": "Another synopsis."},
-    # covered by name but with NO summary -> must NOT be written into a locked sidecar
+    # covered by name but with NO summary -> title written, still needs a synopsis
     {"season": 1, "number": 3, "name": "The Third",  "summary": ""},
     # S01E04 is absent from the guide entirely -> residue
 ]
@@ -86,10 +91,10 @@ try:
     fixed, residue = repair._fill_from_guide(SHOW, todo, backup)
     changed = plots_on_disk(todo)
 
-    check("claimed count equals files that really changed", fixed, len(changed))
-    check("exactly the two fully-covered episodes changed", sorted(changed),
+    check("exactly the two fully-covered episodes stopped being blank", sorted(changed),
           [f"{SHOW} - S01E01.mkv", f"{SHOW} - S01E02.mkv"])
-    check("residue is what the AI must still do",
+    check("the name-only episode is a verified partial fill", fixed, 3)
+    check("residue is what the synopsis source/AI must still do",
           sorted(Path(e["video"]).name for e in residue),
           [f"{SHOW} - S01E03.mkv", f"{SHOW} - S01E04.mkv"])
 
@@ -98,8 +103,13 @@ try:
     check("the sidecar carries the guide's title", "<title>The First</title>" in body, True)
     check("and the guide's plot", "<plot>A real synopsis.</plot>" in body, True)
     check("and is locked", "<lockdata>true</lockdata>" in body, True)
-    check("a summary-less episode was NOT written",
-          (Path(tmp) / f"{SHOW} - S01E03.nfo").exists(), False)
+    nfo3 = Path(tmp) / f"{SHOW} - S01E03.nfo"
+    body3 = nfo3.read_text(encoding="utf-8")
+    check("a name-only episode got its title, locked", "<title>The Third</title>" in body3
+          and "<lockdata>true</lockdata>" in body3, True)
+    check("...and no invented plot", "<plot>" in body3, False)
+    check("it is still queued for a synopsis",
+          any(Path(e["video"]).name == f"{SHOW} - S01E03.mkv" for e in residue), True)
 
     # --- direction 2: no guide, nothing happens, nothing is claimed ------------
     print("\na show the guide does not know changes nothing")

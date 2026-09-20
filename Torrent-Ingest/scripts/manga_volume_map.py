@@ -130,11 +130,13 @@ def save_cache(cache: dict) -> None:
 
 
 def is_stale(entry: dict, now: datetime | None = None) -> bool:
-    """Stale when past TTL, or when a provider/AI failure parked it for a retry.
+    """Stale when past TTL, when a provider/AI failure parked it for a retry, or when it
+    predates the shelf facts (10.5a/b).
 
-    `retry_at` is a short backoff written after a totally failed lookup: a provider outage
-    must not become an AI call every scheduled tick, and it must not freeze the series for
-    the whole TTL either.
+    The facts clause is a ONE-TIME refresh: every pre-2026-09-20 entry lacks
+    `total_volumes`/`shelf_volumes`, and without this the One Piece entry would keep its
+    four-volume MangaDex map for 75 days. Key PRESENCE is what is checked, not value --
+    an AniList answer of `null` volumes is still an answer.
     """
     now = now or _now()
     retry = entry.get("retry_at")
@@ -144,6 +146,8 @@ def is_stale(entry: dict, now: datetime | None = None) -> bool:
                 return False
         except ValueError:
             pass
+    if "shelf_volumes" not in entry or "total_volumes" not in entry:
+        return True
     if not ((entry.get("volumes") or {}) or (entry.get("ai_volumes") or {})):
         return True                       # nothing usable -> always worth another try
     try:
@@ -155,7 +159,7 @@ def is_stale(entry: dict, now: datetime | None = None) -> bool:
 
 def allowed_source(entry: dict) -> bool:
     """Whether this entry may author ANY purge (kept for the coarse CLI/report test)."""
-    if entry.get("source") == "mangadex":
+    if entry.get("source") in ("mangadex", "shelf"):
         return True
     if entry.get("source") == "ai":
         try:
@@ -168,13 +172,17 @@ def allowed_source(entry: dict) -> bool:
 def volume_allowed(entry: dict, volume: int) -> bool:
     """Whether THIS volume's chapter set may author a purge.
 
-    Per-volume, because the two provenances have different authority. A provider set is
-    exact chapter numbers from MangaDex. An AI set is ranges a free model guessed, so it
-    only counts at or above `AI_MIN_CONFIDENCE`. A volume that is neither is unknown, and
+    Per-volume, because the provenances have different authority. A SHELF set is computed
+    from the owned archives' own embedded chapter markers (10.5b) -- the strongest
+    evidence there is, it is literally what the file contains. A provider set is exact
+    chapter numbers from MangaDex. An AI set is ranges a free model guessed, so it only
+    counts at or above `AI_MIN_CONFIDENCE`. A volume that is none of those is unknown, and
     its chapters are kept.
     """
     if not entry:
         return False
+    if int(volume) in {int(v) for v in (entry.get("shelf_volumes") or []) if str(v).isdigit()}:
+        return True
     if str(volume) in (entry.get("volumes") or {}):
         return True
     if str(volume) in (entry.get("ai_volumes") or {}):
@@ -183,6 +191,27 @@ def volume_allowed(entry: dict, volume: int) -> bool:
         except (TypeError, ValueError):
             return False
     return False
+
+
+def ceiling(entry: dict | None) -> int | None:
+    """The highest volume number this series plausibly has, or None when unknown.
+
+    AniList's total when it answers, the shelf's highest real volume when it does not,
+    and the LARGER of the two when both exist (10.5a). Larger, deliberately: AniList's
+    total for an ongoing series lags the shelf, and a ceiling that is too low would
+    refuse a real volume the owner already has. `None` means fail open -- never refuse
+    on an unknown ceiling.
+    """
+    if not entry:
+        return None
+    vals = []
+    tv = entry.get("total_volumes")
+    if isinstance(tv, int) and tv > 0:
+        vals.append(tv)
+    sc = entry.get("shelf_ceiling")
+    if isinstance(sc, int) and sc > 0:
+        vals.append(sc)
+    return max(vals) if vals else None
 
 
 # --- AniList identity --------------------------------------------------------
@@ -435,12 +464,14 @@ def ai_fallback(name: str, missing: list, known: dict,
 
 # --- resolution + cache access ----------------------------------------------
 
-def refresh(name: str, allow_ai: bool = True, needed=None) -> dict | None:
+def refresh(name: str, allow_ai: bool = True, needed=None,
+            series_dir: str | None = None) -> dict | None:
     """Fetch the map for `name` and cache it. None and no write on any failure.
 
-    Provider first. Only where MangaDex is silent about volumes we actually OWN (`needed`,
-    supplied by the caller that enumerated the shelf) or about volumes it itself reported
-    unmapped, ONE AI fallback runs for all of them together.
+    Order, fixed by HANDOFF 10.5b: (1) the SHELF's own archives, offline -- they carry
+    both the chapter markers and the edition, so they are exact; (2) MangaDex/AniList for
+    the volumes the shelf does not cover; (3) only what remains may ask the AI. A shelf
+    set wins over a provider set for the same volume: it is what the file contains.
     """
     al = anilist_search(name)
     search_title = (al or {}).get("title") or name
@@ -448,11 +479,27 @@ def refresh(name: str, allow_ai: bool = True, needed=None) -> dict | None:
     volumes, unmapped = {}, []
     ai_volumes, confidence = {}, 0.0
     notes = []
+    shelf_volumes: dict[int, list] = {}
+    if series_dir:
+        try:
+            import comicfacts
+            shelf = comicfacts.shelf_map(series_dir)
+            shelf_volumes = {int(v): list(r.get("chapters") or [])
+                             for v, r in shelf.items() if r.get("chapters")}
+            if shelf_volumes:
+                notes.append(f"shelf:{len(shelf_volumes)}")
+        except Exception:                                        # noqa: BLE001
+            shelf_volumes = {}
     if md:
         agg = mangadex_aggregate(md["id"])
         if agg:
             volumes, unmapped = parse_aggregate(agg)
             notes.append(f"mangadex:{md['id']}")
+    provider_volumes = bool(volumes)
+    # The shelf's exact sets replace provider guesses for the same volume.
+    for v, chapters in shelf_volumes.items():
+        volumes[int(v)] = list(chapters)
+        unmapped = [u for u in unmapped if str(u) != str(v)]
     if allow_ai:
         candidates = {int(v) for v in unmapped if str(v).isdigit()}
         candidates |= {int(v) for v in (needed or []) if str(v).isdigit()}
@@ -469,9 +516,17 @@ def refresh(name: str, allow_ai: bool = True, needed=None) -> dict | None:
                 if ai_volumes:
                     notes.append("ai")
     now = _now()
+    facts = {
+        "total_volumes": (al or {}).get("volumes"),
+        "total_chapters": (al or {}).get("chapters"),
+        "shelf_volumes": sorted(shelf_volumes),
+        "shelf_ceiling": max(shelf_volumes) if shelf_volumes else None,
+    }
     if not volumes and not ai_volumes:
-        # Nothing usable. Remember the attempt for a day: a provider outage must not
-        # become per-tick AI spend, and must not freeze the series for the full TTL.
+        # Nothing usable (a shelf cannot be read, providers are down). Remember the
+        # attempt for a day: a provider outage must not become per-tick AI spend, and
+        # must not freeze the series for the full TTL. The facts keys are still written
+        # so a later refresh is not forced by their absence.
         entry = {
             "name": name,
             "anilist_id": (al or {}).get("id"),
@@ -484,12 +539,20 @@ def refresh(name: str, allow_ai: bool = True, needed=None) -> dict | None:
             "ai_volumes": {},
             "unmapped_volumes": sorted(unmapped, key=str),
             "notes": "+".join(notes),
+            **facts,
         }
         cache = load_cache()
         cache["series"][_norm(name)] = entry
         save_cache(cache)
         return entry
-    source = "mangadex" if volumes and not ai_volumes else ("ai" if ai_volumes else "none")
+    if ai_volumes and not provider_volumes:
+        source = "ai"
+    elif provider_volumes:
+        source = "mangadex"
+    elif shelf_volumes:
+        source = "shelf"
+    else:
+        source = "none"
     entry = {
         "name": name,
         "anilist_id": (al or {}).get("id"),
@@ -501,6 +564,7 @@ def refresh(name: str, allow_ai: bool = True, needed=None) -> dict | None:
         "ai_volumes": {str(v): c for v, c in sorted(ai_volumes.items())},
         "unmapped_volumes": sorted(unmapped, key=str),
         "notes": "+".join(notes),
+        **facts,
     }
     cache = load_cache()
     cache["series"][_norm(name)] = entry
@@ -509,7 +573,7 @@ def refresh(name: str, allow_ai: bool = True, needed=None) -> dict | None:
 
 
 def get(name: str, allow_network: bool = True, allow_ai: bool = True,
-        needed=None) -> dict | None:
+        needed=None, series_dir: str | None = None) -> dict | None:
     """Cached entry if fresh; refresh when allowed; None otherwise. Never blocks filing.
 
     `allow_network=False` is the ingest hook's mode: a cache miss is a miss there, and the
@@ -520,7 +584,7 @@ def get(name: str, allow_network: bool = True, allow_ai: bool = True,
         return entry
     if not allow_network:
         return entry                      # stale-but-present still beats no map
-    return refresh(name, allow_ai=allow_ai, needed=needed)
+    return refresh(name, allow_ai=allow_ai, needed=needed, series_dir=series_dir)
 
 
 def known_volume(entry: dict | None, volume: int) -> list | None:
@@ -545,6 +609,22 @@ def _shelf_series() -> list:
     return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
+def _series_dir_for(name: str) -> str | None:
+    """The shelf folder for a series name, so `refresh` can read its archives (10.5b).
+
+    Searches recursively: a franchise member (`Ace's Story`) lives under its master.
+    """
+    key = library.normalize_folder_name(name)
+    for root in (config.MEDIAFS_MOUNT / "Comics" / "Manga",
+                 config.COMICS_ROOT / "Manga"):
+        if not root.exists():
+            continue
+        for d in root.rglob("*"):
+            if d.is_dir() and library.normalize_folder_name(d.name) == key:
+                return str(d)
+    return None
+
+
 def main() -> int:
     if sys.argv[1:2] == ["--ai-worker"]:
         return _ai_worker()
@@ -565,7 +645,8 @@ def main() -> int:
 
     out = {}
     for name in names:
-        entry = refresh(name, allow_ai=not args.no_ai) if args.refresh \
+        entry = refresh(name, allow_ai=not args.no_ai,
+                        series_dir=_series_dir_for(name)) if args.refresh \
             else get(name, allow_network=False)
         out[name] = entry
         if not args.json:

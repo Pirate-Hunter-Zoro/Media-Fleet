@@ -981,6 +981,30 @@ _LOOP_REPEAT_LIMIT = 3
 # without letting a model that cannot produce the file spin forever.
 _REQUIRE_FILE_MAX_PROMPTS = 2
 
+# How many times a run whose plan does not cover every release file is told exactly what
+# is missing. The Smurfs run wrote a 24-file prefix of 409 and stopped; the harness only
+# found out after the run, when the coverage guard parked the whole release (HANDOFF 10.9).
+# Two follow-ups convert a truncated prefix into a complete plan; after that the coverage
+# guard remains the last line of defense.
+_REQUIRE_COVERAGE_MAX_PROMPTS = 2
+
+
+def _plan_missing(plan_path, require_files):
+    """Release files the plan does not name, by basename. `[]` when the plan is unreadable
+    (the malformed-file path owns that case and retries the whole run)."""
+    try:
+        with open(plan_path, "r", encoding="utf-8") as fh:
+            plan = json.load(fh)
+    except Exception:                                            # noqa: BLE001
+        return []
+    have = set()
+    for f in plan.get("files") or []:
+        if isinstance(f, dict):
+            src = str(f.get("src") or "")
+            if src:
+                have.add(os.path.basename(src.rstrip("/")))
+    return [b for b in require_files if b not in have]
+
 # Extra seconds granted past a reached deadline, once, purely so the model can WRITE its
 # output file. The deadline exists to stop a run investigating forever, not to throw away
 # an answer it already has.
@@ -1006,7 +1030,8 @@ _TURN_PRESSURE = (
 def run_agent(prompt: str, allowed_tools=DEFAULT_TOOLS, max_turns: int = 40,
               model: str = "", cwd: str = "", deadline: float | None = None,
               on_event=None, base_url: str = "", key: str = "",
-              require_file: str = "", max_context_chars: int = 0) -> dict:
+              require_file: str = "", require_files=None,
+              max_context_chars: int = 0) -> dict:
     """Run one agent conversation to completion.
 
     Returns {"result": <final assistant text>, "num_turns": int, "tool_calls": int,
@@ -1053,6 +1078,7 @@ def run_agent(prompt: str, allowed_tools=DEFAULT_TOOLS, max_turns: int = 40,
     call_counts: dict = {}
     nudged: set = set()
     file_prompts = 0
+    coverage_prompts = 0
 
     started = time.monotonic()
     total_budget = (deadline - started) if deadline is not None else None
@@ -1162,6 +1188,35 @@ def run_agent(prompt: str, allowed_tools=DEFAULT_TOOLS, max_turns: int = 40,
                     f"the file anyway with your best judgement for it.")})
                 final_text = text or final_text
                 continue
+            # THE PLAN EXISTS BUT IS TRUNCATED. This is the Smurfs case exactly
+            # (HANDOFF 10.9): 409 release files, a 24-entry plan, a clean stop -- and
+            # the harness only found out after the run, when the coverage guard parked
+            # the whole release. The missing slice is computable here, so name it and
+            # ask for it before giving up on the run.
+            if (require_file and os.path.exists(require_file) and require_files
+                    and coverage_prompts < _REQUIRE_COVERAGE_MAX_PROMPTS):
+                missing = _plan_missing(require_file, require_files)
+                if missing:
+                    coverage_prompts += 1
+                    shown = ", ".join(missing[:40]) + (" ..." if len(missing) > 40 else "")
+                    if on_event:
+                        on_event(f"turn {turn}: plan is missing {len(missing)} of "
+                                 f"{len(require_files)} release file(s) -- asking for the "
+                                 f"slice ({coverage_prompts}/"
+                                 f"{_REQUIRE_COVERAGE_MAX_PROMPTS})")
+                    messages.append({"role": "assistant", "content": text or "(no text)"})
+                    messages.append({"role": "user", "content": (
+                        f"Your plan at {require_file} is INCOMPLETE: it does not account "
+                        f"for {len(missing)} of the {len(require_files)} release file(s). "
+                        f"Missing: {shown}\n\n"
+                        f"Every release file must be represented; a partial plan is a "
+                        f"failure that parks the whole release. APPEND the missing "
+                        f"entries to the existing file with the Edit tool (add them to "
+                        f"the `files` array, before the closing `]`), keeping everything "
+                        f"you already wrote. Do not start over, do not investigate "
+                        f"further, and do not reply with prose: extend the file NOW.")})
+                    final_text = text or final_text
+                    continue
             final_text = text
             stop_reason = choice.get("finish_reason") or "stop"
             if on_event:

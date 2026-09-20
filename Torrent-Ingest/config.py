@@ -295,6 +295,19 @@ COMIC_FRANCHISES = [
     # migrated MEGA-side by scripts/migrate_comic_franchises.py in the same change; a row
     # added WITHOUT that migration splits a series across two paths.
     # ---------------------------------------------------------------------------------
+    # One Piece (manga): 1 sibling folder(s) on disk
+    #     on disk: One Piece - Ace's Story
+    # `Wanted! Eiichiro Oda Before One Piece` is deliberately NOT a member: it is an
+    # Oda one-shots collection, not main-continuity One Piece, and the generator left it
+    # out for that reason (owner decision recorded 2026-09-20, HANDOFF §10.5e).
+    {
+        "name": "One Piece",
+        "kind": "manga",
+        "members": {
+            "one piece": "One Piece",
+            "one piece aces story": "Ace's Story",
+        },
+    },
     {
         "name": "A Certain Magical Index",
         "kind": "manga",
@@ -1279,6 +1292,14 @@ IDENTIFY_UNAVAILABLE_BACKOFF_SEC = 900   # 15 min
 # entries would blow the prompt up and tempt the run to inspect each one; beyond
 # this we list a capped sample and a summary so the run stays focused on placement.
 IDENTIFY_MAX_LISTING_FILES = 500
+
+# Above this many release files the harness hands the model a deterministic skeleton
+# (every file enumerated with its computed slot) and requires the plan to cover it,
+# because one `Write` cannot hold a plan that size. The Smurfs pack is 409 files; the
+# run investigated for 36 turns and wrote a 24-file prefix (HANDOFF 10.9). Sized below
+# that so a 178-file season pack also gets the skeleton.
+IDENTIFY_SKELETON_MIN_FILES = int(
+    os.environ.get("TORRENT_INGEST_SKELETON_MIN_FILES", "150"))
 
 # Deterministic placement fast-path (§ diagnosis 6.4): skip the AI identify entirely when
 # the searcher's stored file→item map is complete and the destination is derivable. Gated

@@ -143,8 +143,35 @@ def _series_root() -> Path | None:
 
 
 def _kind(rel: str, name: str):
-    """`("volume"|"chapter", number, colored)` for a manga filename, or None."""
-    colored = bool(dbhook._COLOR.search(rel))
+    """`("volume"|"chapter", number, colored)` for a manga filename, or None.
+
+    COLOUR AND KIND COME FROM THE ARCHIVE'S OWN ENTRIES (HANDOFF 10.5d). The filenames
+    carry no colour marker at all -- the owner's `One Piece v01.cbz` is PZG colour and
+    `One Piece v001.cbz` is grey VIZ -- so `dbhook._COLOR` on the path can never fire the
+    "coloured supersedes grey" rule. `comicfacts` reads the entries and is consulted
+    CACHE-ONLY here: the reconcile walks the whole shelf every six hours and must never
+    hydrate an evicted archive from the pool. On a cache miss the filename decision
+    stands, exactly as before.
+    """
+    colored = None
+    try:
+        import comicfacts
+        p = config.MEDIAFS_MOUNT / rel
+        if not p.exists():
+            p = config.MEDIA_ROOT / rel
+        f = comicfacts.cached_facts(p)
+    except Exception:                                            # noqa: BLE001
+        f = None
+    if f:
+        colored = f.get("colored")
+        # The mislabel shape: named `v1176.cbz` but the entries are chapter pages
+        # (`d1176`, `1176-001.png`). The contents win; the repair tool renames it.
+        if f.get("kind") == "chapter" and dbhook._VOL.search(name):
+            ch = next((c for c in (f.get("chapters") or []) if c), None)
+            if ch:
+                return "chapter", int(ch), bool(colored)
+    if colored is None:
+        colored = bool(dbhook._COLOR.search(rel))
     m = dbhook._VOL.search(name)
     if m:
         return "volume", int(m.group(1)), colored
@@ -258,12 +285,12 @@ def plan_decisions(series: str, owned: dict, entry: dict | None,
         return purges, keeps
 
     volumes = {}     # volume number -> [(rel, colored)]
-    chapters = {}    # chapter number -> [rel]
+    chapters = {}    # chapter number -> [(rel, colored)]
     for rel, (mtype, number, colored) in sorted(owned.items()):
         if mtype == "volume":
             volumes.setdefault(number, []).append((rel, colored))
         elif mtype == "chapter":
-            chapters.setdefault(number, []).append(rel)
+            chapters.setdefault(number, []).append((rel, colored))
 
     # 5. A colored volume supersedes a same-numbered grey volume in the same series.
     if policy != "keep_all":
@@ -278,15 +305,22 @@ def plan_decisions(series: str, owned: dict, entry: dict | None,
 
     for number, rels in sorted(chapters.items()):
         if policy == "keep_chapters":
-            for rel in rels:
+            for rel, _c in rels:
                 keep(rel, "keep rule: keep_chapters")
             continue
+        # The volume copies that will SURVIVE the colored-supersedes-grey rule above:
+        # a number held in both editions is covered by its coloured copy only.
+        def _keepers(rows):
+            colored_rows = [r for r in rows if r[1]]
+            return colored_rows or rows
+
         cover = None
         unknown_volumes = []
         for vnum, rows in sorted(volumes.items()):
-            if len(rows) != 1 or rows[0][1]:
-                # A colored or duplicated volume number is not a provider-numbered
-                # volume; it covers nothing (colored editions number differently).
+            keepers = _keepers(rows)
+            if len(keepers) != 1:
+                # Two copies of one number with no colour to break the tie: ambiguous,
+                # covers nothing.
                 unknown_volumes.append(vnum)
                 continue
             if not mvm.volume_allowed(entry, vnum):
@@ -294,14 +328,21 @@ def plan_decisions(series: str, owned: dict, entry: dict | None,
                 continue
             chset = mvm.known_volume(entry, vnum) or []
             if number in chset:
-                cover = vnum
+                cover = (vnum, bool(keepers[0][1]))
                 break
-        for rel in rels:
+        for rel, ch_colored in rels:
             if cover is not None:
+                # Owner rule (10.5d): a coloured chapter may only be superseded by a
+                # coloured volume. A grey chapter covered by any volume, and a coloured
+                # chapter covered by a coloured volume, are redundant and go.
+                if ch_colored and not cover[1]:
+                    keep(rel, f"colored chapter c{number:04d} covered only by grey "
+                              f"v{cover[0]:02d}; color would be lost")
+                    continue
                 purges.append(rel)
                 if log:
                     log(f"{series}: purging chapter c{number:04d} ({rel}); "
-                        f"covered by v{cover:02d}")
+                        f"covered by v{cover[0]:02d}")
             elif unknown_volumes:
                 keep(rel, f"volume map unknown for v{unknown_volumes}; keep")
             else:
@@ -373,7 +414,16 @@ def refresh_stale(allow_ai: bool = True, only=None, log_fn=print) -> dict:
         if entry is not None and not mvm.is_stale(entry):
             continue
         needed = sorted(n for _r, (k, n, _c) in files.items() if k == "volume")
-        fresh = mvm.refresh(label, allow_ai=allow_ai, needed=needed)
+        # Hand the refresh the actual shelf folder so the map is computed from the
+        # owned archives first (10.5b): offline, exact, and the only source that can
+        # reach all 111 One Piece volumes (MangaDex tags almost none of them).
+        sample_rel = next(iter(files))
+        rel_dir = str(Path(sample_rel).parent)
+        cand = config.MEDIAFS_MOUNT / rel_dir
+        if not cand.is_dir():
+            cand = config.MEDIA_ROOT / rel_dir
+        fresh = mvm.refresh(label, allow_ai=allow_ai, needed=needed,
+                            series_dir=str(cand) if cand.is_dir() else None)
         if fresh and (fresh.get("volumes") or fresh.get("ai_volumes")):
             out["refreshed"] += 1
             log_fn(f"{label}: map refreshed ({fresh.get('source')}, "

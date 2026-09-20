@@ -288,6 +288,18 @@ def audit_movies():
     return records, dup_ids
 
 
+def shows_root():
+    """The shelf the owner actually has: the mediafs mount when it is available.
+
+    HANDOFF 10.4 reason 1: this walked `config.SHOWS_ROOT` (`~/Media`), where Toriko's
+    147 videos are EVICTED to the pool, so the audit found 0 episodes, the worklist was
+    empty, and the self-heal was blind to 8 junk titles and 69 blank plots. The mount
+    (or its sidecars, which are local) is the complete view.
+    """
+    mount = config.MEDIAFS_MOUNT / "Shows"
+    return mount if mount.is_dir() else config.SHOWS_ROOT
+
+
 def audit_series_id_collisions():
     """Two DISTINCT show folders carrying the SAME series provider id in their
     tvshow.nfo are the sequel/spin-off MERGE signature: Jellyfin scraped one
@@ -297,10 +309,11 @@ def audit_series_id_collisions():
     to fix by hand (re-pin the sequel's own id, refresh), never auto-rewritten. The
     seed now fills a missing id on ingest (library._seed_tvshow_nfo), so a fresh
     drop should not create this; a hit is a legacy folder or a manual mis-scrape."""
-    if not config.SHOWS_ROOT.exists():
+    root = shows_root()
+    if not root.exists():
         return []
     by = {"tmdb": {}, "tvdb": {}}
-    for d in sorted(p for p in config.SHOWS_ROOT.iterdir() if p.is_dir()):
+    for d in sorted(p for p in root.iterdir() if p.is_dir()):
         text = library._read_text(d / "tvshow.nfo")
         if not text:
             continue
@@ -328,11 +341,12 @@ def main():
                     help="Write a repair worklist (flagged shows + movies) to this path.")
     args = ap.parse_args()
 
-    if not config.SHOWS_ROOT.exists():
+    root = shows_root()
+    if not root.exists():
         print(f"Shows root not mounted: {config.SHOWS_ROOT}", file=sys.stderr)
         return 2
 
-    show_dirs = sorted(p for p in config.SHOWS_ROOT.iterdir() if p.is_dir())
+    show_dirs = sorted(p for p in root.iterdir() if p.is_dir())
     if args.show:
         needles = [n.lower() for n in args.show]
         show_dirs = [d for d in show_dirs if any(n in d.name.lower() for n in needles)]

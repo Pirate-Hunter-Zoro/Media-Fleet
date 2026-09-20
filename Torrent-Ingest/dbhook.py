@@ -73,6 +73,44 @@ def _res(name: str) -> int:
     return 0
 
 
+def _plan_facts(f, name):
+    """The source archive's content facts for a comic plan file, or None (fail open)."""
+    try:
+        import comicfacts
+        src = f.get("src")
+        if src:
+            return comicfacts.facts(src, name_hint=name)
+    except Exception:                                            # noqa: BLE001
+        pass
+    return None
+
+
+def _plan_colored(f, rel, name) -> bool:
+    """Whether a comic filing is the coloured edition (10.5d): the archive's entries
+    first, the path/filename as fallback, unknown treated as grey."""
+    facts = _plan_facts(f, name)
+    if facts and facts.get("colored") is not None:
+        return bool(facts["colored"])
+    return bool(_COLOR.search(rel))
+
+
+def _plan_comic_kind(f, name) -> tuple[str, int | None]:
+    """`(mtype, number)` for a comic filing. The archive's entries win over the name:
+    a `v1176.cbz` whose entries are chapter pages is a chapter, not volume 1176."""
+    facts = _plan_facts(f, name)
+    if facts and facts.get("kind") == "chapter" and _VOL.search(name):
+        ch = next((c for c in (facts.get("chapters") or []) if c), None)
+        if ch:
+            return "chapter", int(ch)
+    m = _VOL.search(name)
+    if m:
+        return "volume", int(m.group(1))
+    m = _CH.search(name) or _C_BARE.search(name) or _HASH.search(name)
+    if m:
+        return "chapter", int(m.group(1))
+    return "collection", None
+
+
 def _record_file(conn, sid, f) -> None:
     rel = f.get("dst_rel") or ""
     parts = rel.split("/")
@@ -98,55 +136,102 @@ def _record_file(conn, sid, f) -> None:
         librarydb.upsert_media(conn, sid, "movie", None, None, title=name,
                             resolution=_res(src_name))
     elif top == "Comics":
-        colored = bool(_COLOR.search(rel))
-        m = _VOL.search(name)
-        if m:
-            librarydb.upsert_media(conn, sid, "volume", None, int(m.group(1)), title=name,
-                                colored=colored)
+        # Colour and kind come from the SOURCE ARCHIVE's own entries when it is readable
+        # (HANDOFF 10.5d) -- the plan's destination filenames carry no colour marker, and
+        # a `vNNNN` whose contents are chapter pages must be recorded as a chapter.
+        colored = _plan_colored(f, rel, name)
+        mtype, number = _plan_comic_kind(f, name)
+        if mtype in ("volume", "chapter") and number is not None:
+            librarydb.upsert_media(conn, sid, mtype, None, int(number), title=name,
+                                   colored=colored)
             return
-        m = _CH.search(name) or _C_BARE.search(name) or _HASH.search(name)
-        if m:
-            librarydb.upsert_media(conn, sid, "chapter", None, int(m.group(1)), title=name,
-                                colored=colored)
-            return
-        librarydb.upsert_media(conn, sid, "collection", None, None, title=name, colored=colored)
+        librarydb.upsert_media(conn, sid, "collection", None, None, title=name,
+                               colored=colored)
     elif top == "Novels":
         m = _VOL.search(name) or re.search(r"^\s*(\d{1,4})\s*[-–—]", name)
         librarydb.upsert_media(conn, sid, "volume", None, int(m.group(1)) if m else None,
                             title=name)
 
 
+def _path_colored(rel):
+    """The colour of a library comic path, from its archive contents (10.5d). None when
+    it cannot be read -- and None means grey-only for supersede, never coloured."""
+    try:
+        import comicfacts
+        for root in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
+            p = root / rel
+            if p.exists():
+                c = comicfacts.colour(p, name_hint=Path(rel).name)
+                if c is not None:
+                    return c
+    except Exception:                                            # noqa: BLE001
+        pass
+    return None
+
+
 def _record_supersede(conn, sid, rel) -> None:
     name = rel.split("/")[-1]
+    colored = _path_colored(rel)
     m = _CH.search(name) or _C_BARE.search(name) or _HASH.search(name)
     if m:
-        librarydb.mark_superseded(conn, sid, "chapter", None, int(m.group(1)), int(m.group(1)))
+        librarydb.mark_superseded(conn, sid, "chapter", None, int(m.group(1)),
+                                  int(m.group(1)), colored=colored)
         return
     m = _VOL.search(name)
     if m:
-        librarydb.mark_superseded(conn, sid, "volume", None, int(m.group(1)), int(m.group(1)))
+        librarydb.mark_superseded(conn, sid, "volume", None, int(m.group(1)),
+                                  int(m.group(1)), colored=colored)
         return
     m = _EP.search(name)
     if m:
         librarydb.mark_superseded(conn, sid, "episode", None, int(m.group(1)), int(m.group(1)))
 
 
-def _supersede(conn, sid: int, mtype: str, season, number) -> int:
-    """Mark one series' item rows superseded. `season`/`number` NULL matches NULL."""
+def _supersede(conn, sid: int, mtype: str, season, number, colored=None) -> int:
+    """Mark one series' item rows superseded. `season`/`number` NULL matches NULL.
+
+    Comic rows hold BOTH editions as separate rows (10.5d). When only one row exists for
+    the number, that row is the record and it goes, whatever its colour -- a stale
+    pre-colour row must not survive a purge forever. When both exist, only the edition
+    the purged path's own archive names is superseded; `colored=None` means unknown and
+    then ONLY the grey row goes, because a grey or unknown file may never supersede a
+    coloured one (owner rule, 10.5d).
+    """
     if season is None and number is None:
         cur = conn.execute(
             "UPDATE media SET status='superseded' WHERE series_id=? AND mtype=? "
             "AND status!='superseded'", (sid, mtype))
-    else:
+        return cur.rowcount
+    if mtype in ("volume", "chapter") and number is not None:
+        rows = conn.execute(
+            "SELECT id, colored FROM media WHERE series_id=? AND mtype=? "
+            "AND season IS ? AND number IS ? AND status!='superseded'",
+            (sid, mtype, season, number)).fetchall()
+        if len(rows) <= 1:
+            if not rows:
+                return 0
+            conn.execute("UPDATE media SET status='superseded' WHERE id=?",
+                         (rows[0]["id"],))
+            return 1
+        want = 1 if colored else 0
         cur = conn.execute(
             "UPDATE media SET status='superseded' WHERE series_id=? AND mtype=? "
-            "AND season IS ? AND number IS ? AND status!='superseded'",
-            (sid, mtype, season, number))
+            "AND season IS ? AND number IS ? AND colored=? AND status!='superseded'",
+            (sid, mtype, season, number, want))
+        return cur.rowcount
+    cur = conn.execute(
+        "UPDATE media SET status='superseded' WHERE series_id=? AND mtype=? "
+        "AND season IS ? AND number IS ? AND status!='superseded'",
+        (sid, mtype, season, number))
     return cur.rowcount
 
 
-def _comic_item(name: str) -> tuple[str, int | None]:
-    """(mtype, number) for a comic filename, parsed exactly as `_record_file` recorded it."""
+def _comic_item(name: str, colored=None) -> tuple[str, int | None]:
+    """(mtype, number) for a comic filename, parsed exactly as `_record_file` recorded it.
+
+    `colored` is accepted for symmetry with the supersede SQL and is not used to change
+    the parse; the kind/number a purged path names is the same in both editions."""
+    _ = colored
     m = _VOL.search(name)
     if m:
         return "volume", int(m.group(1))
@@ -186,9 +271,10 @@ def _comic_candidates(parts: list[str], name: str) -> list[str]:
     return out
 
 
-def _supersede_comic(conn, parts: list[str], name: str) -> int:
+def _supersede_comic(conn, parts: list[str], name: str, rel: str = "") -> int:
     """Supersede a purged comic's row, matched by folder chain with the first hit winning."""
-    mtype, number = _comic_item(name)
+    colored = _path_colored(rel) if rel else None
+    mtype, number = _comic_item(name, colored)
     for cand in _comic_candidates(parts, name):
         norm = librarydb._normalize(cand)
         if not norm:
@@ -209,7 +295,7 @@ def _supersede_comic(conn, parts: list[str], name: str) -> int:
                     "AND status!='superseded'", (row["id"],)).fetchone()[0]
                 if n != 1:
                     continue
-            changed += _supersede(conn, row["id"], mtype, None, number)
+            changed += _supersede(conn, row["id"], mtype, None, number, colored=colored)
         return changed
     return 0
 
@@ -245,7 +331,7 @@ def _supersede_path(conn, rel: str) -> int:
                                 (norm,)).fetchall():
             changed += _supersede(conn, row["id"], "movie", None, None)
     elif top == "Comics" and len(parts) >= 2:
-        changed += _supersede_comic(conn, parts, name)
+        changed += _supersede_comic(conn, parts, name, rel)
     # Novels/Books are not reached: the reaper does not track `.pdf`/`.epub`, so a
     # purge can never name one.
     return changed
@@ -448,12 +534,16 @@ def fold_comic_pairs(conn, inv: dict) -> dict:
         target = next(r for r in group if r["kind"] == target_kind)
         for loser in (r for r in group if r["id"] != target["id"]):
             for m in conn.execute(
-                    "SELECT id,mtype,season,number,status FROM media WHERE series_id=?",
+                    "SELECT id,mtype,season,number,status,colored FROM media "
+                    "WHERE series_id=?",
                     (loser["id"],)).fetchall():
+                # Colour is part of a comic row's identity (10.5d): a coloured row must
+                # not be "deduped" against the loser's grey row of the same number.
                 dup = conn.execute(
                     "SELECT id,status FROM media WHERE series_id=? AND mtype IS ? "
-                    "AND season IS ? AND number IS ? ORDER BY id",
-                    (target["id"], m["mtype"], m["season"], m["number"])).fetchall()
+                    "AND season IS ? AND number IS ? AND colored IS ? ORDER BY id",
+                    (target["id"], m["mtype"], m["season"], m["number"],
+                     m["colored"])).fetchall()
                 if dup:
                     keep = dup[0]
                     if m["status"] == "owned" and keep["status"] != "owned":

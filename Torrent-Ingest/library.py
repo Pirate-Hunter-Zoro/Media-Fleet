@@ -120,7 +120,11 @@ def resolve_comic_folder(name, kind, colored=False):
     key = normalize_folder_name(series)
     if not key:
         return None
-    fr = None if colored else comic_franchise(name, kind)
+    # `colored=True` no longer BYPASSES the franchise table. It used to, which kept a
+    # future coloured One Piece volume out of the master folder and recreated the exact
+    # split the owner asked to end (10.5e); colour is handled by the file/DB, not by the
+    # path.
+    fr = comic_franchise(name, kind)
     if fr is not None:
         # A franchise hit is DETERMINISTIC KNOWLEDGE from `config.COMIC_FRANCHISES`, not an
         # inference from what happens to be on disk, so it resolves to the member's folder
@@ -141,6 +145,19 @@ def resolve_comic_folder(name, kind, colored=False):
             # filing outright, so a wrong guess fails closed instead of colliding.
             return None
         leaf_key = normalize_folder_name(fr[1])
+        if leaf_key == normalize_folder_name(fr[0]["name"]) and base.is_dir():
+            # A FLAT master (the pre-franchise layout): the master series' own files sit
+            # directly in the master folder, as One Piece's 322 files do today. Keep
+            # resolving to it -- inventing `<Master>/<Master>/` would file the master's
+            # next volume into a second folder and split the series in two, which is the
+            # fault the franchise table exists to prevent. A member ("Ace's Story") never
+            # matches this branch and still gets its own nested folder.
+            try:
+                if any(p.is_file() and p.suffix.lower() in config.COMIC_EXTENSIONS
+                       for p in base.iterdir()):
+                    return base
+            except OSError:
+                pass
         if base.is_dir():
             hits = [d for d in base.rglob("*")
                     if d.is_dir() and not d.name.startswith(".")
@@ -500,6 +517,24 @@ def _digest_movies(title_hint=None):
     return "\n".join(lines)
 
 
+def _manga_ceiling_bit(series):
+    """A computed volume-ceiling fact for the digest, or "" when unknown (HANDOFF 10.5a).
+
+    Stated as FACT so the free model does not have to guess whether a bare number is
+    the next volume: past the ceiling it is a chapter, and a `v` marker past it is a
+    mislabel the validator refuses.
+    """
+    try:
+        import comicfacts
+        ceil = comicfacts.ceiling_for(series)
+    except Exception:                                            # noqa: BLE001
+        ceil = None
+    if not ceil:
+        return ""
+    return (f"series has {ceil} volume(s) -- a bare number above {ceil} is a CHAPTER, "
+            f"and a `v` marker above {ceil} is a mislabel")
+
+
 def _digest_comics():
     lines = ["EXISTING COMICS/MANGA (series -> volumes + chapters held):"]
     cov = _comics_coverage()
@@ -512,6 +547,9 @@ def _digest_comics():
                 bits.append(f"volumes v{min(vols):02d}-v{max(vols):02d} ({len(vols)} total)")
             if chaps:
                 bits.append(f"chapters c{min(chaps):04d}-c{max(chaps):04d} ({len(chaps)} total)")
+            ceil = _manga_ceiling_bit(series)
+            if ceil:
+                bits.append(ceil)
             lines.append(f"  - {series}  [{', '.join(bits) or 'no volumes/chapters yet'}]")
     else:
         lines.append("  (Comics root not mounted and no remote inventory)")
@@ -588,6 +626,9 @@ def _build_scoped_digest(series_name, kind):
                 bits.append(f"volumes v{min(vols):02d}-v{max(vols):02d} ({len(vols)} total)")
             if chaps:
                 bits.append(f"chapters c{min(chaps):04d}-c{max(chaps):04d} ({len(chaps)} total)")
+            ceil = _manga_ceiling_bit(series)
+            if ceil:
+                bits.append(ceil)
             lines.append(f"  - {series}  [{', '.join(bits) or 'no volumes/chapters yet'}]")
         if not matched:
             lines.append(f"  (no comic series resolves for '{series_name}')")
@@ -1106,8 +1147,120 @@ def _reroute_novel_archives(plan, content_root):
     return plan
 
 
+def verify_provider_ids(plan):
+    """Strip a series id the provider itself contradicts; return the reasons.
+
+    HANDOFF 10.3. The Twilight Zone (2019) was filed with `tmdb_id 80979` and
+    `tvdb_id 325542`; TMDB 80979 is *Too Cute* (2013) and the correct id is 83135.
+    Nothing asked the provider who the id belonged to, so the wrong cover art and
+    the wrong `originaltitle`/`premiered` were locked over the owner's series and
+    local art outranks remote, so a later correct refresh could not clear them.
+
+    Rules, in the safe direction:
+      * a 404 is a mismatch -- the plan names an id that names nothing;
+      * a year that differs by more than one from the provider's is a mismatch;
+      * a title with no shared distinctive word is a mismatch ONLY when both
+        years are known, because romaji-vs-English titles share no words and
+        are the ordinary case (Shingeki no Kyojin / Attack on Titan);
+      * a tvdb id is checked against TMDB's own `external_ids` for the verified
+        tmdb id; when the tmdb id was stripped the tvdb id came from the same
+        wrong lookup and is stripped with it;
+      * no key, no answer, a transport error -> fail open, id kept.
+
+    Mutation is deliberate and idempotent: on a mismatch the id is removed from
+    `plan` (so it can never pick art or author an nfo) and the reason is appended
+    to `plan["_id_rejections"]` for the run log and the rejection feedback.
+    """
+    reasons = []
+    media_type = plan.get("media_type")
+    if media_type not in ("show", "mixed"):
+        return reasons
+    plan_title = plan.get("title")
+    try:
+        plan_year = int(plan.get("year")) if plan.get("year") is not None else None
+    except (TypeError, ValueError):
+        plan_year = None
+    try:
+        import tmdbguide
+    except Exception:                                            # noqa: BLE001
+        return reasons
+    try:
+        ident = tmdbguide.show_identity(plan.get("tmdb_id")) if plan.get("tmdb_id") else None
+    except Exception:                                            # noqa: BLE001
+        ident = None
+    if plan.get("tmdb_id") and ident is not None:
+        why = None
+        if ident.get("dead"):
+            why = "TMDB answers 404 for it"
+        else:
+            theirs = _identity_words(ident.get("name")) | _identity_words(
+                ident.get("original_name"))
+            ours = _identity_words(plan_title)
+            year = ident.get("year")
+            year_bad = (plan_year is not None and year is not None
+                        and abs(plan_year - int(year)) > 1)
+            # A title with no shared word is only a hint, never the trigger: romaji
+            # against English (`Shingeki no Kyojin` / `Attack on Titan`) shares
+            # nothing and is the ordinary case. The year is the computable fact.
+            title_diff = bool(ours and theirs and not (ours & theirs))
+            if year_bad:
+                why = (f"the plan says year {plan_year} but TMDB says {year} "
+                       f"({ident.get('name')!r})")
+                if title_diff:
+                    why += f"; the plan titles it {plan_title!r}"
+        if why:
+            reasons.append(f"tmdb_id {plan.get('tmdb_id')} stripped: {why}")
+            plan.pop("tmdb_id", None)
+            plan.pop("tvdb_id", None)     # same wrong lookup produced it
+            ident = None
+    if plan.get("tvdb_id") and ident and ident.get("tvdb_id"):
+        if str(plan["tvdb_id"]) != str(ident["tvdb_id"]):
+            reasons.append(
+                f"tvdb_id {plan['tvdb_id']} stripped: TMDB records "
+                f"{ident['tvdb_id']} for the same series")
+            plan.pop("tvdb_id", None)
+    if reasons:
+        plan.setdefault("_id_rejections", []).extend(reasons)
+    return reasons
+
+
+def _reject_title_numbering(files, title_map):
+    """Refuse a destination that contradicts the computed release->broadcast map.
+
+    The map comes from `identify.release_title_map` (the release's own episode TITLES
+    matched against the provider), for packs whose `SxxEyy` is release order. The
+    Smurfs replacement pack is the case: its `S01E01` is *The Smurfette*, broadcast
+    S01E31, and the old dvdrip was filed positionally (HANDOFF 10.1/10.9). Only files
+    the map covers are checked; anything unmatched fails open.
+    """
+    if not title_map:
+        return
+    for idx, f in enumerate(files):
+        src_p = Path(f.get("src") or "")
+        m = re.search(r"[Ss](\d{1,3})[Ee](\d{1,4})", src_p.name)
+        if not m:
+            continue
+        try:
+            exp = title_map.get((int(m.group(1)), int(m.group(2))))
+        except ValueError:
+            continue
+        if not exp:
+            continue
+        try:
+            got = (int(f.get("season")), int(f.get("episode")))
+        except (TypeError, ValueError):
+            got = None
+        if got != tuple(exp):
+            raise PlanError(
+                f"file[{idx}] {src_p.name!r}: this release's `S{m.group(1)}E{m.group(2)}` "
+                f"is its OWN catalogue order, not the broadcast slot. The harness matched "
+                f"the file's episode title against the provider and computed "
+                f"S{exp[0]:02d}E{exp[1]:02d}, but the plan files it at "
+                f"{f.get('dst_rel')!r}. File it at the computed slot.")
+
+
 def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
-                  release_name=None):
+                  release_name=None, title_map=None):
     """Raise PlanError if the plan is unsafe or malformed. Returns normalized plan.
 
     `sibling_seasons` is the set of season numbers the SOURCE the plan was cut from
@@ -1159,8 +1312,12 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
     plan = _reroute_novel_archives(plan, content_root)
     files = plan["files"]
     # The re-route above may have flipped media_type (novel -> comic/mixed); re-read it
-    # so the forced_top consistency check below uses the post-re-route type.
+    # so the forced_top consistency check below uses the post-route type.
     media_type = plan.get("media_type")
+    # NOTE: provider-id verification (`verify_provider_ids`) deliberately does NOT run
+    # here. It reaches the network, and `validate_plan` is called by tests and by
+    # offline tools that must stay deterministic; it is invoked by `identify` on the
+    # model's plan instead, before this function (HANDOFF 10.3).
     # For a single-type plan, every file must land under that type's top-dir; a
     # "mixed" plan lets each file pick its own among the four.
     forced_top = {"show": "Shows", "movie": "Movies", "comic": "Comics",
@@ -1527,6 +1684,8 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
                     f"destination. File it at the computed slot.")
 
     _reject_comic_at_franchise_root(files)
+    _reject_manga_mislabels(plan, files)
+    _reject_title_numbering(files, title_map)
     _reject_absolute_run_split(files)
     _reject_arc_split_across_seasons(files)
     _reject_season_over_provider_count(plan, files)
@@ -2112,6 +2271,28 @@ def _reject_absolute_run_split(files):
                 f"Re-identify with each arc mapped to its own season, numbered from 1.")
 
 
+def _series_from_comic_filename(name):
+    """The series a comic filename states, with its volume/chapter marker removed.
+
+    `One Piece v112.cbz` -> `One Piece`; `ElfQuest - The Final Quest (2026).cbr` ->
+    `ElfQuest - The Final Quest` (no marker to remove). Used only to tell a flat
+    master's OWN run from an unrecognised member's file."""
+    stem = Path(str(name)).stem
+    stem = re.sub(r"\b(?:v|vol|volume)\.?\s*\d{1,4}\b", " ", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"\b(?:c|ch|chapter|chap)\.?\s*\d{1,4}\b", " ", stem,
+                  flags=re.IGNORECASE)
+    return strip_edition_label(re.sub(r"\s+", " ", stem).strip(" -_"))
+
+
+def _flat_dir_has_comics(base):
+    """True when a folder holds comic archives directly (the pre-franchise layout)."""
+    try:
+        return any(p.is_file() and p.suffix.lower() in config.COMIC_EXTENSIONS
+                   for p in Path(base).iterdir())
+    except OSError:
+        return False
+
+
 def _reject_comic_at_franchise_root(files):
     """Fail closed when a comic is filed directly into a franchise MASTER folder.
 
@@ -2148,6 +2329,20 @@ def _reject_comic_at_franchise_root(files):
             root_rel = ("Manga/" if fr["kind"] == "manga" else "") + fr["name"]
             if normalize_folder_name(str(parent)) != normalize_folder_name("Comics/" + root_rel):
                 continue
+            # A FLAT master is a legitimate layout until the franchise migration runs:
+            # the master series' own run lives directly in the master folder (One
+            # Piece's 322 files do today). The rule still refuses everything else --
+            # an unrecognised `ElfQuest - The Final Quest` in the ElfQuest root invents
+            # the shared vNN namespace that caused the 2026-09-02 incident -- by
+            # allowing ONLY the file whose series name IS the master and only when the
+            # master folder already holds flat archives.
+            own = normalize_folder_name(
+                _series_from_comic_filename(f.get("src") or dst_p.name))
+            if own == normalize_folder_name(fr["name"]) and any(
+                    _flat_dir_has_comics(root / root_rel)
+                    for root in (config.COMICS_ROOT, config.MEDIA_ROOT,
+                                 config.MEDIAFS_MOUNT)):
+                continue
             members = sorted({v for v in (fr.get("members") or {}).values() if v})
             raise PlanError(
                 f"file[{idx}] '{Path(f.get('src') or '').name}' is filed directly into the "
@@ -2156,6 +2351,116 @@ def _reject_comic_at_franchise_root(files):
                 f"shared '{fr['name']} vNN' namespace that belongs to no series, where it "
                 f"collides with unrelated books. Put it in the sub-folder for the series "
                 f"it actually is, creating a new one if this series has none yet.")
+
+
+def _comic_marker(name):
+    """`("volume"|"chapter", number)` a comic filename claims, or None."""
+    m = re.search(r"\bv\.?\s*(\d{1,4})\b", name, re.IGNORECASE)
+    if m:
+        return "volume", int(m.group(1))
+    m = re.search(r"\bc\.?\s*(\d{1,4})\b", name, re.IGNORECASE)
+    if m:
+        return "chapter", int(m.group(1))
+    return None
+
+
+def _comic_series_candidates(dst_rel):
+    """Series-name candidates for a comic destination, deepest folder first.
+
+    Manga nests `Comics/Manga/<Series>/` and `Comics/Manga/<Franchise>/<Series>/`;
+    the persisted volume map is keyed by the whole chain under the category
+    (`series_label_for_rel`), so both joins are tried.
+    """
+    parts = Path(dst_rel or "").parts
+    if len(parts) < 3 or parts[0] != "Comics":
+        return []
+    dirs = list(parts[1:-1])
+    if dirs and dirs[0] == "Manga":
+        dirs = dirs[1:]
+    return [" ".join(dirs[i:]) for i in range(len(dirs))]
+
+
+def _reject_manga_mislabels(plan, files):
+    """Refuse a comic whose own archive says it is a chapter filed as a volume, and
+    refuse a grey file superseding a coloured one -- both computed, both fail-open.
+
+    HANDOFF 10.0 rows 2-3 / 10.5a/c/d. The model filed `v1078`..`v1176` because the
+    library digest showed `v1078` as a volume and nothing could say otherwise: no
+    volume ceiling was persisted and no check read the archive. The owner's report --
+    "there are not that many volumes" -- becomes a computation here: the persisted
+    ceiling (AniList total or the shelf's highest real volume) plus the archive's own
+    entries. Above the ceiling AND the entries are chapter pages -> refuse.
+
+    The supersede half enforces the owner rule the other way round: the archive being
+    replaced carries colour evidence, and this plan is writing the same number as a
+    grey file -> refuse, so a grey copy can never delete the coloured one.
+
+    Everything fails OPEN: an unreadable source, an unknown ceiling, a network-shaped
+    absence -> no opinion. A rejection here must be a fact, never a guess.
+    """
+    try:
+        import comicfacts
+    except Exception:                                            # noqa: BLE001
+        return
+    written = []
+    for idx, f in enumerate(files):
+        dst = Path(f.get("dst_rel") or "")
+        if dst.parts[:1] != ("Comics",):
+            continue
+        marker = _comic_marker(dst.name)
+        if marker is None or marker[0] not in ("volume", "chapter"):
+            continue
+        mtype, number = marker
+        facts = None
+        try:
+            src = f.get("src")
+            facts = comicfacts.facts(src, name_hint=dst.name) if src else None
+        except Exception:                                        # noqa: BLE001
+            facts = None
+        if mtype == "volume":
+            ceiling = None
+            for cand in _comic_series_candidates(str(dst)):
+                ceiling = comicfacts.ceiling_for(cand)
+                if ceiling:
+                    break
+            chapter_evidence = bool(facts and facts.get("kind") == "chapter"
+                                    and facts.get("volume") is None)
+            if ceiling and number > ceiling and chapter_evidence:
+                raise PlanError(
+                    f"file[{idx}] {Path(f.get('src') or '').name!r} is filed as "
+                    f"v{number}, but this series has {ceiling} volume(s) and the "
+                    f"archive's own entries are chapter pages (chapter "
+                    f"{(facts.get('chapters') or ['?'])[0]}). There is no volume "
+                    f"{number}: file it as c{number}. A bare number above the ceiling "
+                    f"is a chapter, never the next volume.")
+        colored = None
+        if facts and facts.get("colored") is not None:
+            colored = bool(facts["colored"])
+        written.append((mtype, number, colored))
+
+    for rel in (plan.get("supersedes") or []):
+        marker = _comic_marker(Path(str(rel)).name)
+        if not marker or marker[0] not in ("volume", "chapter"):
+            continue
+        try:
+            replaced = None
+            for root in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
+                p = root / str(rel)
+                if p.exists():
+                    replaced = comicfacts.colour(p, name_hint=Path(str(rel)).name)
+                    break
+        except Exception:                                        # noqa: BLE001
+            replaced = None
+        if replaced is not True:
+            continue                    # no proof it is coloured -> fail open
+        for mtype, number, colored in written:
+            if (mtype, number) == marker and colored is not True:
+                raise PlanError(
+                    f"the plan supersedes the COLOURED file {rel!r} with a "
+                    f"same-numbered non-coloured copy. The owner's rule is that the "
+                    f"coloured copy is kept and the grey one is superseded -- never "
+                    f"the reverse. Drop the grey candidate, or supersede it with a "
+                    f"coloured copy.")
 
 
 def _reject_same_episode(plan, files):

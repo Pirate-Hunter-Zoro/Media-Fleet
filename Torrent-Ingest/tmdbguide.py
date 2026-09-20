@@ -328,3 +328,209 @@ def unserved(tmdb_id, slots):
     if not season_shape(tmdb_id):
         return []
     return [(s, e) for s, e in slots if not serves(tmdb_id, s, e)]
+
+
+# --- who the id actually is (HANDOFF 10.3) -----------------------------------
+#
+# THE INCIDENT THIS EXISTS FOR. Both Twilight Zone (2019) plans carried
+# `tmdb_id: 80979, tvdb_id: 325542` and the run log says it "confirmed" them. TMDB
+# 80979 is NOT the Jordan Peele series -- it is *Too Cute* (`萌宠成长记（精编版）`,
+# 2013, Henry Strozier); TVDB 325542 is an unrelated 1995 Italian series; the correct
+# TMDB for the Peele show is 83135. Nothing had ever asked the provider who the id
+# belonged to, so the wrong `originaltitle`, the wrong `premiered` and byte-identical
+# Too Cute artwork were locked over the owner's series for days -- and the local art
+# outranks remote, so Jellyfin kept showing it even after a correct re-identification.
+#
+# THE RULE (owner, 2026-09-20): an id that names a different show may not pick art or
+# author metadata. A mismatch STRIPS the id; a network error FAILS OPEN, because a
+# blip must never fail an ingest (HANDOFF §5) -- but an unverified id is not evidence
+# and may not be trusted later either.
+#
+# `external_ids` is TMDB's own record of the TVDB id for the same show, which is how a
+# tvdb id is checked without a TVDB client: the fleet has no TVDB API key, and TMDB's
+# mapping is the same one Jellyfin uses to cross-identify.
+
+_IDENTITY_CACHE_V = 2                      # bumped when the identity shape changes
+_IMAGE_BASE = "https://image.tmdb.org/t/p/original"
+
+
+def _get_json(path, params):
+    """GET a TMDB path. The key is read here and never returned. None on any failure."""
+    key = _key()
+    if not key:
+        return None
+    q = dict(params or ())
+    q["api_key"] = key
+    url = f"{_API}{path}?{urllib.parse.urlencode(q)}"
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/json",
+        "User-Agent": getattr(config, "USER_AGENT", None) or "Torrent-Ingest/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:   # noqa: S310
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        return {"_http_error": e.code}
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+
+
+def show_identity(tmdb_id):
+    """Provider identity for a TMDB series id, or None when the question cannot be put.
+
+    Returns:
+      * `{"dead": True}` when TMDB answers 404 -- the plan carries an id that names
+        nothing there, which is itself a mismatch;
+      * `{"name", "original_name", "year", "first_air_date", "tvdb_id", "poster_path",
+        "backdrop_path"}` when TMDB answers. `year` is `first_air_date[:4]` or None;
+        `tvdb_id` is from `/external_ids` and None when TMDB records none;
+      * None on a missing key or any transport error -- callers fail open.
+
+    Cached on disk (7-day TTL) because this runs at plan-validation time for every
+    plan; the id -> identity mapping only changes when providers merge entries.
+    """
+    if not tmdb_id:
+        return None
+    try:
+        tmdb_id = int(tmdb_id)
+    except (TypeError, ValueError):
+        return None
+    mem_key = ("ident", tmdb_id)
+    if mem_key in _mem:
+        return _mem[mem_key]
+    p = _cache_path(tmdb_id).with_name(f"{tmdb_id}-identity.json")
+    try:
+        blob = json.loads(p.read_text(encoding="utf-8"))
+        if blob.get("v") == _IDENTITY_CACHE_V:
+            if time.time() - float(blob.get("fetched_at", 0)) < CACHE_TTL_SEC:
+                _mem[mem_key] = blob.get("identity")
+                return blob.get("identity")
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+    data = _get_json(f"/tv/{tmdb_id}", {})
+    if data is None:
+        return None                       # transport: no cache write, no opinion
+    if data.get("_http_error") == 404:
+        ident = {"dead": True}
+    elif data.get("_http_error"):
+        return None
+    else:
+        ext = _get_json(f"/tv/{tmdb_id}/external_ids", {}) or {}
+        first = str(data.get("first_air_date") or "")
+        last = str(data.get("last_air_date") or "")
+        ident = {
+            "name": (data.get("name") or "").strip(),
+            "original_name": (data.get("original_name") or "").strip(),
+            "first_air_date": first,
+            "last_air_date": last,
+            "year": int(first[:4]) if first[:4].isdigit() else None,
+            "tvdb_id": str(ext.get("tvdb_id")) if ext.get("tvdb_id") else None,
+            "poster_path": data.get("poster_path"),
+            "backdrop_path": data.get("backdrop_path"),
+        }
+    try:
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"v": _IDENTITY_CACHE_V, "fetched_at": time.time(),
+                                   "identity": ident}), encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+    _mem[mem_key] = ident
+    return ident
+
+
+def art_urls(tmdb_id):
+    """`{"poster": url|None, "backdrop": url|None}` for a series, or None when unknown.
+
+    Used by `media_doctor` to replace contaminated on-disk art with the verified
+    identity's own images. An `art_urls` answer is only as good as the id passed in,
+    so callers must verify the id first (`show_identity`).
+    """
+    ident = show_identity(tmdb_id)
+    if not ident or ident.get("dead"):
+        return None
+    if ident.get("_http_error"):
+        return None
+    return {
+        "poster": f"{_IMAGE_BASE}{ident['poster_path']}" if ident.get("poster_path") else None,
+        "backdrop": (f"{_IMAGE_BASE}{ident['backdrop_path']}"
+                     if ident.get("backdrop_path") else None),
+    }
+
+
+def season_info(tmdb_id, season):
+    """`{"name", "year", "air_date", "poster_url"}` for one season, or None.
+
+    Used by `media_doctor` when it rewrites the contaminated `season.nfo` year and
+    `seasonNN-poster.jpg` after an identity repair: the season's own air date is the
+    correct `<year>`, not the series premiere.
+    """
+    if not tmdb_id or season is None:
+        return None
+    try:
+        tmdb_id, season = int(tmdb_id), int(season)
+    except (TypeError, ValueError):
+        return None
+    data = _get_json(f"/tv/{tmdb_id}/season/{season}", {})
+    if not data or data.get("_http_error"):
+        return None
+    air = str(data.get("air_date") or "")
+    return {
+        "name": (data.get("name") or "").strip(),
+        "air_date": air,
+        "year": int(air[:4]) if air[:4].isdigit() else None,
+        "poster_url": (f"{_IMAGE_BASE}{data['poster_path']}"
+                       if data.get("poster_path") else None),
+    }
+
+
+def season_poster_url(tmdb_id, season):
+    """The season poster URL for `(tmdb_id, season)`, or None when TMDB has none."""
+    info = season_info(tmdb_id, season)
+    return info["poster_url"] if info else None
+
+
+def episode_overviews(tmdb_id, season):
+    """`{(season, episode): overview}` for one season, or {} when the question cannot
+    be put. The synopsis source `repair_metadata` falls back to when TVMaze carries
+    episode NAMES but no summaries -- Toriko's case (146 names, 0 summaries, 10.4)."""
+    if not tmdb_id or season is None:
+        return {}
+    try:
+        tmdb_id, season = int(tmdb_id), int(season)
+    except (TypeError, ValueError):
+        return {}
+    data = _get_json(f"/tv/{tmdb_id}/season/{season}", {})
+    if not data or data.get("_http_error"):
+        return {}
+    out = {}
+    for e in data.get("episodes") or []:
+        n, ep = e.get("episode_number"), (e.get("overview") or "").strip()
+        if n is None or not ep:
+            continue
+        try:
+            out[(int(season), int(n))] = ep
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def find_show(title, year=None):
+    """Best TMDB series match for a title/year: `{id, name, year}` or None.
+
+    The re-identification fallback for a series whose pinned id is dead. Conservative:
+    requires a non-empty name; TDMB search itself ranks by relevance and the caller
+    should only use this when the old id answered 404 (never to override a live one).
+    """
+    if not title:
+        return None
+    data = _get_json("/search/tv", {"query": str(title),
+                                    **({"first_air_date_year": str(year)} if year else {})})
+    if not data or data.get("_http_error"):
+        return None
+    for m in data.get("results") or []:
+        first = str(m.get("first_air_date") or "")
+        if not (m.get("name") or "").strip():
+            continue
+        return {"id": m.get("id"), "name": m["name"].strip(),
+                "year": int(first[:4]) if first[:4].isdigit() else None}
+    return None

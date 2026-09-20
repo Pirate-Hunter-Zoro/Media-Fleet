@@ -689,6 +689,196 @@ def serial_numbering_block(content_root, release_files=None, wave_names=None):
             + "\n".join(rows) + "\n")
 
 
+# --- release-order -> broadcast numbering for title-named packs (HANDOFF 10.9) ---
+#
+# THE SMURFS. Its replacement pack names every episode `The Smurfs S01E01 (The
+# Smurfette).mp4` -- release order, which is NOT broadcast order: *The Smurfette* is
+# broadcast S01E31. The deleted dvdrip was filed positionally for exactly this reason
+# (`S01E01` = "The Smurfette" on the mount, wrong), and a complete plan written off the
+# release's own numbers would repeat the fault at full scale. This is the
+# `serial_release_map`/`arcmap` class again: the harness computes the mapping from the
+# release's own episode TITLES against the provider's list, states it in the prompt as
+# fact, and `validate_plan` refuses a plan that contradicts it. Fail open everywhere.
+
+_TITLE_TAG_RE = re.compile(r"[Ss](\d{1,3})[Ee](\d{1,4})\s*[\(\[]([^\)\]]{2,90})[\)\]]")
+_TITLE_MAP_MIN_FRACTION = 0.6
+_TITLE_MAP_MIN_ENTRIES = 4
+
+
+def release_title_entries(release_files):
+    """`[(rel, season, episode, title)]` for files named `SxxEyy (Title)`, or []."""
+    out = []
+    for item in release_files or ():
+        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
+        m = _TITLE_TAG_RE.search(Path(rel).name)
+        if not m:
+            continue
+        try:
+            out.append((rel, int(m.group(1)), int(m.group(2)), m.group(3).strip()))
+        except ValueError:
+            continue
+    return out
+
+
+def _title_tokens(text):
+    return {w for w in re.sub(r"[^a-z0-9]+", " ", str(text).lower()).split()
+            if len(w) > 2}
+
+
+def _match_titles(entries, guide):
+    """`{(season, episode): (guide_season, guide_episode)}` for uniquely matched titles."""
+    by_words = []
+    for e in guide or ():
+        name = str(e.get("name") or "")
+        if not name:
+            continue
+        try:
+            by_words.append((_title_tokens(name), int(e["season"]), int(e["number"]),
+                             name))
+        except (KeyError, TypeError, ValueError):
+            continue
+    claims = {}
+    for _rel, rs, re_, title in entries:
+        toks = _title_tokens(title)
+        if not toks:
+            continue
+        hit = None
+        for gtoks, gs, ge, _gname in by_words:
+            if toks == gtoks:
+                hit = (gs, ge)
+                break
+        if hit is None:
+            best = None
+            for gtoks, gs, ge, _gname in by_words:
+                if not gtoks:
+                    continue
+                overlap = len(toks & gtoks)
+                score = overlap / max(1, min(len(toks), len(gtoks)))
+                if score >= 0.75 and overlap >= 2:
+                    if best is None or score > best[0]:
+                        best = (score, gs, ge)
+                    elif score == best[0] and (gs, ge) != best[1:]:
+                        best = None       # a tie between different episodes: no claim
+                        break
+            if best is not None:
+                hit = (best[1], best[2])
+        if hit is None:
+            continue
+        key = (rs, re_)
+        if key in claims and claims[key] != hit:
+            continue
+        claims[key] = hit
+    # A guide episode claimed by two different release files is not a mapping.
+    seen = {}
+    for key, target in claims.items():
+        seen.setdefault(target, []).append(key)
+    for target, keys in seen.items():
+        if len(keys) > 1:
+            for key in keys:
+                claims.pop(key, None)
+    return claims
+
+
+def release_title_map(content_path, release_files, show_hint=None):
+    """Computed release->broadcast slots for a title-named pack, or {} (fail open).
+
+    Only returned when it actually DIFFERS from the release's own numbering somewhere
+    -- an ordinary pack whose numbers already match must not get a scary "this is not
+    broadcast order" block. Needs at least `_TITLE_MAP_MIN_ENTRIES` titled files and
+    `_TITLE_MAP_MIN_FRACTION` of them matching a unique guide episode.
+    """
+    entries = release_title_entries(release_files)
+    if len(entries) < _TITLE_MAP_MIN_ENTRIES:
+        return {}
+    title = show_hint or _release_title_guess(content_path, release_files)
+    if not title:
+        return {}
+    try:
+        import epguide
+        guide = epguide.episodes(title)
+    except Exception:                                                # noqa: BLE001
+        return {}
+    if not guide:
+        return {}
+    claims = _match_titles(entries, guide)
+    if len(claims) < max(_TITLE_MAP_MIN_ENTRIES,
+                         int(len(entries) * _TITLE_MAP_MIN_FRACTION)):
+        return {}
+    if all(target == key for key, target in claims.items()):
+        return {}
+    return claims
+
+
+def title_numbering_block(content_path, release_files, wave_names=None):
+    """The computed title->broadcast numbering, stated to the model as fact, plus the map.
+
+    Returns `(block_text, map)`. Empty block when nothing can be computed.
+    """
+    title_map = release_title_map(content_path, release_files)
+    if not title_map:
+        return "", {}
+    entries = release_title_entries(release_files)
+    wanted = None
+    if wave_names:
+        wanted = {str(n).replace("\\", "/").split("/")[-1] for n in wave_names}
+    rows = []
+    for rel, rs, re_, title in sorted(entries,
+                                      key=lambda e: (title_map.get((e[1], e[2]), (e[1], e[2])))):
+        target = title_map.get((rs, re_))
+        if not target:
+            continue
+        if wanted and Path(rel).name not in wanted:
+            continue
+        rows.append(f"  {Path(rel).name[:58]:60s} =>  Season {target[0]:02d}, "
+                    f"Episode {target[1]:02d}   (release S{rs:02d}E{re_:02d}, {title[:40]!r})")
+    if not rows:
+        return "", title_map
+    # A 400-row block plus a 400-file listing blows the prompt past every free
+    # provider's ceiling. The skeleton carries the complete computed list; the block's
+    # job is to state the RULE and enough examples, and the validator enforces the map
+    # regardless.
+    more = ""
+    if len(rows) > 80:
+        more = (f"\n  ... and {len(rows) - 80} more computed row(s); the complete list "
+                f"is in the skeleton handed to you.\n")
+        rows = rows[:80]
+    return ("======================================================================\n"
+            "RELEASE-ORDER NUMBERING -- COMPUTED BROADCAST NUMBERING\n"
+            "======================================================================\n"
+            "This release's `SxxEyy` is its OWN catalogue order, not the broadcast\n"
+            "order. Each file's real episode title is in parentheses, and the harness\n"
+            "matched those titles against the provider's episode list; the broadcast\n"
+            "slots below are what each file IS. File each file at the computed slot;\n"
+            "do NOT copy the release's `SxxEyy` onto the destination.\n"
+            + more + "\n".join(rows) + "\n"), title_map
+
+
+def plan_skeleton(release_files, title_map=None, title="", kind="show"):
+    """A deterministic plan pre-filled with EVERY release file and its computed slot.
+
+    Above `config.IDENTIFY_SKELETON_MIN_FILES` a single `Write` cannot hold the plan
+    (the Smurfs run burned 36 turns investigating and then wrote a 24-file prefix --
+    10.9). The harness enumerates the release, applies the computed title map, and
+    hands the model a skeleton to fill and extend instead of re-typing the listing.
+    """
+    files = []
+    non_episode_videos = 0
+    for item in release_files or ():
+        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
+        entry = {"src": rel, "dst_rel": "", "season": None, "episode": None}
+        m = re.search(r"[Ss](\d{1,3})[Ee](\d{1,4})", Path(rel).name)
+        if m:
+            s, e = int(m.group(1)), int(m.group(2))
+            target = (title_map or {}).get((s, e))
+            entry["season"], entry["episode"] = target or (s, e)
+        elif Path(rel).suffix.lower() in config.VIDEO_EXTENSIONS:
+            non_episode_videos += 1
+        files.append(entry)
+    if non_episode_videos:
+        kind = "mixed"
+    return {"media_type": kind, "title": title, "files": files}
+
+
 def _release_structure_block(content_path, release_files=None):
     """A factual summary of how the release is laid out, plus any split/numbering conflict.
 
@@ -977,7 +1167,8 @@ def _release_title_guess(content_path, release_files=None):
 
 def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                     series_hint=None, kind=None, failure_context=None, sections=None,
-                    release_files=None):
+                    release_files=None, title_block="", skeleton_path=None,
+                    require_count=0):
     """The engineered base prompt plus this torrent's concrete context.
 
     With `series_hint`/`kind` (the settled case) the library digest is scoped to that one
@@ -1000,11 +1191,38 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
     structure = _release_structure_block(content_path, release_files)
     serial = serial_numbering_block(content_path, release_files,
                                     wave_names=_listing_names(file_listing))
+    titles = title_block or ""
+    if not titles and release_files:
+        titles, _tm = title_numbering_block(content_path, release_files,
+                                            wave_names=_listing_names(file_listing))
     provider = _provider_season_block(content_path, release_files)
     arcs = _arc_season_block(content_path, release_files)
     specials = _specials_metadata_block(content_path, release_files,
                                         wave_paths=_listing_names(file_listing))
     ownership = _ownership_block(content_path, release_files)
+    # Large releases get the skeleton and the coverage contract in the prompt: a
+    # single `Write` cannot hold a 409-file plan, and the run must know a partial
+    # plan is a park, not a success (HANDOFF 10.9).
+    coverage_note = ""
+    if skeleton_path or require_count:
+        bits = []
+        if skeleton_path:
+            bits.append(
+                "A DETERMINISTIC SKELETON IS WAITING FOR YOU. Every release file, with\n"
+                "the computed destination slot where the harness could compute one, is at:\n"
+                f"{skeleton_path}\n"
+                "Read it, then write the plan: carry over its `files` entries and fill in\n"
+                "`dst_rel` (and any titles/ids). Do not re-investigate what it already states.")
+        if require_count:
+            bits.append(
+                f"COVERAGE IS REQUIRED. All {require_count} release file(s) must appear in\n"
+                "`files`; a plan that covers only some of them is INCOMPLETE and parks the\n"
+                "whole release. Write a prefix and EXTEND it with `Edit` (append the\n"
+                "remaining entries before the closing `]`), or rewrite the file with\n"
+                "`Write` as many times as you need. The harness checks coverage before the\n"
+                "run ends and will tell you exactly what is missing; do not finish while\n"
+                "files remain unaccounted for.")
+        coverage_note = "\n" + "\n\n".join(bits) + "\n"
     return f"""{base}
 
 ======================================================================
@@ -1020,6 +1238,7 @@ Files in the download (relative to that path):
 {settled}
 {structure}
 {serial}
+{titles}
 {provider}
 {arcs}
 {specials}
@@ -1052,7 +1271,7 @@ Work efficiently — this run is time-boxed:
     media at all (pure junk/samples), which is rare; prefer listing over omitting.
 
 {plan_path}
-
+{coverage_note}
 The JSON MUST match the schema described above. After writing the file, reply
 with a short plain-English rationale for the calls you made (which show, why
 that season numbering, which files you judged specials/movies and why, and
@@ -1378,6 +1597,43 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
     # refused rather than filed.
     serial_map = (serial_release_map(release_files) if release_files
                   else serial_release_map_for_content(content_path))
+    # Release-order numbering for title-named packs (HANDOFF 10.9, The Smurfs). Serial
+    # packs already have their binding map; do not stack two numbering blocks on one run.
+    title_block, title_map = "", {}
+    if release_files and not serial_map:
+        title_block, title_map = title_numbering_block(content_path, release_files)
+        if title_map:
+            _note(f"identify: computed release->broadcast numbering for "
+                  f"{len(title_map)} file(s) from their own titles")
+    # Above the size floor the model gets a deterministic skeleton and a coverage
+    # contract, because one Write cannot hold a plan that size and the old run wrote a
+    # 24-file prefix of 409 and stopped (10.9).
+    skeleton_path = None
+    if release_files and len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES:
+        skeleton_path = config.TMP_DIR / f"{info_hash}_skeleton.json"
+        try:
+            skeleton_path.write_text(json.dumps(
+                plan_skeleton(release_files, title_map,
+                              title=arc_title or _release_title_guess(content_path,
+                                                                      release_files)),
+                indent=1), encoding="utf-8")
+            _note(f"identify: wrote a {len(release_files)}-file skeleton for "
+                  f"{skeleton_path.name}")
+        except OSError:
+            skeleton_path = None
+    # The files the plan must account for, so ai_client can tell the model exactly what a
+    # truncated plan left out BEFORE the run ends instead of parking after it (10.9).
+    require_files = []
+    for item in release_files or ():
+        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
+        if Path(rel).suffix.lower() in config.VIDEO_EXTENSIONS:
+            require_files.append(Path(rel).name)
+    require_list = config.TMP_DIR / f"{info_hash}_require.json"
+    if require_files:
+        try:
+            require_list.write_text(json.dumps(require_files), encoding="utf-8")
+        except OSError:
+            require_files = []
 
     if settled:
         tools = "Read,Write,Glob,Grep,Probe,ListDir"
@@ -1422,7 +1678,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         prompt = _runtime_prompt(content_path, file_listing, plan_path, stored_plan,
                                  series_hint=series_hint, kind=kind,
                                  failure_context=rejections,
-                                 release_files=release_files)
+                                 release_files=release_files,
+                                 title_block=title_block,
+                                 skeleton_path=str(skeleton_path) if skeleton_path else None,
+                                 require_count=len(require_files))
         # Per ATTEMPT, not per run: confirm mode below narrows these for the one provider
         # that needs it, and leaking that narrowing to the next provider would cap a run
         # that has no reason to be capped.
@@ -1434,7 +1693,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
             compact = _runtime_prompt(content_path, file_listing, plan_path, stored_plan,
                                       series_hint=series_hint, kind=kind,
                                       failure_context=rejections, sections=sections,
-                                      release_files=release_files)
+                                      release_files=release_files,
+                                      title_block=title_block,
+                                      skeleton_path=str(skeleton_path) if skeleton_path else None,
+                                      require_count=len(require_files))
             if len(compact) < len(prompt):
                 _note(f"  {provider_name}: full prompt is {len(prompt)} chars, over its "
                       f"measured {_TOO_LARGE_CEILING[provider_name]}; retrying with the "
@@ -1492,6 +1754,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
             "--timeout", str(max(60, timeout - 60)),
             "--verbose",
             "--require-file", str(plan_path),
+            "--require-list",
+            str(require_list) if require_files else "",
             "--provider", provider_name,
             "--model", model,
         ]
@@ -1592,7 +1856,9 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                             content_path, file_listing, plan_path, stored_plan,
                             series_hint=series_hint, kind=kind,
                             failure_context=rejections, sections=sections,
-                            release_files=release_files)
+                            release_files=release_files, title_block=title_block,
+                            skeleton_path=str(skeleton_path) if skeleton_path else None,
+                            require_count=len(require_files))
                         if len(compact) < len(prompt) and _fits(provider_name, compact):
                             _note(f"  {provider_name}: retrying with the "
                                   f"{'+'.join(sections)} digest only "
@@ -1634,9 +1900,19 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                 _clear_rejections(info_hash)
                 return plan, rationale
             try:
+                # Verify the model's provider ids BEFORE any guard uses them and before
+                # apply can seed an nfo or fetch art (HANDOFF 10.3). A contradicted id
+                # is stripped in place; the plan proceeds without it.
+                library.verify_provider_ids(plan)
                 library.validate_plan(plan, str(content_path),
                                       sibling_seasons=sibling_seasons,
-                                      serial_map=serial_map)
+                                      serial_map=serial_map,
+                                      title_map=title_map or None)
+                # An id the provider contradicted was stripped in place (10.3). Log it
+                # loudly -- the plan is still good, but the next reader must not wonder
+                # why the nfo has no provider id.
+                for reason in plan.get("_id_rejections", ()):
+                    _note(f"  provider id stripped: {reason}")
                 globals()["_UNAVAILABLE_UNTIL"] = 0.0
                 _clear_rejections(info_hash)      # it finally landed; the lesson is spent
                 return plan, rationale

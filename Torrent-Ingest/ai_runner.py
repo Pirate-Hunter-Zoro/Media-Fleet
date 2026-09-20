@@ -28,6 +28,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
 import ai_client
 
@@ -126,7 +127,20 @@ def main() -> int:
                          "without it, it is asked once more to write it -- a run that "
                          "ends with prose instead of its output file has produced "
                          "nothing at all.")
+    ap.add_argument("--require-list", default="",
+                    help="Path to a JSON array of release basenames the plan at "
+                         "--require-file must cover. A truncated plan is reported with "
+                         "the exact missing slice before the run ends (HANDOFF 10.9).")
     args = ap.parse_args()
+
+    require_files = None
+    if args.require_list:
+        try:
+            loaded = json.loads(Path(args.require_list).read_text(encoding="utf-8"))
+            if isinstance(loaded, list) and loaded:
+                require_files = [str(x) for x in loaded]
+        except (OSError, ValueError):
+            require_files = None
 
     prompt = args.prompt if args.prompt else sys.stdin.read()
     if not prompt.strip():
@@ -159,6 +173,7 @@ def main() -> int:
             out = ai_client.run_agent(prompt, allowed_tools=tools,
                                       max_turns=args.max_turns, model=a["model"],
                                       require_file=args.require_file,
+                                      require_files=require_files,
                                       cwd=args.cwd, deadline=deadline, on_event=on_event,
                                       base_url=a["base_url"], key=a["key"],
                                       max_context_chars=_ceiling(a["provider"]))
