@@ -63,6 +63,23 @@ def _shows_root():
     return root if root.is_dir() else config.SHOWS_ROOT
 
 
+def _resident(rel):
+    """True when the path is still visible in the library (mount) or on the SSD.
+
+    The inventory keeps a purged path until Media-Syncer reconciles, so a purge that
+    already happened can look "still present" for a minute. The mount is the owner's
+    view and the SSD is the local truth; absence from both means the bytes are gone,
+    whatever the inventory still says.
+    """
+    for root in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
+        try:
+            if (root / rel).exists():
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def _queued_deletions():
     """Paths already queued for the reaper's purge (queue + in-flight batch)."""
     out = set()
@@ -114,7 +131,7 @@ def check_manga():
     queued = _queued_deletions()
     mislabels = sorted(rel for files in owned.values() for rel in files
                        if re.search(r"\bv\d{4}\b", Path(rel).name))
-    fresh = [r for r in mislabels if r not in queued]
+    fresh = [r for r in mislabels if r not in queued and _resident(r)]
     if fresh:
         line("no vNNNN mislabels", "FAIL", f"{len(fresh)} remain, e.g. {fresh[0]}")
     elif mislabels:
@@ -133,13 +150,18 @@ def check_manga():
         series_purges, _keeps = cvr.plan_decisions(
             label, files, entry, cvr.policy_for(label))
         purges.extend(series_purges)
-    fresh = [r for r in purges if r not in queued]
-    if fresh:
+    resident = [r for r in purges if r not in queued and _resident(r)]
+    queued_now = [r for r in purges if r in queued]
+    gone = [r for r in purges if r not in queued and not _resident(r)]
+    if resident:
         line("chapters covered by volumes", "FAIL",
-             f"{len(fresh)} still present, e.g. {fresh[0]}")
-    elif purges:
+             f"{len(resident)} still present, e.g. {resident[0]}")
+    elif queued_now:
         line("chapters covered by volumes", "PENDING",
-             f"{len(purges)} queued for purge")
+             f"{len(queued_now)} queued for purge")
+    elif gone:
+        line("chapters covered by volumes", "PASS",
+             f"{len(gone)} purged (inventory still catching up)")
     else:
         line("chapters covered by volumes", "PASS")
 
@@ -188,8 +210,14 @@ def check_large_releases():
     if parked:
         line("large releases", "PENDING", "parked: " + "; ".join(parked[:3]))
     elif review:
+        # Biggest first: the Smurfs (32 collapsed) must be the name a reader sees, not
+        # three one-file legacy records that happen to sort earlier.
+        review.sort(key=lambda s: int(re.search(r"\((\d+) collapsed\)", s).group(1)),
+                    reverse=True)
+        more = f" (+{len(review) - 3} more)" if len(review) > 3 else ""
         line("large releases", "REVIEW",
-             "destination collapses need content verification: " + "; ".join(review[:3]))
+             "destination collapses need content verification: "
+             + "; ".join(review[:3]) + more)
     else:
         line("large releases", "PASS")
 

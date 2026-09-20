@@ -209,7 +209,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, **59 blocking checks** (2026-09-20, after 10.3/10.4/10.5/10.9 and the owner report; 5 checks added) |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, **60 blocking checks** (2026-09-20 evening, after 10.3/10.4/10.5/10.9, the owner report, the library-wide rewrite and the hard-coding guard; 6 checks added) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
 | Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF |
@@ -224,9 +224,11 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 
 ### Shipped 2026-09-20 — the five computed facts, the verified self-heal, the scalable plan
 
-Five registered tests (check #55–#59): `test_provider_id_verify.py`,
+Six registered tests (check #55–#60): `test_provider_id_verify.py`,
 `test_series_identity_heal.py`, `test_manga_mislabels.py`,
-`test_release_title_numbering.py`, `test_metadata_heal.py`. The report
+`test_release_title_numbering.py`, `test_metadata_heal.py`, and
+`test_no_incident_hardcoding.py` (no machine paths or digests in executable string
+literals -- comments and docstrings may still name incidents). The report
 `scripts/verify_owner_report.py` prints the owner-visible acceptance per §10.0 and is
 advisory in `verify_fleet.sh` (a parked Smurfs or a draining purge must not gate).
 
@@ -270,7 +272,7 @@ master's own files stays flat until the owner decides on the migration), and
 `resolve_comic_folder(colored=True)` no longer bypasses the table. `identify.md` and
 `README.md` teach the current layout.
 
-**10.9 follow-up (2026-09-20 afternoon).** The generic owner report lists three
+**10.9 follow-up (2026-09-20 afternoon).** The generic owner report lists the Smurfs collapse first, then three
 COMPLETED legacy releases whose plans collapsed destinations: `Pokemon Horizons 115-123
 English Dub` (1), `[Deadmau-RAWS] Shokugeki.no.Souma.OVA.2016-2018` (5), `[MTBB]
 Monogatari Series Off & Monster Season S1` (1). These predate the merge collision guard
@@ -305,9 +307,9 @@ precedes its premiere; no `vNNNN` mislabel, no chapter covered by an owned volum
 no volume in both editions across EVERY two-tier manga series (the reconciler's own
 functions, so it cannot disagree with an apply); and the journal's completed records
 whose destinations were collapsed (content-verification review) and terminal records
-parking unaccounted files. Queued purges report PENDING, not FAIL. Read-only, exit 0
-always, advisory in `verify_fleet.sh`. Its first run surfaced **three legacy destination
-collapses** the incident-coded version could not see — see §10.9's note.
+parking unaccounted files. Queued purges report PENDING; already-purged paths report PASS while the inventory catches up; only bytes still visible through the mount or on the SSD fail. Read-only, exit 0
+always, advisory in `verify_fleet.sh`. Its first run surfaced **the Smurfs collapse plus three legacy ones**
+the incident-coded version could not see — see §10.9's note.
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 
@@ -1047,7 +1049,7 @@ is the same scheme as the deleted dvdrip, so the compute-the-numbering rules of 
 replay surfaced **Yamato 2202** (26 real episodes a partial plan never accounted for,
 nobody had noticed). DW (2005) was re-armed and re-dropped; the outcome is in the journal.
 
-**Progress 2026-09-20:** the tooling for all five is shipped with 59 registered checks.
+**Progress 2026-09-20:** the tooling for all five is shipped with 60 registered checks.
 §10.0's status block says exactly which live artifacts are verified and which await the
 reaper drain / the Smurfs re-drop; do not claim more than it says.
 
