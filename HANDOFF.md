@@ -390,6 +390,60 @@ anywhere: every rule is a computed fact.
   removed. The table row is the generator's evidence-based one (`build_comic_franchises`
   resolves it from the library; no title was typed in for this fix).
 
+### Shipped 2026-09-21 — reconcile sees every witness: the One Piece re-queue storm
+
+**Damage (measured live 2026-09-20 19:55–20:15).** The franchise migration moved 191 files
+without rewriting the journal records that named them, and `reconcile.py` checked presence
+against the inventory keys and `~/Media` (the SSD cache) only — the MOUNT and a moved key
+both read as "gone". Every moved chapter completion was re-queued, re-downloaded and
+re-filed on a loop, and the five chapters a volume already covered (**c1080, c1094, c1101,
+c1120, c1122**) were re-fetched only for `chapter_volume_reconcile` to purge them again.
+38 records carried the re-queue error; the re-identify runs those spawned were competing
+with the Smurfs re-fetch for the same free-provider chain (`state/tmp` logs at 20:00–20:12
+are re-queues, not new drops; openrouter was out of daily budget).
+
+**The fix (three computed facts, plus a repair tool).**
+* `reconcile._is_present_local` checks the MOUNT as well as the SSD — the module always
+  said "local mount"; the code checked only the cache (HANDOFF §2.1).
+* A moved file matches by CONTENT IDENTITY: basename + byte size, both carried by the
+  inventory (`[account, timestamp, size]`). One unique candidate proves presence;
+  ambiguous or different-size candidates prove nothing and are never guessed.
+* `dbhook.purged_evidence` reads library.db's own supersede ledger (the read-only mirror
+  of `_supersede_path`'s path→row mapping) and a completion whose files are gone from
+  EVERY witness and deliberately superseded is CLOSED (`reconcile_closed`, plus the older
+  `reconcile_dead` switch the running daemon honors) instead of re-acquired.
+* `scripts/repair_journal_paths.py` applies the same facts to records that drifted before
+  the fix: rewrites `applied`/plan/`chunk_filed` to the unique moved key and closes the
+  all-missing-and-superseded ones. It never touches a record that still holds a file.
+
+**Acceptance (owner-visible; pasted from the live run).**
+* `bash scripts/verify_fleet.sh` → **`ALL CHECKS PASSED.`** — the new check is
+  `test_reconcile_presence.py`, which proves both directions and replays the live journal:
+  `completed records audited: 330 / present: 325 / deliberately superseded: 5 / genuinely
+  missing: 0 / the path-only check would have re-queued: 5`.
+* `python3 scripts/repair_journal_paths.py --apply`:
+  `APPLIED: 0 record(s) rewritten, 5 closed as superseded, 17 stale error(s) cleared,
+  312 already exact, 13 unresolved`.
+* The five closed records are gone from the mount (`find
+  ~/MediaLibrary/Comics/Manga/One Piece -name '*cNNNN*'` → nothing) and the reaper purged
+  their pool copies (`state/reap_purges.log`/`Media-Syncer/torrent_reap.log` lines for
+  flat and nested c1094 at 07:09/10:46/12:39/19:57); their library.db rows are
+  `superseded`. The journal's last line for each is `completed` with
+  `reconcile_closed: superseded` and no new re-queue after 2026-09-21T01:10:52Z.
+* The 13 `unresolved` records are pre-existing partial completions (legacy collapsed
+  plans, pool-only files whose keys moved before the inventory rewrite); each still holds
+  at least one file, which is reconcile's "present" verdict, so they were deliberately
+  left untouched.
+
+**Still open from this (not damage, just timing).** The code activates when the ingest
+daemon next restarts; the deploy is blocked while an `ai_runner.py` is in flight (§2.4)
+and the two runs from the storm were still going at commit time. The records still
+`downloading` from the old re-queue (13 One Piece chapters, the 1r0n pack, three purged
+chapters c1098/c1112/c1133) settle on their own; re-run
+`scripts/repair_journal_paths.py --apply` once they are `completed` and it will clear
+their errors / close the purged tail. `reconcile_dead` + `reconcile_closed` already keep
+the closed five out of every audit.
+
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 
 Four changes, all in `Torrent-Ingest`, each with a registered guard and (where a guard
@@ -628,6 +682,7 @@ comicfacts.py                       (module)                       # archive-con
 scripts/yacreader_index_repair.py   [--apply]                      # crash rows in the reader index; --apply WRITES
 scripts/identify_capacity.py        --probe                       # which providers can serve
 scripts/audit_free_only.py                                        # the billing invariant
+scripts/repair_journal_paths.py     [--apply] [--record <ih>]     # records left on moved/purged paths; --apply WRITES
 ```
 
 `identify_capacity.py --probe` re-probes every model id live. **Do this when model ids rot,

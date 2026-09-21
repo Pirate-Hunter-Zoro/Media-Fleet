@@ -432,6 +432,19 @@ run "no tracked secrets in a public repo" \
 # and tests are dated records/fixtures and exempt.
 run "no incident hard-coding in shipped code" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_no_incident_hardcoding.py
+# `reconcile` re-queues a completion it cannot find, so a blind witness re-downloads the
+# library. It was blind twice on 2026-09-20: the SSD-only check said "gone" for files the
+# mount still served, and a library-internal move (the One Piece franchise migration, 191
+# files) left every applied path pointing at a vacated key -- 132 chapter completions were
+# re-queued, re-fetched and re-filed on a loop, and the five covered ones were purged
+# again by the chapter reconciler. Presence now counts the MOUNT and matches a moved file
+# by its exact content identity (basename + byte size, both carried by the inventory), and
+# a completion whose content library.db records as deliberately superseded is CLOSED
+# instead of re-acquired. Both directions: a different-size same-name file is not a move,
+# an owned or unknown item still re-queues, and the repair tool never closes a record that
+# still holds a file. The replay over state/journal.jsonl prints the live counts.
+run "a completion is re-queued only on every-witness loss (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_reconcile_presence.py
 
 # ---- advisory: is the acceptance gate still being REACHED? (§4.120) ----------
 # Deliberately NOT part of the pass/fail above. This script answers "is the code sound?",

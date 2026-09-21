@@ -376,6 +376,117 @@ def record_purge(relpaths) -> dict:
         conn.close()
 
 
+def _item_state(conn, sid: int, mtype: str, season, number) -> str:
+    """`superseded` | `owned` | `none` for one series' rows of one item.
+
+    Color-aware by construction: a colored row still owned makes the item `owned` even
+    when its grey twin was superseded, which is the owner's rule that a grey purge must
+    never read as "the content is gone" while the colored copy is the one kept (10.5d).
+    """
+    rows = conn.execute(
+        "SELECT status FROM media WHERE series_id=? AND mtype=? AND season IS ? "
+        "AND number IS ?", (sid, mtype, season, number)).fetchall()
+    if not rows:
+        return "none"
+    if any(r["status"] != "superseded" for r in rows):
+        return "owned"
+    return "superseded"
+
+
+def _states_verdict(states: list[str]) -> bool:
+    """True when at least one series recorded the item and none still owns it.
+
+    A same-named duplicate series that never recorded the item (`none`) does not veto a
+    sibling's supersede: `_supersede_path` updates every series that HAS the row, and a
+    series with no row never claimed the item in the first place."""
+    return any(s == "superseded" for s in states) \
+        and all(s in ("superseded", "none") for s in states)
+
+
+def _path_superseded(conn, rel: str) -> bool:
+    """True when `rel` names content library.db records as deliberately superseded.
+
+    The read-only mirror of `_supersede_path`'s own path->row mapping, so the statement
+    it writes and the statement this reads cannot drift. A shape it cannot identify (a
+    numberless special, a collection, an unknown series) answers False: no evidence is
+    never evidence of a purge, because the caller's fallback is to re-queue.
+    """
+    parts = rel.split("/")
+    if not parts or not parts[0]:
+        return False
+    top, name = parts[0], parts[-1]
+    if top == "Shows" and len(parts) >= 4:
+        title = parts[1]
+        season = next((int(m.group(1)) for p in parts[2:-1]
+                       for m in [re.fullmatch(r"[Ss]eason\s*(\d{1,3})", p)] if m), None)
+        m = re.search(r"[Ss](\d{1,3})[Ee](\d{1,4})", name)
+        if m:
+            season = season if season is not None else int(m.group(1))
+            number = int(m.group(2))
+        else:
+            m = re.search(r"[Ee](\d{1,4})", name)
+            if not m or season is None:
+                return False                 # a special with no number: cannot match
+            number = int(m.group(1))
+        norm = librarydb._normalize(title)
+        rows = conn.execute("SELECT id FROM series WHERE norm=? AND kind IN "
+                            "('anime','tv')", (norm,)).fetchall()
+        return _states_verdict([_item_state(conn, r["id"], "episode", season, number)
+                                for r in rows])
+    if top == "Movies" and len(parts) >= 2:
+        title = parts[1] if len(parts) > 2 else Path(name).stem
+        norm = librarydb._normalize(title)
+        rows = conn.execute("SELECT id FROM series WHERE norm=? AND kind='movie'",
+                            (norm,)).fetchall()
+        return _states_verdict([_item_state(conn, r["id"], "movie", None, None)
+                                for r in rows])
+    if top == "Comics" and len(parts) >= 2:
+        mtype, number = _comic_item(name)
+        if mtype == "collection":
+            # `_supersede_comic` only drops a collection when exactly one row could be
+            # meant; once dropped that "exactly one" test no longer holds, so the read
+            # side refuses to guess instead of pretending there is evidence.
+            return False
+        for cand in _comic_candidates(parts, name):
+            norm = librarydb._normalize(cand)
+            if not norm:
+                continue
+            rows = conn.execute(
+                "SELECT id FROM series WHERE norm=? AND kind IN ('manga','comic')",
+                (norm,)).fetchall()
+            if not rows:
+                continue
+            return _states_verdict([_item_state(conn, r["id"], mtype, None, number)
+                                    for r in rows])
+    return False
+
+
+def purged_evidence(relpaths, conn=None) -> bool:
+    """True only when EVERY path names an item the DB records as deliberately superseded.
+
+    Called by `reconcile.audit` before it re-queues a completion whose files are absent
+    from the inventory and both local tiers: a chapter the fleet purged because a volume
+    covers it must not be re-downloaded, re-filed and purged again. False whenever the
+    DB cannot say (unknown series, an owned row, a collection, any error) and false for
+    an empty set -- an uncertain record keeps the historical re-queue path."""
+    rels = [r for r in (relpaths or []) if r]
+    if not rels:
+        return False
+    own = conn is None
+    if own:
+        try:
+            conn = librarydb.connect()
+        except Exception:  # noqa: BLE001
+            return False
+    try:
+        return all(_path_superseded(conn, rel) for rel in rels)
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        if own and conn is not None:
+            conn.close()
+
+
 def _comic_kind(plan: dict) -> str | None:
     """`manga`/`comic` from where the plan's own files land; None when none are comics.
 
