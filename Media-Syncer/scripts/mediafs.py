@@ -26,6 +26,11 @@ read-through-hydrate and are never written through the mount (new media arrives 
 Torrent-Ingest -> SSD library root -> Media-Syncer).
 
     python3 -m scripts.mediafs <mountpoint> [--lower DIR] [--foreground]
+
+Run it through `run_mediafs.sh`, which exports FUSE_LIBRARY_PATH pointing fusepy at
+fuse-t. Invoked bare, fusepy looks libfuse up by name (`find_library('fuse')`), which
+is the macFUSE path that macOS 27 refuses -- and macFUSE is no longer installed here,
+so the lookup finds nothing and the import fails.
 """
 from __future__ import annotations
 

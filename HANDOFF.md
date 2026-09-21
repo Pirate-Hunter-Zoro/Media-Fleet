@@ -1443,3 +1443,44 @@ again**.
    `bash Torrent-Ingest/startup.sh` at a quiet moment (it re-substitutes the key into the
    installed plists and reloads the Torrent-Ingest agents). Check `pgrep -f ai_runner.py`
    is empty first.
+
+---
+
+## 13. The FUSE layer: mediafs rides fuse-t, macFUSE removed (2026-09-21)
+
+Symptom: after the 05:56 reboot the mount never came back. `com.mikeyferguson.mediafs`
+crash-looped (13 × `mount_macfuse: the file system is not available (2)`), the
+"macFUSE is too old" dialog kept popping, and `library_supervisor` held Jellyfin down
+(`mount not ready -> stopping Jellyfin`) — the guard working as designed, not the fault.
+
+Diagnosis: `fusepy` resolves its dylib by NAME (`ctypes.util.find_library('fuse')`),
+which matched macFUSE's `/usr/local/lib/libfuse.dylib` → `libfuse.2.dylib` (macFUSE
+5.0.6, hand-installed 2025-10-01, **no Homebrew receipt**), so the mount exec'd macFUSE's
+`mount_macfuse` even though the fleet's FUSE layer is fuse-t. The nightly BrewUpgrade pass
+could never help: macFUSE was not a cask it could see, and fuse-t 1.2.7 is already current
+(`brew outdated` listed only jellyfin). The daemon was doing exactly what it was built to
+do — hold the casks it cannot safely swap at 04:00 and leave them for a person; this
+incident is the hand-upgrade path firing.
+
+Fix: `run_mediafs.sh` pins `FUSE_LIBRARY_PATH=/usr/local/lib/libfuse-t.dylib` (fusepy's
+supported override, `fuse.py:84`), read before `find_library`, and exits 1 with a clear
+error if the library is missing instead of silently falling back. The LaunchAgent plist
+comment and the mediafs README/docstring now say fuse-t.
+
+macFUSE removal (by hand, admin): `macFUSE.framework`, both launch daemons + privileged
+helpers (booted out first), the prefpane, `/usr/local/lib/libfuse.2.dylib`, the
+`libfuse.dylib` symlink, `libfuse.la`, `/usr/local/include/fuse.h`, `pkgconfig/fuse.pc`.
+**macFUSE's own uninstaller was deliberately NOT run**: it rm's
+`/usr/local/lib/libfuse3.4.dylib` and `libfuse3.dylib`, which on this box are FUSE-T's
+(timestamps + FUSE-T's own uninstaller agree; its wiki says the package never installs
+`libfuse.dylib`). One remnant survives: `/Library/Filesystems/macfuse.fs` — SIP/`sunlnk`
+on `/Library/Filesystems` refuses root `rm -rf` (`Operation not permitted` on every
+entry). It is inert (no userspace lib and no launch job can invoke it); removing it needs
+a SIP-disabled boot and was not judged worth it.
+
+Verified after the change: a fresh `kickstart -k` of mediafs mounts
+`fuse-t:/MediaLibrary (nfs)`, a read through the mount returns real bytes, and
+`library_supervisor` restarted Jellyfin on its own; `/Items/Counts` = MovieCount 452,
+SeriesCount 313, EpisodeCount 20386, BoxSetCount 90 (identical before and after). The
+mount drop during the restart tripped the supervisor's "mount not ready" stop — expected,
+and it recovered in ~70 s. Shipped with `Media-Syncer/scripts/ship.sh`.

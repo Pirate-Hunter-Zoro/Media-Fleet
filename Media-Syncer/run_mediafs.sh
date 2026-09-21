@@ -10,6 +10,23 @@ set -uo pipefail
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin:$HOME/.local/bin"
 
+# The FUSE layer is fuse-t, never macFUSE. fusepy resolves its dylib by NAME
+# (`ctypes.util.find_library('fuse')`), which finds macFUSE's
+# /usr/local/lib/libfuse.dylib if that antique is installed -- and on macOS 27
+# macFUSE 5.0.6's mount_macfuse refuses to serve ("the file system is not
+# available (2)"), so every KeepAlive respawn crash-looped. FUSE_LIBRARY_PATH is
+# fusepy's supported override; point it at fuse-t's libfuse compatibility
+# library so the mount rides the layer Open-Code-Doctor keeps current.
+FUSE_T_LIB="/usr/local/lib/libfuse-t.dylib"
+if [ -e "$FUSE_T_LIB" ]; then
+    export FUSE_LIBRARY_PATH="${FUSE_LIBRARY_PATH:-$FUSE_T_LIB}"
+else
+    # No fallback on purpose: find_library('fuse') is exactly the macFUSE path that
+    # broke, and with macFUSE removed it finds nothing. Fail loudly; KeepAlive retries.
+    echo "[mediafs] ERROR: ${FUSE_T_LIB} missing -- fuse-t is not installed? Refusing to mount without it."
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 

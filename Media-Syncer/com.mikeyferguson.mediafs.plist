@@ -11,7 +11,7 @@
     </array>
 
     <!-- Foreground FUSE mount; KeepAlive + the launcher's stale-mount force-clean
-         are the watchdog. Must be a LaunchAgent (user session): macFUSE mounts are
+         are the watchdog. Must be a LaunchAgent (user session): fuse-t mounts are
          owned by the mounting user, and Jellyfin (same user) reads them. -->
     <key>RunAtLoad</key>
     <true/>
