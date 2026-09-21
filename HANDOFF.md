@@ -1484,3 +1484,41 @@ Verified after the change: a fresh `kickstart -k` of mediafs mounts
 SeriesCount 313, EpisodeCount 20386, BoxSetCount 90 (identical before and after). The
 mount drop during the restart tripped the supervisor's "mount not ready" stop — expected,
 and it recovered in ~70 s. Shipped with `Media-Syncer/scripts/ship.sh`.
+
+---
+
+## 14. WebDAV vs the mount for Jellyfin: considered, rejected (2026-09-21)
+
+Owner asked whether WebDAV is faster than the FUSE mount and could improve streaming. Answer:
+no, and the premise inverts the layering. Jellyfin cannot speak WebDAV (no remote-storage
+support at all); the documented workaround is to mount the WebDAV endpoint locally and point
+Jellyfin at that mount — i.e., WebDAV is a *backend protocol for a mount*, an extra hop, never
+a replacement for the mount. The fleet already does the recommended thing, with a filesystem
+that carries the inventory.
+
+What an rclone mount / `rclone serve webdav` would forfeit here:
+
+* **Inventory-local scans.** mediafs serves all 25,597 paths full-size from
+  `remote_inventory.json`; `stat`/scans never touch MEGA. An rclone mount makes Jellyfin's
+  first scan list directories over the API — precisely the load the account pool + VPN
+  rotation exist to spread, but outside that machinery.
+* **The tier engine.** Cold reads hydrate in 4 MB segments with 2 parallel workers
+  (`STREAM_SEGMENT_BYTES` / `STREAM_WORKERS`, config.py:788), resume interrupted fills, serve
+  un-hydrated ranges on demand, promote into the local cache, and prefetch the next episode
+  (`PREFETCH_AHEAD`). rclone's VFS is a weaker, unmanaged re-implementation.
+* **The deletion contract.** Deletes through the mount are tombstoned and reaped to every
+  pool copy; an rclone mount knows nothing of `mediafs_deletions.jsonl` or the reaper.
+* **Credential/rotation management.** Hydration rides the same rotating MEGA account pool as
+  the syncer; a WebDAV endpoint needs its own access path and VPN story, unmanaged.
+
+`.strm` files pointing at an HTTP/WebDAV endpoint were considered in the same pass: they would
+bypass the local cache entirely (every play refetches from MEGA), sidestep the tier engine,
+and add an unmanaged server — rejected on the same grounds.
+
+Measurement that settles it: a 160 MB local file read through `~/MediaLibrary` runs at
+**314 MB/s** (page-cached direct read: 17 GB/s). Playback bitrates sit orders of magnitude
+below that, and a cold file is bound by MEGA's per-connection throughput, not the local
+protocol — there is no streaming headroom for WebDAV to win back. Reconsider only if the pool
+is replaced by a LAN-hosted store with no API metering; then a plain NFS/SMB/rclone mount
+could be simpler. Shipped docs-only with `Media-Syncer/scripts/save-and-push.sh` (no daemon
+runs this text, so no bounce).
