@@ -435,14 +435,16 @@ are re-queues, not new drops; openrouter was out of daily budget).
   at least one file, which is reconcile's "present" verdict, so they were deliberately
   left untouched.
 
-**Still open from this (not damage, just timing).** The code activates when the ingest
-daemon next restarts; the deploy is blocked while an `ai_runner.py` is in flight (§2.4)
-and the two runs from the storm were still going at commit time. The records still
-`downloading` from the old re-queue (13 One Piece chapters, the 1r0n pack, three purged
-chapters c1098/c1112/c1133) settle on their own; re-run
-`scripts/repair_journal_paths.py --apply` once they are `completed` and it will clear
-their errors / close the purged tail. `reconcile_dead` + `reconcile_closed` already keep
-the closed five out of every audit.
+**Deployed 2026-09-21 05:25 CDT** (`ship-fleet.sh`; it correctly skipped the reaper,
+which is still mid-drain): the ingest daemon restarted onto the new code, 0 tracebacks in
+`TorrentIngest.log`/`DirectIngest.log`/`MediaSync.log`, the mount re-primed (312 show
+folders) and Jellyfin answered `/Items/Counts` (313 series / 20,386 episodes / 452 movies
+/ 90 box sets). The old re-queue loop stopped at the restart — the last old-code re-queue
+was Chapter 1133 at 04:53 (`TorrentIngest.log`), its re-download sits `present` on the
+mount so the new audit leaves it, and when `chapter_volume_reconcile` purges it again the
+completion will be CLOSED, not re-queued. `reconcile_dead` + `reconcile_closed` keep the
+closed five out of every audit. Two of the tails from the old queue ended `failed`
+(c1098/c1112 — the plan-time guards refused them); that is terminal and needs no action.
 
 ### Shipped 2026-09-19 — the plan-coverage contract, the collision park, the orphan sweep, a hidden reader
 
