@@ -629,6 +629,22 @@ The safety property that replaces serialization is the **budget**, not a count:
 - This still lets a small working set ingest an unbounded library: fifty dropped
   `.torrent` files admit in waves as fast as the disk drains, not one at a time.
 
+**A stalled download is failed slowly, and its bytes are kept.** A torrent whose
+qBittorrent state is a stall state (`stalledDL`/`queuedDL`/`stoppedDL`/`pausedDL`/`error`/
+`missingFiles`) and whose `last_activity` is older than `STALL_ABANDON_SEC` (24 h) is failed
+and dropped from the budget reservation. The clock is raised to the pack's
+`wave_started_at` for a chunked wave, because a chunked pack is stopped between waves by
+design and the inherited clock would otherwise destroy it seconds after resuming
+(`scripts/test_chunked_stall_clock.py`). The failure **keeps the partial payload**
+(`qbt.remove(delete_files=False)`): a re-drop of the same source resumes from what is on
+disk, and the janitor reclaims a directory that is never retried after its own 7-day grace.
+There is deliberately **one** deadline — before 2026-09-23 a second, 4-hour deadline was
+selected by `availability < 1`, on the mistaken premise that availability is a swarm-wide
+fact. It is not: it counts the peers this client is *currently connected to*, so it reads
+< 1 during every stall and killed four slow-but-alive packs after an ordinary overnight
+lull, deleting ~7 GB of their partial bytes with them. A swarm's health is not knowable
+from a delta in that number.
+
 ---
 
 ## Disk-space policy

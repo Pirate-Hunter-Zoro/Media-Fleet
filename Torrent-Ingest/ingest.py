@@ -1382,14 +1382,25 @@ _NO_PROGRESS_STATES = (
 
 
 def _abandon_stalled(record, t, client):
-    """Fail a download that has been stalled (no peers/seeders) for STALL_ABANDON_SEC.
+    """Fail a download that has been stalled (no peer activity) for STALL_ABANDON_SEC.
 
     A stalled torrent keeps its unfetched bytes reserved in `_remaining_budget` -- for a
     chunked pack that is the whole active wave -- so left unchecked it deadlocks admission:
     no wave finishes, no space frees, no new torrent is admitted, and the only visible
-    symptom is a log full of "0MB admittable" while nothing downloads. Failing it removes
-    it from qBittorrent (deleting the partial payload) and releases the reservation, which
-    is what lets the rest of the queue drain.
+    symptom is a log full of "0MB admittable" while nothing downloads. Failing it takes it
+    out of the reservation and lets the rest of the queue drain.
+
+    ONE DEADLINE, AND THE BYTES STAY. `availability` is NOT a swarm-wide fact -- it is the
+    pieces held by the peers this client is currently connected to, plus our own, so during
+    any stall it collapses to our completion fraction and reads < 1 even in a swarm full of
+    seeders. It used to select a 4h "no complete copy anywhere" deadline, which fired on
+    every stall; four Bob's Burgers packs (S01 45%, S02 22%, S03 1%, S06 0% at failure,
+    2026-09-23) were killed during an ordinary overnight lull and their partial payloads
+    were deleted with the torrent, so every re-drop restarted from zero and stalled again.
+    The 24h clock below is the one the config documents ("a genuinely dead torrent drains
+    within a day"), and the failure path now keeps the partial download -- the janitor
+    reclaims it after FAILED_ARTIFACT_GRACE_SEC if it is never retried -- so a slow-but-alive
+    torrent is never destroyed and a re-drop resumes from what is already on disk.
 
     Returns True when the record was failed, so the caller can stop advancing it.
     """
@@ -1438,22 +1449,28 @@ def _abandon_stalled(record, t, client):
     # about a swarm of 450. `wave_started_at` is absent on non-chunked records and on
     # records written before this existed, so `or 0` leaves their behaviour unchanged.
     since = max(since, record.get("wave_started_at") or 0)
-    # A torrent with availability < 1 has no complete copy in the swarm, so it can never
-    # finish until a new seeder appears -- that is the dead weight that holds the budget.
-    # Give it a short grace; a torrent that merely lost its fast peers keeps the full
-    # deadline.
-    no_complete = (getattr(t, "availability", 1.0) or 0) < 1.0
-    threshold = (config.STALL_ABANDON_NO_COMPLETE_SEC if no_complete
-                 else config.STALL_ABANDON_SEC)
-    if now - since < threshold:
+    # `since` is the last moment this torrent saw ANY peer activity, and the deadline is
+    # STALL_ABANDON_SEC -- long enough to ride out a seeder's offline stretch (the release
+    # windows of public/DHT-only swarms are measured in hours), short enough that a
+    # genuinely dead torrent drains within a day. It is deliberately the ONLY deadline:
+    # a shorter one selected by `availability < 1` was demonstrably wrong (see the
+    # docstring) and a torrent that stalls at 45% proves the swarm can serve it.
+    if now - since < config.STALL_ABANDON_SEC:
         return False
+    # delete_files=False ON PURPOSE. A stall is not a refusal and not corruption: the bytes
+    # are the one thing a retry cannot recreate cheaply (a thin swarm is exactly where they
+    # were slow to get), and `_fail`'s own promise -- "local download left for inspection"
+    # -- was false on this path while every other failure path leaves it. A re-drop of the
+    # same source resumes from the partial data; if it is never retried, the janitor
+    # reclaims the directory after FAILED_ARTIFACT_GRACE_SEC.
     try:
-        qbt.remove(client, h, delete_files=True)
+        qbt.remove(client, h, delete_files=False)
     except Exception as exc:                                              # noqa: BLE001
         log(f"stall-abandon: could not remove {record['name']} from qBittorrent: {exc}")
     _STALL_SINCE.pop(h, None)
     _fail(record, f"stalled {int((now - since) // 3600)}h with no progress "
-                  f"(no seeders/peers); abandoned to release the download budget")
+                  f"(no peer activity); abandoned to release the download budget; "
+                  f"partial download kept for a retry")
     return True
 
 

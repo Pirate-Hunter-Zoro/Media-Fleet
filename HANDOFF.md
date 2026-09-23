@@ -212,7 +212,8 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `verify_fleet.sh` | **ALL CHECKS PASSED**, **60 blocking checks** (2026-09-20 evening, after 10.3/10.4/10.5/10.9, the owner report, the library-wide rewrite and the hard-coding guard; 6 checks added) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
-| Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF |
+| Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF, plus the 2026-09-21/22 commits through `81d07d7` |
+| Stall policy | **one 24h deadline, partial bytes kept (2026-09-23).** `_abandon_stalled` no longer reads `availability < 1` as "no complete copy in the swarm" (it is a connected-peers fact and reads < 1 during every stall); `STALL_ABANDON_NO_COMPLETE_SEC` is gone; an abandon calls `qbt.remove(delete_files=False)` so a re-drop resumes. The four Bob's Burgers packs (S01/S02/S03/S06) the owner moved back are queued and retry under the new rule |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
@@ -221,6 +222,66 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Parked re-drops | **Smurfs row 5 repaired live 2026-09-20 (session 2), fetch completing.** The run had three real defects, all now fixed and guarded: (a) the title map was computed against **TVMaze while Jellyfin scrapes TMDB** — 77 files were placed one slot away from the name the owner sees; (b) the intra-torrent collapse silently dropped 32 mapped files when an unmatched file's release number collided with a mapped file's computed slot; (c) **media_doctor's duplicate rule deleted the planner's `S01E01.mp4`-class files at 38 S01 slots**, because a same-stem pair shares ONE `.nfo` and the rule never asked the journal. Live repair: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten; the 30 dropped episodes + the 40 deleted S01 pack files are re-fetching from the pack's own torrent into `DirectIngest/` (see the `In flight` row). The old dvdrip S01 files now sit at their correct slots (E31 = The Smurfette) as the fallback content. |
 | Open work | The Smurfs re-fetch (70 files) is downloading from the swarm; when it lands, the 40 dvdrip S01 files are superseded through the mount and the drop files through the fixed pipeline. Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko's 8 blank plots were filled 2026-09-20 through `repair_metadata.py --no-ai` (0 blanks now). The free-AI upgrade (§10.10) is implemented. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) still outstanding** |
+
+### Shipped 2026-09-23 — a stall is not a swarm verdict, and the partial bytes stay
+
+**The owner's report.** Four recent failures — `Bob.s.Burgers.S01E01-13` (45% at failure),
+`S02E01-09` (22%), `S03E01-23` (1%, chunked), `S06E01-19` (0%) — were moved out of
+`failed/` and re-queued, and would "likely fail again". Each journal line reads
+`stalled Nh with no progress (no seeders/peers); abandoned to release the download budget`
+(4h/6h/7h/8h).
+
+**Root cause (measured, not inferred).** `_abandon_stalled` selected a 4-hour deadline
+whenever qBittorrent reported `availability < 1.0`, on the premise in `config.py` that this
+means "NO complete copy anywhere in the swarm". It does not: availability is computed from
+the peers this client is *currently connected to* plus its own pieces, so during any stall
+it collapses to our own completion fraction and reads < 1 even in a swarm full of seeders
+(live: a stalled S04 at 5.69% progress reported availability 0.056 — exactly its own
+fraction). Every stalled torrent therefore took the 4h path. The four packs were paused by
+an ordinary overnight seeder gap (S01 had gone 1% → 21% → 45% over the day) and were killed
+the moment the daemon next reached them — after an identify run that blocks the sweep for
+hours. Worse, the abandon called `qbt.remove(delete_files=True)`: the partial payload was
+deleted with the torrent, so every re-drop restarted from zero and stalled again — the loop
+the owner saw. `_fail`'s own message promises "local download left for inspection"; every
+other failure path leaves the bytes; this one did not.
+
+**Measured cost (journal + `~/Library/Logs/TorrentIngest.log`).** 48 stall-abandons in the
+journal; 35 of them are still in the current log with a recoverable progress line; 6 had
+partial data deleted, **7.40 GB** in total — S01 3.56 GB (45%), Croods S06 2.26 GB (83%),
+S02 1.24 GB (22%), FMA Brotherhood E58 0.32 GB (36%), Dropkick E06/E10 0.02 GB. Not one of
+those hashes ever completed (they were never automatically retried); the four owner packs
+are the first re-drops, all four now queued (`state/journal.jsonl`, 2026-09-23 10:42:42Z).
+
+**The fix.** One deadline, selected by peer activity alone: `STALL_ABANDON_SEC` (24h) from
+the later of qBittorrent's `last_activity` and a chunked wave's `wave_started_at`.
+`STALL_ABANDON_NO_COMPLETE_SEC` is deleted (an unused guard is a thing someone turns back
+on later). The abandon now removes the torrent with `delete_files=False` — a re-drop of the
+same source resumes from the bytes on disk, and `artifactjanitor` reclaims a directory that
+is never retried after its own 7-day grace. The rationale lives on `_abandon_stalled` and
+`config.STALL_ABANDON_SEC`, and `scripts/test_chunked_stall_clock.py` pins both directions
+plus byte preservation: a fresh wave survives a stale clock; a wave idle past 24h is still
+abandoned; a non-chunked 8h stall at 45% with `availability 0.45` and no seeder known is
+**kept** (the exact 2026-09-23 shape); every abandon passes `delete_files=False`.
+
+**Why this is not the Tailscale bind.** qBittorrent binding to the `100.79.20.10` CGNAT
+address and riding the rotating Mullvad exit node is the documented design (`tailscale_up()`
+gates downloads on it; Media-Syncer rotates the exit for MEGA throttling). These are
+DHT-only magnets with no trackers (`.torrent` `announce` absent, `url-list` empty), so
+seeder gaps of hours are normal — which is exactly what the 24h window and the kept bytes
+are for. No VPN or qBittorrent configuration was changed.
+
+**Acceptance (owner-visible).**
+* `python3 scripts/test_chunked_stall_clock.py` → `ALL CHECKS PASSED.` (17 checks: the three
+  chunked-clock parts, the non-chunked regression, byte preservation both paths, controls).
+* `bash scripts/verify_fleet.sh` → `ALL CHECKS PASSED.`
+* Deployed with `Torrent-Ingest/scripts/ship.sh` after `pgrep -f ai_runner.py` was empty
+  and the reaper untouched (`torrentingest`/`directingest`/`driveingest` bounced; the new
+  PID is named in the commit message).
+* The four were requeued by the owner at 2026-09-23 05:42 CDT and admit as budget frees;
+  under the new rule each gets the full 24h of quiet, and any bytes they fetch survive a
+  retry (`delete_files=False`). The direct proof of the resume path is
+  `scripts/test_chunked_stall_clock.py` Part 4 plus a live re-drop of any kept stall
+  directory, which is deliberately not staged in this session.
 
 ### Shipped 2026-09-20 — the five computed facts, the verified self-heal, the scalable plan
 

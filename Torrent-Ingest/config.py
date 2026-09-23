@@ -851,16 +851,20 @@ CHUNK_AFTER_DEFERRED_SEC = 2 * 3600      # 2 hours queued without fitting -> chu
 # reserved in _remaining_budget() forever, so no wave completes, no space frees, and no new
 # torrent is admitted: the whole pipeline deadlocks while the log reads "0MB admittable".
 # A torrent that merely loses its peers for a moment and resumes within the window is
-# untouched. Long enough to ride out a seeder's short offline stretch, short enough that a
-# genuinely dead torrent drains within a day rather than pinning the budget indefinitely.
+# untouched. Long enough to ride out a seeder's short offline stretch -- and a public/DHT
+# swarm's seeder gaps are measured in hours, so this must not be shortened -- short enough
+# that a genuinely dead torrent drains within a day rather than pinning the budget
+# indefinitely.
+#
+# THERE IS DELIBERATELY NO SHORTER "NO COMPLETE COPY" DEADLINE. One existed, selected by
+# qBittorrent's `availability < 1`, on the premise that availability is a swarm-wide fact.
+# It is not: it is the pieces held by the peers THIS client is currently connected to plus
+# our own, so during a stall it collapses to our own completion fraction and reads < 1 even
+# in a swarm full of seeders. Every stall therefore took the 4h path, and four slow-but-
+# alive packs whose partial payloads were then deleted with the torrent (2026-09-23) are
+# the measured cost. The failure path now KEEPS the partial download, so patience costs
+# disk, not bytes.
 STALL_ABANDON_SEC = 24 * 3600            # 24 hours stalled with no progress -> abandon it
-
-# A torrent whose availability is below 1 has NO complete copy anywhere in the swarm (some
-# piece is held by no peer), so it can never finish until a brand-new seeder shows up. These
-# are the dead weight that pins the download budget: a stalled wave with availability 0
-# reserves its bytes forever on the off chance a seeder appears. Give them a much shorter
-# grace than the general stall deadline so the budget drains in hours instead of days.
-STALL_ABANDON_NO_COMPLETE_SEC = 4 * 3600  # 4h with no complete copy -> abandon it
 
 # How long a freshly-added magnet waits for qBittorrent to fetch its metadata (the `.torrent`
 # info dict) from the swarm. A magnet has no metadata of its own, so until DHT/PEX/trackers

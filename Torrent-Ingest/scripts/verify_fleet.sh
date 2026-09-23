@@ -253,9 +253,13 @@ run "self-healing remedies are non-destructive" \
 # then inherited that clock and was destroyed seconds after resuming: Monogatari (103
 # files, 75 GB) was enabled at 09:11:55 and failed at 09:12:16 as "stalled 8h with no
 # progress (no seeders/peers)" against a swarm of 450 seeders, with delete_files=True.
-# The deadline now runs from the later of `last_activity` and the wave's own start. Both
-# ways, because a stall guard that cannot fire lets a dead torrent pin the download budget
-# forever -- the exact deadlock it was written to break.
+# And the 4h "no complete copy" deadline was selected by `availability < 1`, which is a
+# LOCAL connected-peers fact that reads < 1 during every stall -- four slow-but-alive
+# Bob's Burgers packs were killed after an overnight lull on 2026-09-23 and their partial
+# payloads deleted with the torrent. The deadline now runs from the later of
+# `last_activity` and the wave's own start, one 24h deadline applies, and an abandon KEEPS
+# the partial bytes. Both ways, because a stall guard that cannot fire lets a dead torrent
+# pin the download budget forever -- the exact deadlock it was written to break.
 # Monogatari was run deliberately as the hardest naming case in the library, and the free
 # identify chain failed it in a way nothing checked: one 26-episode arc filed across six
 # season folders as absolute episodes 1-23, leaving Season 09 holding 18,19,20,21,23 and
