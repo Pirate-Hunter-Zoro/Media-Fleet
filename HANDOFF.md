@@ -212,7 +212,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `verify_fleet.sh` | **ALL CHECKS PASSED**, **60 blocking checks** (2026-09-23 late, after the Smurfs re-fetch fix; `test_release_title_numbering.py` extended, no new check registered) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
-| Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969) on top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
+| Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969), plus HANDOFF/commit follow-ups through `1b9cfc9`; `bde8d71` is the only un-restarted change and is a log line. On top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
 | Stall policy | **one 24h deadline, partial bytes kept — shipped `c9fd3aa`, deployed 2026-09-23 20:08 CDT.** `_abandon_stalled` no longer reads `availability < 1` as "no complete copy in the swarm" (it is a connected-peers fact and reads < 1 during every stall); `STALL_ABANDON_NO_COMPLETE_SEC` is gone; an abandon calls `qbt.remove(delete_files=False)` so a re-drop resumes. The four Bob's Burgers packs the owner moved back are downloading again (S02 27%, S06 10.8%, S01 stalled with 4 complete peers known, S03 parked between waves) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
@@ -289,9 +289,11 @@ parser was deliberate (a loose dash fallback replayed as 54 false positives on
    trigger stays on the RELEASE list (`_skeleton_needed`), so every wave of a large pack
    gets a computed enumeration while the skeleton itself is built over the resolved
    on-disk subset; a wave below the floor gets one only when the title map proves its
-   numbering permuted. `bde8d71` corrects the `wrote a N-file skeleton` log line, which
-   read "390-file skeleton" beside a 32-entry file; that log-only change deploys on the
-   next restart (the fleet runs `ac1c37a` + the correction is cosmetic).
+   numbering permuted. **Deploy state:** `ac1c37a` is the running code (restart 21:49,
+   torrentingest 49948 / directingest 49957 / driveingest 49969). `bde8d71` corrects the
+   `wrote a N-file skeleton` log line, which read "390-file skeleton" beside a 32-entry
+   file; it is committed and will land with the next daemon restart — it changes only
+   that log line, nothing functional.
 
 **Acceptance (owner-visible).**
 
