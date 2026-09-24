@@ -213,7 +213,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
 | Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF, plus the 2026-09-21/22 commits through `81d07d7` |
-| Stall policy | **one 24h deadline, partial bytes kept (2026-09-23).** `_abandon_stalled` no longer reads `availability < 1` as "no complete copy in the swarm" (it is a connected-peers fact and reads < 1 during every stall); `STALL_ABANDON_NO_COMPLETE_SEC` is gone; an abandon calls `qbt.remove(delete_files=False)` so a re-drop resumes. The four Bob's Burgers packs (S01/S02/S03/S06) the owner moved back are queued and retry under the new rule |
+| Stall policy | **one 24h deadline, partial bytes kept — shipped `c9fd3aa`, deployed 2026-09-23 20:08 CDT.** `_abandon_stalled` no longer reads `availability < 1` as "no complete copy in the swarm" (it is a connected-peers fact and reads < 1 during every stall); `STALL_ABANDON_NO_COMPLETE_SEC` is gone; an abandon calls `qbt.remove(delete_files=False)` so a re-drop resumes. The four Bob's Burgers packs the owner moved back are downloading again (S02 27%, S06 10.8%, S01 stalled with 4 complete peers known, S03 parked between waves) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
@@ -249,8 +249,12 @@ other failure path leaves the bytes; this one did not.
 journal; 35 of them are still in the current log with a recoverable progress line; 6 had
 partial data deleted, **7.40 GB** in total — S01 3.56 GB (45%), Croods S06 2.26 GB (83%),
 S02 1.24 GB (22%), FMA Brotherhood E58 0.32 GB (36%), Dropkick E06/E10 0.02 GB. Not one of
-those hashes ever completed (they were never automatically retried); the four owner packs
-are the first re-drops, all four now queued (`state/journal.jsonl`, 2026-09-23 10:42:42Z).
+those hashes ever completed (they were never automatically retried). The old code also took
+one **more** victim in the gap between this fix being pushed and the daemon restart that
+afternoon — `Bob.s.Burgers.S14` at 12:30 CDT (`stalled 5h`), its partial bytes deleted; it
+is chunked now and re-fetching. That gap is exactly the standing rule's hazard, and the
+owner approved the restart with a run still in flight rather than wait hours for a chain
+that never leaves the identify phase.
 
 **The fix.** One deadline, selected by peer activity alone: `STALL_ABANDON_SEC` (24h) from
 the later of qBittorrent's `last_activity` and a chunked wave's `wave_started_at`.
@@ -274,14 +278,21 @@ are for. No VPN or qBittorrent configuration was changed.
 * `python3 scripts/test_chunked_stall_clock.py` → `ALL CHECKS PASSED.` (17 checks: the three
   chunked-clock parts, the non-chunked regression, byte preservation both paths, controls).
 * `bash scripts/verify_fleet.sh` → `ALL CHECKS PASSED.`
-* Deployed with `Torrent-Ingest/scripts/ship.sh` after `pgrep -f ai_runner.py` was empty
-  and the reaper untouched (`torrentingest`/`directingest`/`driveingest` bounced; the new
-  PID is named in the commit message).
-* The four were requeued by the owner at 2026-09-23 05:42 CDT and admit as budget frees;
-  under the new rule each gets the full 24h of quiet, and any bytes they fetch survive a
-  retry (`delete_files=False`). The direct proof of the resume path is
-  `scripts/test_chunked_stall_clock.py` Part 4 plus a live re-drop of any kept stall
-  directory, which is deliberately not staged in this session.
+* Pushed as `c9fd3aa`, then deployed **2026-09-23 20:08 CDT** with
+  `Torrent-Ingest/scripts/ship.sh` per the owner's explicit "restart now" (the identify
+  chain had no gap; see the S14 note above). New daemon PIDs: `torrentingest` 19764,
+  `directingest` 19772, `driveingest` 19785; 0 tracebacks in `TorrentIngest.log`; the
+  reaper (PID 6539) was not in the script's label set and was left draining.
+* The four were admitted 11:53 CDT and survived the old code to the deploy (the identify
+  chains blocking the sweep is what let them; nothing new was abandoned). Live state
+  measured after the restart: **S02 27.0% with `availability 2.27`, `num_complete=2`,
+  2 seeds connected; S06 10.8% with `num_complete=2`; S01 1.2% `stalledDL` with
+  `num_complete=4`** — a stalled torrent with four complete peers known, which is exactly
+  the shape the old 4h rule called "no seeders/peers" and would have destroyed again;
+  S03 parked between chunked waves (0/23 filed, next wave enables when it fits). No
+  `stalled`/`abandon` line appears in the log after the restart. The S01/S02 bytes they had
+  before the first failure were already gone (deleted by the old code), so they re-fetch
+  from zero; anything fetched from now on survives a retry.
 
 ### Shipped 2026-09-20 — the five computed facts, the verified self-heal, the scalable plan
 
