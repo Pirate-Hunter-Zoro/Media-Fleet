@@ -2110,9 +2110,14 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
     # release-ordered pack still cannot be enumerated by the model (the 70-file Smurfs
     # re-fetch failed all 14 providers on 2026-09-20). See `_skeleton_needed`.
     skeleton_path = None
-    # The ON-DISK subset decides: a chunked wave is asked to place only its own files,
-    # so a 32-file wave of a 390-file release does not need (or get) a 390-entry plan.
-    if _skeleton_needed(release_abs, title_map):
+    # The trigger stays on the RELEASE list, not the resolved subset: the whole release
+    # decides whether this pack needs a computed enumeration at all, and every wave of a
+    # large pack gets one (the skeleton itself is built over the on-disk subset, so it
+    # only ever promises files the wave holds). A free model that must enumerate 70
+    # reordered files failed all 14 providers (the Smurfs drop); the skeleton is the
+    # computed answer, and a wave below the floor gets it only when the title map proves
+    # its numbering permuted.
+    if _skeleton_needed(release_files, title_map):
         skeleton_path = config.TMP_DIR / f"{info_hash}_skeleton.json"
         try:
             _skel = plan_skeleton(release_abs or release_files, title_map,
