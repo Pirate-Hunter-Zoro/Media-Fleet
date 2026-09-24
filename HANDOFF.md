@@ -218,7 +218,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
-| In flight | The reaper drains (`reap.py` PID 6539) and ordinary queued drops identify through the chain. The four Bob's Burgers packs are fetching. **The Smurfs row-5 work is DONE live (see the shipped section): the 70-file re-fetch filed 22:06 CDT, Season 01 39/39, 405 mp4 on the mount.** The three One Piece re-queue tails (Chapter 1093/1098/1112.zip) are terminal `failed` with their bytes parked in `~/Downloads/.torrent-ingest/` (`verify_owner_report` prints them PENDING on purpose) — the content is already owned/superseded, so they need no action; the plan-time guard that refuses the misfiles is live (`library.validate_plan` chapter-ceiling). |
+| In flight | The reaper drains (`reap.py` PID 6539) and ordinary queued drops identify through the chain. The four Bob's Burgers packs are fetching; **American Dad! (2005) is chunking through the fixed wave path — 34/390 filed at 22:15 CDT, next waves enabled.** **The Smurfs row-5 work is DONE live (see the shipped section): the 70-file re-fetch filed 22:06 CDT, Season 01 39/39, 405 mp4 on the mount.** The three One Piece re-queue tails (Chapter 1093/1098/1112.zip) are terminal `failed` with their bytes parked in `~/Downloads/.torrent-ingest/` (`verify_owner_report` prints them PENDING on purpose) — the content is already owned/superseded, so they need no action; the plan-time guard that refuses the misfiles is live (`library.validate_plan` chapter-ceiling). |
 | Parked re-drops | **Smurfs row 5 COMPLETE 2026-09-23 22:06 CDT.** The 2026-09-20 re-fetch drop exhausted all 14 providers and parked; the reordered-pack skeleton fix shipped and the drop was re-dropped through it: map for 70 titles, 70-file skeleton, first serving provider's plan accepted, `70 file(s) verified in destination`, source removed. The older repair stands: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten. No parked re-drops remain. |
 | Open work | Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented. The Smurfs row 5 (§10.0) is the only owner failure that was still open; it is now closed end to end. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
@@ -283,7 +283,13 @@ parser was deliberate (a loose dash fallback replayed as 54 false positives on
    overwrite the harness's verified path (it matched the entry by unique basename and
    replaced a real path with one that did not exist). Dry run of the live wave: the
    390-file list resolves to **32** on-disk files, the skeleton is 32/32 slotted, the
-   merge fills 32, and `validate_plan` accepts it.
+   merge fills 32, and `validate_plan` accepts it. **Live, after the restart: the wave
+   filed `34/390` at 22:15 CDT (`skeleton merge: filled 1 episode destination(s)`,
+   Jellyfin rescan triggered) — the first wave to file on the fixed path.** Follow-up
+   `7c55843`: `_skeleton_needed` takes the resolved on-disk list (a 32-file wave of a
+   390-file release is not handed a 390-entry plan) and the log line names the
+   skeleton's real entry count — it read "390-file skeleton" beside a 32-entry file
+   during the live wave.
 
 **Acceptance (owner-visible).**
 
