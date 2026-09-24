@@ -1470,7 +1470,8 @@ stores; both are now machine-local, untracked, and gone from history:
   a real, measured exposure window, not a theoretical one. Changing the MEGA account
   password(s) and regenerating the Jellyfin API key is the only complete mitigation;
   nothing in the fleet breaks if the key is rotated and `.env` + the installed plists are
-  updated with it.
+  updated with it. **OWNER DECISION 2026-09-23: the rotation will NOT be done.** It is
+  closed, not pending — do not raise it again or treat the exposure window as actionable.
 
 This work was shipped without a fleet restart (`scripts/save-and-push.sh`): `.env` carries
 the exact values the code previously hardcoded, so the running daemons see no change.
@@ -1510,11 +1511,9 @@ again**.
    at 2026-09-19 22:36. That is the §10.9 defect, not a transient: **do not re-drop the
    `.torrent` until the plan-assembly tool ships**, and do not hand-file any of the 54.8 GB pack (51 GiB by `du`)
    still in `~/Downloads/.torrent-ingest/`.
-6. **Rotation is still outstanding from §11:** regenerate the Jellyfin API key and change
-   the shared MEGA password. For the key: update `.env`, then re-run
-   `bash Torrent-Ingest/startup.sh` at a quiet moment (it re-substitutes the key into the
-   installed plists and reloads the Torrent-Ingest agents). Check `pgrep -f ai_runner.py`
-   is empty first.
+6. **Rotation (from §11) — CLOSED BY OWNER DECISION 2026-09-23: not doing it.** The Jellyfin
+   API key and the shared MEGA password stay as they are; the exposure window recorded in
+   §11 is accepted. Do not re-raise this, and do not re-run `startup.sh` for the key.
 
 ---
 
