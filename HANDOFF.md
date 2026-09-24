@@ -209,7 +209,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, **60 blocking checks** (2026-09-20 evening, after 10.3/10.4/10.5/10.9, the owner report, the library-wide rewrite and the hard-coding guard; 6 checks added) |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, **60 blocking checks** (2026-09-23 late, after the Smurfs re-fetch fix; `test_release_title_numbering.py` extended, no new check registered) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
 | Repo | one monorepo at `~/Developer/Media-Orchestrator`; this session's work on top of `a3104b0` + the doc-update HANDOFF, plus the 2026-09-21/22 commits through `81d07d7` |
@@ -218,10 +218,89 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
-| In flight | **The 70-file Smurfs re-fetch drop is in `DirectIngest/The Smurfs (1981)/` waiting on free-provider capacity** (Gemini 429, several OpenRouter models return empty text, nvidia calls take tens of minutes). One nvidia plan was rejected correctly (a real one-slot disagreement at S07E15) and the chain continues; the drop is local and safe and files when a provider serves. The queued One Piece chapter drops are filing through the same constrained chain; the Jujutsu Kaisen misfiles those produced were purged and the plan-time guard that refuses them is live (`library.validate_plan` chapter-ceiling). The reaper is draining (`reap.py` PID 1311) |
-| Parked re-drops | **Smurfs row 5 repaired live 2026-09-20 (session 2), fetch completing.** The run had three real defects, all now fixed and guarded: (a) the title map was computed against **TVMaze while Jellyfin scrapes TMDB** — 77 files were placed one slot away from the name the owner sees; (b) the intra-torrent collapse silently dropped 32 mapped files when an unmatched file's release number collided with a mapped file's computed slot; (c) **media_doctor's duplicate rule deleted the planner's `S01E01.mp4`-class files at 38 S01 slots**, because a same-stem pair shares ONE `.nfo` and the rule never asked the journal. Live repair: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten; the 30 dropped episodes + the 40 deleted S01 pack files are re-fetching from the pack's own torrent into `DirectIngest/` (see the `In flight` row). The old dvdrip S01 files now sit at their correct slots (E31 = The Smurfette) as the fallback content. |
-| Open work | The Smurfs re-fetch (70 files) is downloading from the swarm; when it lands, the 40 dvdrip S01 files are superseded through the mount and the drop files through the fixed pipeline. Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko's 8 blank plots were filled 2026-09-20 through `repair_metadata.py --no-ai` (0 blanks now). The free-AI upgrade (§10.10) is implemented. |
-| Pending after reboot | §12: rename close-out verified done; **rotation (item 6) still outstanding** |
+| In flight | Nothing on the critical path while this is written; the reaper drains (`reap.py` PID 6539) and ordinary queued drops identify through the chain. The four Bob's Burgers packs are fetching. **The 70-file Smurfs re-fetch drop is NOT in flight — it exhausted all 14 providers on 2026-09-20 20:58 and is parked in `~/Downloads/DirectIngest/.failed/The Smurfs (1981)/` (70 files, whole S01 plus 30 dropped episodes); the fix ships 2026-09-23 late, then it is re-dropped (see the shipped section and `Open work`).** The three One Piece re-queue tails (Chapter 1093/1098/1112.zip) are terminal `failed` with their bytes parked in `~/Downloads/.torrent-ingest/` (`verify_owner_report` prints them PENDING on purpose) — the content is already owned/superseded, so they need no action; the plan-time guard that refuses the misfiles is live (`library.validate_plan` chapter-ceiling). |
+| Parked re-drops | **Smurfs row 5 repaired live 2026-09-20 (session 2); the 70-file re-fetch drop failed all providers on 2026-09-20 20:58 and is parked.** The run had three real defects, all fixed and guarded: (a) the title map was computed against **TVMaze while Jellyfin scrapes TMDB** — 77 files were placed one slot away from the name the owner sees; (b) the intra-torrent collapse silently dropped 32 mapped files when an unmatched file's release number collided with a mapped file's computed slot; (c) **media_doctor's duplicate rule deleted the planner's `S01E01.mp4`-class files at 38 S01 slots**, because a same-stem pair shares ONE `.nfo` and the rule never asked the journal. Live repair: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten. The shelf holds 335 episodes + 5 S00 files; the 70 parked files are the missing set (whole S01, 30 others); they file through the new skeleton path after the 2026-09-23 fix ships. |
+| Open work | **Re-drop `~/Downloads/DirectIngest/.failed/The Smurfs (1981)/` to `~/Downloads/DirectIngest/` after the fix deploys** (the only repair left; 69 of its files map to empty broadcast slots, the 70th is `Nobody Smurf` at TMDB S07E27). Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented. |
+| Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
+
+### Shipped 2026-09-23 (late) — the 70-file Smurfs re-fetch: a reordered pack gets the computed skeleton, and a bracket-less title is a weak witness
+
+**What was actually wrong.** The §6 `In flight` row said the drop was "waiting on
+free-provider capacity". It was not: on 2026-09-20 20:58 every one of the 14 providers
+produced a plan `validate_plan` refused and `direct_ingest` parked the whole drop in
+`~/Downloads/DirectIngest/.failed/The Smurfs (1981)/` (70 files). The failure lines name
+three real shapes:
+
+* `file[60] "The Smurfs S07E02 (Jokey's Joke Book).mp4": ... computed S07E15, but the
+  plan files it at ...S07E14` — the harness was right, the model copied the release
+  order. Every provider made a version of this mistake because 70 files is **below the
+  skeleton size floor** (`IDENTIFY_SKELETON_MIN_FILES` 150): the harness computed the
+  title map but still asked the model to enumerate all 70 release-ordered files.
+* `file[1] 'The Smurfs S01E06 (The Astrosmurf).mp4' ... computed S01E01, but the plan
+  files it at ...S01E01` — the pre-session-2 guard reading the model's annotation
+  fields, fixed 2026-09-20; kept as evidence the floor was the live cause.
+* `file[39] Season-0 special has no episode_title` — the computed map puts the Springtime
+  Special (release `S01E40`) in `S00E01`, where the validator requires
+  `episode_title`+`plot` (specials are always locked); nothing supplied the title.
+
+**The 70th file.** `The Smurfs S07E49 - Nobody Smurf.mp4` carries no brackets. Its
+release number is another episode's slot — the shelf's `S07E49` is *Hefty's Rival* — and
+TMDB (the provider Jellyfin scrapes) has *Nobody Smurf* at **S07E27**. The bracket-only
+parser was deliberate (a loose dash fallback replayed as 54 false positives on
+2026-09-20), so this file had no computed destination at all.
+
+**The fix (three parts, all computed).**
+
+1. **A reordered pack always gets the skeleton.** `_skeleton_needed` returns true for a
+   large release OR any release with a computed title map. A pack whose own numbering is
+   measured to be permuted is exactly where the model's copy of it is wrong; the
+   enumeration must come from the harness at any size.
+2. **A bracket-less title is a weak witness, gated on the strong one.**
+   `release_dash_title_entries` reads `SxxEyy - Title` names; `_title_claims` consults
+   them **only after the bracket witness has proven the pack reordered** (some bracket
+   claim differs from its release key) and only through the exact/unique pass — never the
+   ratio pass. First draft (weak witness on its own) reproduced the 2026-09-20 class
+   exactly: **50 contradictions** over the journal (a multi-show pack whose every title
+   is `Show (Year) - SxxEyy - Title.mkv`, legitimately filed across seasons). Gated:
+   **0 contradictions**, and the shape the gate exists for — 69 bracket rows plus the one
+   dash file — still computes `(7,49) -> (7,27)`.
+3. **A computed Season-0 target gets its title, and the model is told it owes the plot.**
+   `plan_skeleton` pre-fills `episode_title` from the release's own name for Season-0
+   targets, and the prompt now lists `SEASON-0 SPECIALS THAT NEED A PLOT (n)` beside the
+   files that need a decision. `plan_skeleton` also stops falling back to the release
+   number for unmatched files in a reordered pack (the silent-collapse shape).
+4. **A chunked wave's skeleton names real files only, and the model cannot clobber a
+   verified src.** Found while this fix was being verified: the live American Dad wave's
+   every provider died on `file[1] src does not exist:
+   .../American Dad! (2005)/American Dad! (2005)/Season 01/...`. Two causes, both in the
+   new seam. qBittorrent's own file list prefixes names with the torrent's root folder
+   while `content_path` IS that folder, so `content_path / name` doubled it; and the
+   skeleton covered all 390 files of the release when only the wave's files exist on disk
+   (`validate_plan` requires every `src` to exist). `_resolve_release_abs` now resolves
+   each name against the disk (stripping one duplicated root, handling a single-file
+   torrent) and drops names not on disk — so the skeleton, the title map and the require
+   manifest are exactly the wave. `merge_skeleton_plan` no longer lets the model's `src`
+   overwrite the harness's verified path (it matched the entry by unique basename and
+   replaced a real path with one that did not exist). Dry run of the live wave: the
+   390-file list resolves to **32** on-disk files, the skeleton is 32/32 slotted, the
+   merge fills 32, and `validate_plan` accepts it.
+
+**Acceptance (owner-visible).**
+
+* `python3 scripts/test_release_title_numbering.py` → **all checks passed** — the new
+  parts pin the exact dash claim, its two no-claim shapes (scene tag, multi-episode
+  marker), the bracket witness's precedence, the skeleton trigger with and without a
+  map, the needs-mapping marking, the Season-0 title pre-fill, the merge, root-resolved
+  release paths (duplicated root, mirror-style name, missing file, single-file torrent)
+  and the verified-src rule.
+* `python3 scripts/test_release_title_numbering.py` replay (Part 9) →
+  `replayed 53 titled-release plan(s): 0 contradiction(s), 0 dash-only claim(s)`.
+* Offline dry run of the real drop through `plan_skeleton` → `merge_skeleton_plan` →
+  `library.validate_plan`: `merged 70 filled 69 unresolved []`, the special at
+  `Season 00/The Smurfs (1981) - S00E01.mp4` with `episode_title` and a plot, `Nobody
+  Smurf` at `Season 07/... - S07E27.mp4`.
+* `bash scripts/verify_fleet.sh` → **ALL CHECKS PASSED.**
+* Live re-drop of the parked directory: see the follow-up note below.
 
 ### Shipped 2026-09-23 — a stall is not a swarm verdict, and the partial bytes stay
 
@@ -819,12 +898,15 @@ edit of this file without pasting the acceptance command and its output beside i
 | 4 | TZ (2019) still shows *Too Cute* as its show cover | `folder.jpg` md5 = `05520557851cb23ea38e121ed2713514` — byte-identical to the TMDB 80979 (*Too Cute*) poster. `tvshow.nfo` still carries `<originaltitle>萌宠成长记（精编版）</originaltitle>`, `<tvdbid>325542</tvdbid>`, `<premiered>2013-01-30</premiered>` (its `<tmdbid>` is now the correct 83135). `Season 01/season.nfo` year 2013; S02 episode `.nfo`s have **no `<season>`/`<episode>`**; the doctor worklist has no TZ entry at all | 10.3 |
 | 5 | the Smurfs torrent is failing and it should not be | failed 2026-09-19 22:36 CDT: `plan accounts for 24 file(s) but leaves 385 release file(s) unfiled`. The 24-file plan is S01E01–10, S02E01–10 and the 4 Xtras; the identify log shows a 36-turn investigation, then two tiny writes. The 24 are also **wrong numbering** (release order ≠ broadcast order; *The Smurfette* is broadcast S01E31). The full 54.8 GB pack is retained (51 GiB by `du`); the `.torrent` is in `failed/` | 10.9 |
 
-**Status 2026-09-20 (verified live).** Rows 1–4 are **done** and `verify_owner_report.py`
-prints them PASS (TZ art/identity; no `vNNNN`; zero covered chapters; one edition per
-volume; Toriko 0 junk titles / 0 blank plots). Row 5: the tooling is shipped and the pack
-filed (409 -> 377 applied, 32 accounted duplicates), **but the completed run exposed the
-release-order-vs-guide-order collision above; the shelf needs a content-verified refile
-before row 5 is done.** The evidence as measured:
+**Status 2026-09-23 (verified live).** Rows 1–4 are **done** and `verify_owner_report.py`
+prints them PASS (`sidecar identity`, `no vNNNN mislabels`, `chapters covered by volumes`,
+`one edition per volume`; `large releases` PENDING on the three parked chapter drops).
+Row 5: the tooling shipped and the pack filed (409 -> 377 applied, 32 accounted
+duplicates); the content-verified refile ran 2026-09-20 (147 moves, 142 DB rows
+superseded), and the 70 files it left missing were **parked in
+`~/Downloads/DirectIngest/.failed/The Smurfs (1981)/` when all 14 providers failed on
+2026-09-20 20:58**. The tool fix for that shipped 2026-09-23 late (see the shipped
+section); the re-drop is the last step. The evidence as measured:
   * TZ folder.jpg `965f20be…`, landscape.jpg `ec122588…`, premiered 2019-04-01,
     tvdbid 358915, enddate 2020-06-25; Jellyfin 2 seasons, 20 indexed episodes.
   * One Piece: 7/7 mislabels renamed; shelf 322 -> 197 (127 superseded), 0 `vNNNN`,
@@ -843,8 +925,9 @@ owner's artifact is checked and the output is pasted into the commit message:
   `tvshow.nfo`/`season.nfo` shows the correct title/year/ids, S02 episodes have
   `<season>`/`<episode>`, and `GET /Shows` via the Jellyfin API shows the corrected art and
   no ghost season;
-* Smurfs — `state/tmp/6c413306…_plan.json` covers all 409 release files, all 405 episode
-  slots are broadcast-correct, and the record ends terminal with the content on the mount.
+* Smurfs — all 405 episode slots are broadcast-correct with the content on the mount
+  (the main pack's record is `completed`; the 70 parked re-fetch files are the last
+  step, filed through the 2026-09-23 skeleton path — see the shipped section).
 
 ### 10.1 P0 — a partial plan must never authorize deleting unfiled bytes (The Smurfs) — **SHIPPED 2026-09-19**
 
@@ -1294,7 +1377,7 @@ reaper drain / the Smurfs re-drop; do not claim more than it says.
    names exactly which tool prevented which fault — that trace is the deliverable. A fix
    with no such trace and no owner-visible before/after is not done (§2.6).
 
-### 10.9 P0 — the Smurfs: a plan the harness computes, and a plan the model can finish writing — **SHIPPED 2026-09-20, re-drop pending**
+### 10.9 P0 — the Smurfs: a plan the harness computes, and a plan the model can finish writing — **SHIPPED 2026-09-20; the reordered-pack floor fixed 2026-09-23; re-drop pending**
 
 **Failure (verified 2026-09-20).** `6c413306…` (409 files, 54.8 GB) was dropped
 2026-09-19 09:11 and failed the same night. `state/tmp/6c413306…_plan.json` is 8,388 bytes

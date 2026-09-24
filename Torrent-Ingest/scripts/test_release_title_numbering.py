@@ -286,9 +286,142 @@ try:
 finally:
     tmdbguide.episode_names, epguide.episodes = old_tmdb_names, old_eps
 
-print("Part 6 -- replay: the matcher never contradicts an accepted historical plan")
+print("Part 6 -- a bracket-less dash title is a WEAK witness (Nobody Smurf)")
+# `The Smurfs S07E49 - Nobody Smurf.mp4` carries the real episode title after a dash
+# while its release number, S07E49, is another episode's broadcast slot. The dash form
+# was rejected wholesale on 2026-09-20 because a loose capture swept scene tags and
+# multi-episode markers; what ships is exact-and-unique or nothing.
+DASH_GUIDE = [
+    {"season": 7, "number": 27, "name": "Nobody Smurf"},
+    {"season": 1, "number": 31, "name": "The Smurfette"},
+    {"season": 1, "number": 2, "name": "The Smurf Apprentice"},
+    {"season": 1, "number": 3, "name": "Vanity Fair"},
+]
+DASH_BRACKETED = [
+    "The Smurfs S01E01 (The Smurfette).mp4",
+    "The Smurfs S01E02 (The Smurf Apprentice).mp4",
+    "The Smurfs S01E03 (Vanity Fair).mp4",
+]
+old_tmdb_dash, old_eps_dash = tmdbguide.episode_names, epguide.episodes
+tmdbguide.episode_names = lambda _tid: DASH_GUIDE
+epguide.episodes = lambda _title: DASH_GUIDE
+try:
+    dmap = identify.release_title_map(
+        "/tmp/The Smurfs", DASH_BRACKETED + ["The Smurfs S07E49 - Nobody Smurf.mp4"],
+        show_hint="The Smurfs", tmdb_id=5687)
+    check("an exact unique dash title claims its real slot", dmap.get((7, 49)) == (7, 27))
+    scene = identify.release_title_map(
+        "/tmp/The Smurfs",
+        DASH_BRACKETED + [
+            "The Smurfs S01E04 (King Smurf).mp4",
+            "The Smurfs S07E50 - Nobody Smurf 1080p WEB-DL x264.mp4"],
+        show_hint="The Smurfs", tmdb_id=5687)
+    check("a scene-tagged dash title gets no claim", (7, 50) not in scene)
+    multi = identify.release_title_map(
+        "/tmp/The Smurfs",
+        DASH_BRACKETED + [
+            "The Smurfs S01E04 (King Smurf).mp4",
+            "The Smurfs S03E49-E40 - Vanity Fair.mp4"],
+        show_hint="The Smurfs", tmdb_id=5687)
+    check("a multi-episode dash shape gets no claim", (3, 49) not in multi)
+    # A bracket title is not re-decided by the weak witness.
+    both = identify._title_claims(
+        identify.release_title_entries(["The Smurfs S01E01 (The Smurfette).mp4"]),
+        identify.release_dash_title_entries(
+            ["The Smurfs S01E01 - Nobody Smurf.mp4"]), DASH_GUIDE)
+    check("the dash witness cannot overrule the bracket witness",
+          both.get((1, 1)) == (1, 31))
+finally:
+    tmdbguide.episode_names, epguide.episodes = old_tmdb_dash, old_eps_dash
+
+print("Part 7 -- a computed map forces the skeleton, whatever the size")
+small = [f"Show S01E{i:02d} (Ep {i}).mkv" for i in range(1, 6)]
+check("a small reordered release gets the skeleton",
+      identify._skeleton_needed(small, {(1, 1): (1, 9)}) is True)
+check("a small ordinary release does not",
+      identify._skeleton_needed(small, {}) is False)
+big = [f"Show S01E{i:03d}.mkv" for i in range(200)]
+check("a large release gets it with no map",
+      identify._skeleton_needed(big, {}) is True)
+check("no release files, no skeleton",
+      identify._skeleton_needed([], {(1, 1): (1, 2)}) is False)
+# In a reordered pack an unmatched file's release number is not a destination: the
+# pack's own order is measured to disagree with the guide, and `Nobody Smurf` would
+# otherwise be filed at another episode's S07E49.
+skel_u = identify.plan_skeleton(
+    ["Show S01E01 (Alpha).mkv", "Show S01E02 (Beta).mkv", "Show S01E30 (Gamma).mkv"],
+    title_map={(1, 1): (1, 9), (1, 2): (1, 2)}, title="Show")
+entry_u = skel_u["files"][2]
+check("an unmatched file in a reordered pack is needs-mapping",
+      entry_u["season"] is None and entry_u["episode"] is None)
+skel_n = identify.plan_skeleton(
+    ["Show S01E01 (Alpha).mkv", "Show S01E02 (Beta).mkv", "Show S01E30 (Gamma).mkv"],
+    title_map=None, title="Show")
+entry_n = skel_n["files"][2]
+check("without a map the release number is still kept",
+      (entry_n["season"], entry_n["episode"]) == (1, 30))
+# A computed Season-0 target makes the file a SPECIAL; `validate_plan` refuses a special
+# with no episode_title/plot, so the harness supplies the title from the release name
+# (`The Smurfs S01E40 (The Smurfs Springtime Special).mp4` -> S00E01) and names the file
+# to the model for its plot.
+skel_s = identify.plan_skeleton(
+    ["Show S01E01 (Alpha).mkv", "Show S01E02 (Beta).mkv",
+     "Show S01E03 (Special Time).mkv"],
+    title_map={(1, 1): (1, 1), (1, 2): (1, 2), (1, 3): (0, 1)}, title="Show")
+entry_s = skel_s["files"][2]
+check("a Season-0 target gets the release title pre-filled",
+      entry_s.get("episode_title") == "Special Time"
+      and (entry_s["season"], entry_s["episode"]) == (0, 1))
+merged_s, _filled_s, _unres_s = identify.merge_skeleton_plan(
+    {"media_type": "show", "title": "Show", "year": 2019,
+     "files": [{"src": "Show S01E01 (Alpha).mkv"}]}, skel_s)
+check("the merge keeps the pre-filled special title",
+      any(f.get("episode_title") == "Special Time" for f in merged_s["files"]))
+
+print("Part 8 -- release paths resolve on disk; the model cannot clobber a verified src")
+# A chunked wave's file list carries qBittorrent's root-prefixed names while the
+# content path IS that root: joining blindly doubled it and every merged plan died on
+# "src does not exist" (the live American Dad run, 2026-09-23). Names not on disk are
+# dropped -- a wave may not promise files it does not hold.
+tmp = tempfile.TemporaryDirectory()
+try:
+    root = Path(tmp.name) / "American Dad! (2005)"
+    (root / "Season 01").mkdir(parents=True)
+    real = root / "Season 01" / "American Dad! (2005) - S01E02.mkv"
+    real.write_bytes(b"x")
+    single = Path(tmp.name) / "Movie.mkv"
+    single.write_bytes(b"x")
+    rels = ["American Dad! (2005)/Season 01/American Dad! (2005) - S01E02.mkv",
+            "American Dad! (2005)/Season 09/Not Downloaded Yet.mkv",
+            "Season 01/American Dad! (2005) - S01E02.mkv"]
+    resolved = identify._resolve_release_abs(root, rels)
+    check("a root-prefixed name resolves without doubling the root",
+          resolved == [str(real)])
+    check("a mirror-style name (no root prefix) resolves to the same file",
+          identify._resolve_release_abs(
+              root, ["Season 01/American Dad! (2005) - S01E02.mkv"]) == [str(real)])
+    check("a file that is not on disk is dropped",
+          len(identify._resolve_release_abs(root, rels)) == 1)
+    check("a single-file torrent resolves to the file itself",
+          identify._resolve_release_abs(single, ["Movie.mkv"]) == [str(single)])
+    # The merge keeps the harness's verified src even when the model echoes a path that
+    # does not exist but matches the basename.
+    skel_p = identify.plan_skeleton([str(real)], {(1, 2): (1, 2)}, title="American Dad!")
+    bad_src = str(root / "American Dad! (2005)" / "Season 01" / real.name)
+    merged_p, _f, _u = identify.merge_skeleton_plan(
+        {"media_type": "show", "title": "American Dad!", "year": 2005,
+         "files": [{"src": bad_src, "episode_title": "Threat Levels"}]},
+        skel_p)
+    check("the model cannot clobber a verified src",
+          merged_p["files"][0]["src"] == str(real))
+    check("the model's metadata still lands on the entry",
+          merged_p["files"][0].get("episode_title") == "Threat Levels")
+finally:
+    tmp.cleanup()
+
+print("Part 9 -- replay: the matcher never contradicts an accepted historical plan")
 jpath = Path(config.STATE_DIR) / "journal.jsonl"
-plans_seen = contradictions = 0
+plans_seen = contradictions = dash_claimed = 0
 if jpath.exists():
     for line in jpath.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
@@ -298,12 +431,14 @@ if jpath.exists():
         files = [f for f in ((rec.get("plan") or {}).get("files") or [])
                  if isinstance(f, dict) and f.get("src")]
         entries = identify.release_title_entries([f["src"] for f in files])
-        if len(entries) < 4:
+        dash = identify.release_dash_title_entries([f["src"] for f in files])
+        if len(entries) + len(dash) < 4:
             continue
         guide, plan_slot = [], {}
         for f in files:
             m = _re.search(r"Season\s+(\d+)/.*?S(\d+)E(\d+)", f.get("dst_rel") or "")
-            t = identify.release_title_entries([f["src"]])
+            t = (identify.release_title_entries([f["src"]])
+                 or identify.release_dash_title_entries([f["src"]]))
             if not m or not t:
                 continue
             key = (t[0][1], t[0][2])
@@ -313,14 +448,16 @@ if jpath.exists():
         if len(guide) < 4:
             continue
         plans_seen += 1
-        claims = identify._match_titles(entries, guide)
-        for e in entries:
+        claims = identify._title_claims(entries, dash, guide)
+        strong = identify._match_titles(entries, guide)
+        dash_claimed += len([k for k in claims if k not in strong])
+        for e in entries + dash:
             claimed = claims.get((e[1], e[2]))
             filed = plan_slot.get((e[1], e[2]))
             if claimed and filed and tuple(claimed) != tuple(filed):
                 contradictions += 1
     print(f"  replayed {plans_seen} titled-release plan(s): "
-          f"{contradictions} contradiction(s)")
+          f"{contradictions} contradiction(s), {dash_claimed} dash-only claim(s)")
     check("the matcher contradicts no accepted historical plan", contradictions == 0)
 
 print()

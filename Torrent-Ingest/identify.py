@@ -706,6 +706,15 @@ _TITLE_TAG_RE = re.compile(
     # leaves the file unmapped and its release number colliding with a computed slot.
     r"[Ss](\d{1,3})[Ee](\d{1,4})\s*[\(\[]([^\)\]]{2,90}?)(?:[\)\]]|\.(?:mp4|mkv|avi|m4v|mov)$)",
     re.I)
+# The bracket-less form, `The Smurfs S07E49 - Nobody Smurf.mp4`, is a WEAK witness: the
+# whole dash fallback was tried and replayed on 2026-09-20 and swept up multi-episode
+# markers (`S03E49-E40 - ...`), scene tags in the title, and `S01E24-25-SP` shapes --
+# 54 would-be rejections across three historical plans. What ships now is the narrow
+# half that measurement left standing: whitespace-delimited dash only, and the claim it
+# may make is exact and unique or nothing at all (`_match_titles(..., exact_only=True)`
+# never reaches the ratio pass). Measured on the 70-file Smurfs re-fetch: `Nobody Smurf`
+# is TMDB S07E27 while the release number it carries, S07E49, is another episode's slot.
+_DASH_TITLE_RE = re.compile(r"[Ss](\d{1,3})[Ee](\d{1,4})\s+-\s+(.{2,90})$", re.I)
 _TITLE_MAP_MIN_FRACTION = 0.6
 _TITLE_MAP_MIN_ENTRIES = 4
 
@@ -716,13 +725,37 @@ def release_title_entries(release_files):
     Bracket-only ON PURPOSE. A dash fallback (`SxxEyy - Title.ext`) was tried and
     replayed: it swept up multi-episode markers (`S03E49-E40 - ...`), scene tags in
     the title, and `S01E24-25-SP` shapes, producing 54 would-be rejections across
-    three historical plans. The bracket form is the reliable witness; anything else
-    is left to the model, which is the safe direction.
+    three historical plans. The bracket form is the reliable witness; the dash form
+    is read only by `release_dash_title_entries` and may claim only exact matches.
     """
     out = []
     for item in release_files or ():
         rel = str(item[0] if isinstance(item, (tuple, list)) else item)
         m = _TITLE_TAG_RE.search(Path(rel).name)
+        if not m:
+            continue
+        try:
+            out.append((rel, int(m.group(1)), int(m.group(2)), m.group(3).strip()))
+        except ValueError:
+            continue
+    return out
+
+
+def release_dash_title_entries(release_files):
+    """`[(rel, season, episode, title)]` for bracket-LESS `SxxEyy - Title` names, or [].
+
+    The weak half of the title witness (see `_DASH_TITLE_RE`). A file the bracket parser
+    already read is skipped so it is claimed once, by the reliable witness. `_match_titles`
+    is called with `exact_only=True` over these, so a title carrying a scene tag, a part
+    marker or a release group never becomes a claim through the ratio pass.
+    """
+    bracketed = {str(e[0]) for e in release_title_entries(release_files)}
+    out = []
+    for item in release_files or ():
+        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
+        if rel in bracketed:
+            continue
+        m = _DASH_TITLE_RE.search(Path(rel).stem)
         if not m:
             continue
         try:
@@ -761,7 +794,7 @@ _RATIO_MATCH_MIN = 0.84
 _RATIO_MATCH_MARGIN = 0.06
 
 
-def _match_titles(entries, guide):
+def _match_titles(entries, guide, exact_only=False):
     """`{(season, episode): (guide_season, guide_episode)}` for uniquely matched titles.
 
     Three passes, each stricter about ambiguity than the last: exact token set, then a
@@ -771,6 +804,11 @@ def _match_titles(entries, guide):
     is why the ratio pass exists: the token matcher missed *Smurf Colored Glasses*, its
     release number then collided with a matched file's computed slot, and the plan
     collapse destroyed the mapped copy at 32 destinations.
+
+    `exact_only=True` stops after the exact/unique pass. It is how the dash-title
+    witness is read: that form is not reliable enough for a fuzzy claim (a scene tag or
+    part marker could drag it onto a nearby title), but an exact, unique match is
+    positive evidence and is used.
     """
     by_words = []
     for e in guide or ():
@@ -798,7 +836,7 @@ def _match_titles(entries, guide):
             if toks == gtoks and norm_count.get(gnorm, 0) == 1:
                 hit = (gs, ge)
                 break
-        if hit is None:
+        if hit is None and not exact_only:
             best = None
             for gtoks, _gnorm, gs, ge, _gname in by_words:
                 if not gtoks:
@@ -813,7 +851,7 @@ def _match_titles(entries, guide):
                         break
             if best is not None:
                 hit = (best[1], best[2])
-        if hit is None:
+        if hit is None and not exact_only:
             import difflib as _difflib
             norm = _title_norm(title)
             scored = sorted(((_difflib.SequenceMatcher(None, norm, gnorm).ratio(), gs, ge,
@@ -858,6 +896,37 @@ def _match_titles(entries, guide):
     return claims
 
 
+def _title_claims(strong_entries, weak_entries, guide):
+    """All computed title claims, with the two witnesses kept separate.
+
+    Brackets are the reliable form: `_match_titles` reads them with every pass and their
+    claims win. Dash titles are read exact-only and may only fill what the bracket claims
+    left open -- a key or a guide slot already spoken for is not re-decided by the weak
+    witness.
+
+    The dash witness is consulted ONLY once the bracket witness has already proven the
+    pack release-ordered (some bracket claim differs from its release key). On its own,
+    a dash title is not evidence the pack is reordered at all: dash titles are the
+    ordinary form of thousands of packs and the replay reproduced the 2026-09-20
+    false-positive class in full (50 contradictions over a multi-show pack whose titles
+    are all `Show (Year) - SxxEyy - Title.mkv`, where the plan legitimately files into
+    other seasons). The Smurfs shape this exists for is 69 bracket rows plus one dash
+    file; there the pack is already proven, and the exact, unique dash title supplies the
+    missing row (`Nobody Smurf` is TMDB S07E27 while the release calls it S07E49).
+    """
+    claims = _match_titles(strong_entries, guide)
+    if not any(target != key for key, target in claims.items()):
+        return claims
+    weak = _match_titles(weak_entries, guide, exact_only=True) if weak_entries else {}
+    taken = set(claims.values())
+    for key, target in weak.items():
+        if key in claims or target in taken:
+            continue
+        claims[key] = target
+        taken.add(target)
+    return claims
+
+
 def _guide_for(title, tmdb_id=None):
     """The episode list the title map must be computed against, or None.
 
@@ -897,16 +966,18 @@ def release_title_map(content_path, release_files, show_hint=None, tmdb_id=None)
     `tmdb_id` (the pinned id of the existing show folder, when there is one) makes the
     map agree with Jellyfin's own episode names; without it the TVMaze fallback is used.
     """
-    entries = release_title_entries(release_files)
-    if len(entries) < _TITLE_MAP_MIN_ENTRIES:
+    strong = release_title_entries(release_files)
+    weak = release_dash_title_entries(release_files)
+    entries_n = len(strong) + len(weak)
+    if entries_n < _TITLE_MAP_MIN_ENTRIES:
         return {}
     title = show_hint or _release_title_guess(content_path, release_files)
     guide, _provider = _guide_for(title, tmdb_id)
     if not guide:
         return {}
-    claims = _match_titles(entries, guide)
+    claims = _title_claims(strong, weak, guide)
     if len(claims) < max(_TITLE_MAP_MIN_ENTRIES,
-                         int(len(entries) * _TITLE_MAP_MIN_FRACTION)):
+                         int(entries_n * _TITLE_MAP_MIN_FRACTION)):
         return {}
     if all(target == key for key, target in claims.items()):
         return {}
@@ -925,7 +996,10 @@ def title_numbering_block(content_path, release_files, wave_names=None,
                                   tmdb_id=tmdb_id)
     if not title_map:
         return "", {}
-    entries = release_title_entries(release_files)
+    # Both witnesses, so the computed row for a bracket-less file (`S07E49 - Nobody
+    # Smurf`) is stated to the model too; the map passed back is the same one the
+    # validator enforces.
+    entries = release_title_entries(release_files) + release_dash_title_entries(release_files)
     wanted = None
     if wave_names:
         wanted = {str(n).replace("\\", "/").split("/")[-1] for n in wave_names}
@@ -954,8 +1028,8 @@ def title_numbering_block(content_path, release_files, wave_names=None,
             "RELEASE-ORDER NUMBERING -- COMPUTED BROADCAST NUMBERING\n"
             "======================================================================\n"
             "This release's `SxxEyy` is its OWN catalogue order, not the broadcast\n"
-            f"order. Each file's real episode title is in parentheses, and the harness\n"
-            f"matched those titles against {provider or 'the provider'}'s episode list --\n"
+            "order. Each file carries its real episode title (in parentheses, or after\n"
+            f"the dash), and the harness matched those titles against {provider or 'the provider'}'s episode list --\n"
             "the same list Jellyfin will show -- so the broadcast slots below are what\n"
             "each file IS. File each file at the computed slot; do NOT copy the release's\n"
             "`SxxEyy` onto the destination.\n"
@@ -965,14 +1039,24 @@ def title_numbering_block(content_path, release_files, wave_names=None,
 def plan_skeleton(release_files, title_map=None, title="", kind="show"):
     """A deterministic plan pre-filled with EVERY release file and its computed slot.
 
-    Above `config.IDENTIFY_SKELETON_MIN_FILES` a single `Write` cannot hold the plan
-    (the Smurfs run burned 36 turns investigating and then wrote a 24-file prefix --
-    10.9). The harness enumerates the release, applies the computed title map, and
-    hands the model a skeleton to fill and extend instead of re-typing the listing.
+    The model cannot be trusted to enumerate the plan: above
+    `config.IDENTIFY_SKELETON_MIN_FILES` a single `Write` cannot hold it (the Smurfs run
+    burned 36 turns investigating and then wrote a 24-file prefix -- 10.9), and in ANY
+    reordered pack its copy of the release numbers is known to be wrong. The harness
+    enumerates the release, applies the computed title map, and hands the model a
+    skeleton to fill and extend instead of re-typing the listing.
     """
     files = []
     non_episode_videos = 0
     parsed = []          # (entry, release_key, target|None)
+    # A computed Season-0 target makes the file a SPECIAL, and `validate_plan` refuses a
+    # special with no episode_title/plot (they are always locked at apply time). The
+    # release's own name carries the title, so the harness supplies that half; the plot
+    # is content the model still authors (the prompt names these entries).
+    titles = {}
+    for _r, _s, _e, _t in (release_title_entries(release_files or ())
+                           + release_dash_title_entries(release_files or ())):
+        titles.setdefault(str(_r), _t)
     for item in release_files or ():
         rel = str(item[0] if isinstance(item, (tuple, list)) else item)
         entry = {"src": rel, "dst_rel": "", "season": None, "episode": None}
@@ -984,11 +1068,16 @@ def plan_skeleton(release_files, title_map=None, title="", kind="show"):
         elif Path(rel).suffix.lower() in config.VIDEO_EXTENSIONS:
             non_episode_videos += 1
         files.append(entry)
-    # An unmatched file's RELEASE number is not trusted once the pack is known to be
-    # reordered: when it lands on a slot a matched file already claims, the two entries
-    # would collide and the intra-torrent collapse would silently decide between them
-    # (the 2026-09-20 Smurfs loss: 32 mapped files dropped for their fallback twins).
-    # Mark exactly those `None` so the merge refuses to guess and the model fills them.
+    # Once a pack's numbering is known to be PERMUTED -- a title map exists -- an
+    # unmatched file's release number is evidence of nothing. It may still be right by
+    # luck, but this release's own order is measured to disagree with the guide, so
+    # filing positionally is the 2026-09-20 silent-collapse shape (32 mapped files
+    # dropped for their fallback twins; `Nobody Smurf` would have been filed at another
+    # episode's S07E49). Every unmatched entry is left for the model; the merge omits an
+    # entry the model did not claim, and the coverage guard parks rather than guesses.
+    # A pack with no map (ordinary numbering, fail-open) keeps the release-number
+    # fallback; collision/duplicate cases are unresolved in both worlds.
+    reordered = bool(title_map)
     claimed = {tuple(t) for _e, _k, t in parsed if t}
     unmatched = {}
     for _e, key, target in parsed:
@@ -997,13 +1086,73 @@ def plan_skeleton(release_files, title_map=None, title="", kind="show"):
     for entry, key, target in parsed:
         if target:
             entry["season"], entry["episode"] = target
-        elif key in claimed or unmatched.get(key, 0) > 1:
+            if target[0] == 0 and titles.get(str(entry["src"])):
+                entry["episode_title"] = titles[str(entry["src"])]
+        elif reordered or key in claimed or unmatched.get(key, 0) > 1:
             entry["season"], entry["episode"] = None, None
         else:
             entry["season"], entry["episode"] = key
     if non_episode_videos:
         kind = "mixed"
     return {"media_type": kind, "title": title, "files": files}
+
+
+def _resolve_release_abs(content_path, release_files):
+    """Absolute on-disk path for each release-relative name; names not on disk dropped.
+
+    `release_files` arrives with different roots. The `.torrent` mirror the whole-torrent
+    path uses names files relative to the torrent root, while qBittorrent's own file list
+    (the chunked path) prefixes every name with the torrent's root folder -- and
+    `content_path` for a multi-file torrent IS that root folder. Joining blindly doubled
+    it (`.../American Dad! (2005)/American Dad! (2005)/Season 01/...`) and every
+    provider's merged plan died on `src does not exist` (measured live, 2026-09-23).
+    A chunked wave has only its own files on disk and `validate_plan` requires every src
+    to exist, so anything that does not resolve is dropped: the wave's skeleton and
+    coverage manifest may only name real files. A single-file torrent has no folder and
+    `content_path` is the file itself.
+    """
+    root = Path(content_path)
+    out, seen = [], set()
+    for item in release_files or ():
+        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
+        if not rel:
+            continue
+        candidates = []
+        if root.is_file() and Path(rel).name == root.name:
+            candidates.append(root)
+        candidates.append(root / rel)
+        parts = Path(rel).parts
+        if len(parts) > 1:
+            candidates.append(root / Path(*parts[1:]))
+        for cand in candidates:
+            try:
+                if cand.exists():
+                    s = str(cand)
+                    if s not in seen:
+                        seen.add(s)
+                        out.append(s)
+                    break
+            except OSError:
+                continue
+    return out
+
+
+def _skeleton_needed(release_files, title_map=None):
+    """Whether the harness must hand the model a deterministic skeleton.
+
+    Two computed reasons, either sufficient: the release is large enough that one
+    `Write` cannot hold the plan (`config.IDENTIFY_SKELETON_MIN_FILES`, 10.9), or its own
+    numbering is known to be PERMUTED (a computed title map exists). The second is what
+    the 70-file Smurfs re-fetch drop needed on 2026-09-20: every one of 14 providers
+    produced a plan with a destination the title map contradicted, because the model was
+    left to enumerate 70 release-ordered files below the size floor. A reordered pack is
+    exactly where the release numbers are wrong, so the enumeration must come from the
+    harness whatever the size.
+    """
+    if not release_files:
+        return False
+    return (len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES
+            or bool(title_map))
 
 
 def _show_folder_for(title, year):
@@ -1128,8 +1277,12 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
                         "tmdb_id", "type"):
                 if got.get(key) not in (None, ""):
                     entry[key] = got[key]
-            if got.get("src"):
-                entry["src"] = got["src"]
+            # The skeleton's `src` is NOT overridden by the model's. It is the harness's
+            # enumeration of a file that exists on disk; the model routinely echoes it
+            # with a duplicated root (`.../American Dad! (2005)/American Dad! (2005)/...`,
+            # measured 2026-09-23), and `validate_plan` then refuses the whole plan on
+            # "src does not exist". The entry was matched by src or unique basename, so
+            # the enumeration's path is the right one.
         dst = str(entry.get("dst_rel") or "")
         if not dst and entry.get("season") is not None and entry.get("episode") is not None \
                 and folder:
@@ -1462,7 +1615,7 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                     series_hint=None, kind=None, failure_context=None, sections=None,
                     release_files=None, title_block="", skeleton_path=None,
                     require_count=0, skeleton_slotted=0, skeleton_unslotted=0,
-                    unslotted_files=None, tmdb_id=None):
+                    unslotted_files=None, metadata_files=None, tmdb_id=None):
     """The engineered base prompt plus this torrent's concrete context.
 
     With `series_hint`/`kind` (the settled case) the library digest is scoped to that one
@@ -1495,9 +1648,10 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
     specials = _specials_metadata_block(content_path, release_files,
                                         wave_paths=_listing_names(file_listing))
     ownership = _ownership_block(content_path, release_files)
-    # Large releases get the skeleton and the coverage contract in the prompt: a
-    # single `Write` cannot hold a 409-file plan, and the run must know a partial
-    # plan is a park, not a success (HANDOFF 10.9).
+    # Large or reordered releases get the skeleton and the coverage contract in the
+    # prompt: a single `Write` cannot hold a 409-file plan, a free model cannot be
+    # trusted to enumerate a release whose numbering is permuted at any size, and the
+    # run must know a partial plan is a park, not a success (HANDOFF 10.9).
     coverage_note = ""
     if skeleton_path or require_count:
         bits = []
@@ -1509,17 +1663,28 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                            f"{shown}\n"
                            + (f"    ... and {len(unslotted_files) - 25} more\n"
                               if len(unslotted_files) > 25 else ""))
+            specials = ""
+            if metadata_files:
+                shown = "\n".join(f"    {n}" for n in metadata_files[:25])
+                specials = (f"\nSEASON-0 SPECIALS THAT NEED A PLOT ({len(metadata_files)}):\n"
+                            f"{shown}\n"
+                            "  These were placed in Season 0 by the computed map; the\n"
+                            "  harness supplied each episode_title from the release name,\n"
+                            "  but a Season-0 entry is LOCKED at apply time and is REFUSED\n"
+                            "  without a non-empty `plot`. Include each in `files` with a\n"
+                            "  real `plot` (and correct `episode_title` if the computed one\n"
+                            "  is wrong).\n")
             bits.append(
                 "THE HARNESS COMPLETES THIS PLAN FOR YOU. It has already enumerated every\n"
                 "release file and computed the broadcast destination for the "
                 f"{skeleton_slotted} episode file(s) from their own titles. After your run\n"
                 "the harness merges its enumeration with your `files`, so:\n"
-                "  * do NOT read the large skeleton file, and do NOT re-list the episodes;\n"
+                "  * do NOT read the skeleton file back, and do NOT re-list the episodes;\n"
                 "  * put ONLY the file(s) below in `files`, each with its final `dst_rel`\n"
                 "    (and `tmdb_id` for a movie), plus any top-level title/year/ids;\n"
                 "  * if you have a real episode title or plot to add, include the entry;\n"
                 "    the harness keeps it, but an omitted episode is still placed correctly."
-                + listing)
+                + listing + specials)
         if require_count:
             bits.append(
                 f"COVERAGE IS REQUIRED. All {require_count} release file(s) must appear in\n"
@@ -1917,12 +2082,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                   else serial_release_map_for_content(content_path))
     # Release-order numbering for title-named packs (HANDOFF 10.9, The Smurfs). Serial
     # packs already have their binding map; do not stack two numbering blocks on one run.
-    # The skeleton's `src` must be the ABSOLUTE path the model will write back (plans
-    # carry absolute srcs); the release list itself arrives relative to the content root.
-    release_abs = []
-    for _item in release_files or ():
-        _rel = str(_item[0] if isinstance(_item, (tuple, list)) else _item)
-        release_abs.append(str(Path(content_path) / _rel))
+    # `release_abs` is the subset of `release_files` that actually exists on disk, with
+    # the root component resolved (see `_resolve_release_abs`): the skeleton, the title
+    # block and the coverage manifest may only name files a plan is allowed to carry.
+    release_abs = _resolve_release_abs(content_path, release_files)
     title_block, title_map = "", {}
     large = bool(release_files) and len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES
     show_title = arc_title or _release_title_guess(content_path, release_files)
@@ -1942,11 +2105,12 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
             _note(f"identify: computed release->broadcast numbering for "
                   f"{len(title_map)} file(s) from their own titles"
                   + (f" (matched against TMDB {show_tmdb_id})" if show_tmdb_id else ""))
-    # Above the size floor the model gets a deterministic skeleton and a coverage
-    # contract, because one Write cannot hold a plan that size and the old run wrote a
-    # 24-file prefix of 409 and stopped (10.9).
+    # A large OR reordered release gets a deterministic skeleton and a coverage
+    # contract: one Write cannot hold a 409-file plan (10.9), and below that floor a
+    # release-ordered pack still cannot be enumerated by the model (the 70-file Smurfs
+    # re-fetch failed all 14 providers on 2026-09-20). See `_skeleton_needed`.
     skeleton_path = None
-    if release_files and len(release_files) >= config.IDENTIFY_SKELETON_MIN_FILES:
+    if _skeleton_needed(release_files, title_map):
         skeleton_path = config.TMP_DIR / f"{info_hash}_skeleton.json"
         try:
             skeleton_path.write_text(json.dumps(
@@ -1958,13 +2122,19 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         except OSError:
             skeleton_path = None
     skeleton_slotted = skeleton_unslotted = 0
-    unslotted_files = []
+    unslotted_files, metadata_files = [], []
     if skeleton_path is not None:
         try:
             _sk = json.loads(skeleton_path.read_text(encoding="utf-8"))
             for _f in (_sk.get("files") or []):
                 if _f.get("season") is not None and _f.get("episode") is not None:
                     skeleton_slotted += 1
+                    # A computed slot in Season 0 makes it a SPECIAL: the validator
+                    # requires episode_title+plot (always locked at apply). The skeleton
+                    # supplies the title from the release name; these are named to the
+                    # model so it writes the plot with its entry.
+                    if int(_f.get("season")) == 0:
+                        metadata_files.append(Path(str(_f.get("src") or "")).name)
                 else:
                     skeleton_unslotted += 1
                     unslotted_files.append(Path(str(_f.get("src") or "")).name)
@@ -1972,11 +2142,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
             pass
     # The files the plan must account for, so ai_client can tell the model exactly what a
     # truncated plan left out BEFORE the run ends instead of parking after it (10.9).
-    require_files = []
-    for item in release_files or ():
-        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
-        if Path(rel).suffix.lower() in config.VIDEO_EXTENSIONS:
-            require_files.append(Path(rel).name)
+    # On-disk files only: a chunked wave cannot account for files its earlier/later waves
+    # hold, and the post-run coverage contract reads the disk walk as the authority.
+    require_files = [Path(p).name for p in release_abs
+                     if Path(p).suffix.lower() in config.VIDEO_EXTENSIONS]
     # With a skeleton the harness COMPLETES the plan from its own enumeration, so the
     # per-file coverage nudge is wrong here: it would order the model to append the
     # hundreds of episode entries the merge already supplies, wasting its turns (and
@@ -2041,6 +2210,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                  skeleton_slotted=skeleton_slotted,
                                  skeleton_unslotted=skeleton_unslotted,
                                  unslotted_files=unslotted_files,
+                                 metadata_files=metadata_files,
                                  tmdb_id=show_tmdb_id)
         # Per ATTEMPT, not per run: confirm mode below narrows these for the one provider
         # that needs it, and leaking that narrowing to the next provider would cap a run
@@ -2060,6 +2230,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                       skeleton_slotted=skeleton_slotted,
                                       skeleton_unslotted=skeleton_unslotted,
                                       unslotted_files=unslotted_files,
+                                      metadata_files=metadata_files,
                                       tmdb_id=show_tmdb_id)
             if len(compact) < len(prompt):
                 _note(f"  {provider_name}: full prompt is {len(prompt)} chars, over its "
@@ -2226,6 +2397,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                             skeleton_slotted=skeleton_slotted,
                             skeleton_unslotted=skeleton_unslotted,
                             unslotted_files=unslotted_files,
+                            metadata_files=metadata_files,
                             tmdb_id=show_tmdb_id)
                         if len(compact) < len(prompt) and _fits(provider_name, compact):
                             _note(f"  {provider_name}: retrying with the "
