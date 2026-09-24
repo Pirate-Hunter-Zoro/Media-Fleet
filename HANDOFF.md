@@ -285,11 +285,13 @@ parser was deliberate (a loose dash fallback replayed as 54 false positives on
    390-file list resolves to **32** on-disk files, the skeleton is 32/32 slotted, the
    merge fills 32, and `validate_plan` accepts it. **Live, after the restart: the wave
    filed `34/390` at 22:15 CDT (`skeleton merge: filled 1 episode destination(s)`,
-   Jellyfin rescan triggered) — the first wave to file on the fixed path.** Follow-up
-   `7c55843`: `_skeleton_needed` takes the resolved on-disk list (a 32-file wave of a
-   390-file release is not handed a 390-entry plan) and the log line names the
-   skeleton's real entry count — it read "390-file skeleton" beside a 32-entry file
-   during the live wave.
+   Jellyfin rescan triggered) — the first wave to file on the fixed path.** The skeleton
+   trigger stays on the RELEASE list (`_skeleton_needed`), so every wave of a large pack
+   gets a computed enumeration while the skeleton itself is built over the resolved
+   on-disk subset; a wave below the floor gets one only when the title map proves its
+   numbering permuted. `bde8d71` corrects the `wrote a N-file skeleton` log line, which
+   read "390-file skeleton" beside a 32-entry file; that log-only change deploys on the
+   next restart (the fleet runs `ac1c37a` + the correction is cosmetic).
 
 **Acceptance (owner-visible).**
 
