@@ -293,7 +293,10 @@ parser was deliberate (a loose dash fallback replayed as 54 false positives on
    torrentingest 49948 / directingest 49957 / driveingest 49969). `bde8d71` corrects the
    `wrote a N-file skeleton` log line, which read "390-file skeleton" beside a 32-entry
    file; it is committed and will land with the next daemon restart — it changes only
-   that log line, nothing functional.
+   that log line, nothing functional. A pgrep-gated watcher (no `ai_runner.py` for
+   20 s, then `Torrent-Ingest/scripts/ship.sh`) was left waiting for a lull; if the
+   daemons restarted after this section was written, that is why, and the PIDs above
+   are simply one restart old.
 
 **Acceptance (owner-visible).**
 
