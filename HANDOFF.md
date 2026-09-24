@@ -212,7 +212,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | `verify_fleet.sh` | **ALL CHECKS PASSED**, **60 blocking checks** (2026-09-23 late, after the Smurfs re-fetch fix; `test_release_title_numbering.py` extended, no new check registered) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
-| Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969), plus HANDOFF/commit follow-ups through `1b9cfc9`; `bde8d71` is the only un-restarted change and is a log line. On top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
+| Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969), plus HANDOFF/commit follow-ups through `1b9cfc9`. The 2026-09-24 session added `48f9fd9` (a private trackerless `.torrent` is refused at registration — see the shipped section), deployed 05:47 via restart of torrentingest 72073 / directingest 72081 / driveingest 72094; that restart also put `bde8d71` (a log line) live on those three. On top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
 | Stall policy | **one 24h deadline, partial bytes kept — shipped `c9fd3aa`, deployed 2026-09-23 20:08 CDT.** `_abandon_stalled` no longer reads `availability < 1` as "no complete copy in the swarm" (it is a connected-peers fact and reads < 1 during every stall); `STALL_ABANDON_NO_COMPLETE_SEC` is gone; an abandon calls `qbt.remove(delete_files=False)` so a re-drop resumes. The four Bob's Burgers packs the owner moved back are downloading again (S02 27%, S06 10.8%, S01 stalled with 4 complete peers known, S03 parked between waves) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
@@ -222,6 +222,51 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Parked re-drops | **Smurfs row 5 COMPLETE 2026-09-23 22:06 CDT.** The 2026-09-20 re-fetch drop exhausted all 14 providers and parked; the reordered-pack skeleton fix shipped and the drop was re-dropped through it: map for 70 titles, 70-file skeleton, first serving provider's plan accepted, `70 file(s) verified in destination`, source removed. The older repair stands: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten. No parked re-drops remain. |
 | Open work | Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented. The Smurfs row 5 (§10.0) is the only owner failure that was still open; it is now closed end to end. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
+
+### Shipped 2026-09-24 — a private trackerless `.torrent` is refused at registration, not after a 24h stall
+
+**What looked like a duplicate was a structurally dead drop.** The owner moved a failed
+drop back to the watch root (`BE7A1BA6… 2.torrent`, SpongeBob S16) suspecting the iCloud
+duplicate killed it. It did not: registration on 2026-09-22 tracked the " 2" copy and
+filed the clean copy under `finished/` (§10.6 machinery, working as designed). The
+`.torrent` itself is undownloadable — `info.private == 1`, no `announce`, no
+`announce-list`, no `url-list`. A private torrent may not use DHT/PeX/LSD (a live probe of
+qBittorrent printed "This torrent is private" on all three rows through
+`/api/v2/torrents/trackers`), so with no tracker and no web seed it has zero ways to reach
+a peer. It sat from 2026-09-22 08:19 to 2026-09-24 02:12 CDT and `_abandon_stalled`
+retired it with "stalled 24h with no progress (no peer activity)" — the 24h policy working
+exactly as designed on a drop no re-drop could ever heal.
+
+**The fix.** `qbt.undownloadable_reason` computes the verdict from the bytes already in
+hand (no network); `ingest._refuse_undownloadable` fails the drop through the normal
+`_fail` path on both fresh-record paths of `register_new_torrents` (new hash and terminal
+re-drop). The reason lands in the journal, the source is filed under `failed/`, the watch
+top level stays clean. Public DHT-only drops (the dominant shape) and private drops WITH
+trackers are untouched; a parse failure returns None and takes the normal path.
+
+**Replay (285 real `.torrent`s: every journal-named file plus all state folders incl.
+`failed/` and the local mirror): 3 refused, all private+trackerless by an independent
+decoder** — the three byte-identical copies of the one known-broken drop (`BE7A… 2` in the
+watch root, the `finished/` copy, the `state/torrent_sources/` mirror). 0 false positives.
+
+**Acceptance (owner-visible).** Pushed `48f9fd9`; deployed 2026-09-24 05:47 CDT at an
+`ai_runner` gap by `Torrent-Ingest/scripts/ship.sh` (torrentingest 72073, directingest
+72081, driveingest 72094). The daemon picked the moved-back drop up on its first cycle:
+
+```
+[2026-09-24 05:47:02] Filed failed .torrent under failed/: SpongeBob SquarePants S16 1080p AMZN WEB-DL DDP2 0 H 264-BTN
+[2026-09-24 05:47:02] FAILED SpongeBob SquarePants S16 1080p AMZN WEB-DL DDP2 0 H 264-BTN: private torrent with no tracker and no web seed: DHT, PeX and LSD are switched off by its private flag, so it can never find a peer; re-create the .torrent with its announce list -- re-dropping this file cannot help
+```
+
+The file now sits in `iCloud Drive/Torrents/failed/BE7A1BA6228AD4804E934908A493662D6FE4738D 2.torrent`
+and the journal record carries the same reason. The release needs a `.torrent` that
+actually carries trackers; neither copy of this one can download.
+
+Tests: new `scripts/test_undownloadable_torrent.py` (35 checks: every private trackerless
+shape refused; public-trackerless, tracked-private and web-seeded shapes accepted;
+registration end to end; terminal re-drop fails fast again; real corpus replayed). It is
+registered in `verify_fleet.sh` after the truncated-recovery check. Both that test and
+`verify_fleet.sh` print ALL CHECKS PASSED.
 
 ### Shipped 2026-09-23 (late) — the 70-file Smurfs re-fetch: a reordered pack gets the computed skeleton, and a bracket-less title is a weak witness
 
