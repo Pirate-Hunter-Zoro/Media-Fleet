@@ -2110,14 +2110,18 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
     # release-ordered pack still cannot be enumerated by the model (the 70-file Smurfs
     # re-fetch failed all 14 providers on 2026-09-20). See `_skeleton_needed`.
     skeleton_path = None
-    if _skeleton_needed(release_files, title_map):
+    # The ON-DISK subset decides: a chunked wave is asked to place only its own files,
+    # so a 32-file wave of a 390-file release does not need (or get) a 390-entry plan.
+    if _skeleton_needed(release_abs, title_map):
         skeleton_path = config.TMP_DIR / f"{info_hash}_skeleton.json"
         try:
-            skeleton_path.write_text(json.dumps(
-                plan_skeleton(release_abs or release_files, title_map,
-                              title=show_title),
-                indent=1), encoding="utf-8")
-            _note(f"identify: wrote a {len(release_files)}-file skeleton for "
+            _skel = plan_skeleton(release_abs or release_files, title_map,
+                                  title=show_title)
+            skeleton_path.write_text(json.dumps(_skel, indent=1), encoding="utf-8")
+            # The ENTRY count, not the whole release's: a chunked wave's skeleton
+            # covers only the files on disk, and a log line saying "390-file skeleton"
+            # beside a 32-entry file sends the next reader after the wrong thing.
+            _note(f"identify: wrote a {len(_skel.get('files') or [])}-file skeleton for "
                   f"{skeleton_path.name}")
         except OSError:
             skeleton_path = None
