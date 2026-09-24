@@ -152,6 +152,55 @@ def salvage_from_truncated_file(torrent_path):
     return name, unique
 
 
+def _has_urls(value):
+    """True when a bencode value names at least one URL, at any nesting depth
+    (`announce` is a string; `announce-list` is a list of tiers of strings)."""
+    if isinstance(value, bytes):
+        return bool(value)
+    if isinstance(value, (list, tuple)):
+        return any(_has_urls(v) for v in value)
+    return False
+
+
+def undownloadable_reason(torrent_path):
+    """Why this `.torrent` can never find a peer, or None when it has a chance.
+
+    A PRIVATE torrent (info.private == 1) may not use DHT, PeX or LSD -- the spec
+    forbids it, and a live probe of this qBittorrent confirms it reports all three as
+    "** [DHT] **"/"** [PeX] **"/"** [LSD] **" with "This torrent is private". So its
+    trackers (or a web seed) are its ONLY ways to reach data. A private drop carrying
+    neither is structurally undownloadable: it sits in qBittorrent until the 24h stall
+    clock abandons it, and a re-drop repeats that. Observed on a SpongeBob S16 pack
+    whose three discovery rows all read "This torrent is private" and which reported
+    `stalled 24h with no progress (no peer activity)` on 2026-09-24.
+
+    Public trackerless drops are NOT refused: DHT finds their peers, and that is the
+    normal shape here (`announce` absent, `url-list` empty -- HANDOFF 2026-09-23).
+
+    Never raises: a `.torrent` this cannot parse returns None (fail open; truncated or
+    unreadable drops have their own recovery paths).
+    """
+    try:
+        meta, _ = _bdecode(torrent_path.read_bytes(), 0)
+        info = meta.get(b"info") if isinstance(meta, dict) else None
+        if not isinstance(info, dict):
+            return None
+        try:
+            private = int(info.get(b"private") or 0)
+        except (TypeError, ValueError):
+            return None
+        if private != 1:
+            return None
+        if (_has_urls(meta.get(b"announce")) or _has_urls(meta.get(b"announce-list"))
+                or _has_urls(meta.get(b"url-list"))):
+            return None
+        return ("private torrent with no tracker and no web seed: DHT, PeX and LSD are "
+                "switched off by its private flag, so it can never find a peer; re-create "
+                "the .torrent with its announce list -- re-dropping this file cannot help")
+    except (OSError, ValueError, IndexError, TypeError):
+        return None
+
+
 def total_size_from_file(torrent_path):
     """Total payload size in bytes from the .torrent metadata (v1 fields).
 

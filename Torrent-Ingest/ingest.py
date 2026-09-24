@@ -480,6 +480,26 @@ def _file_duplicate_source(path, records, info_hash):
             f"(already tracked as {info_hash[:12]}).")
 
 
+def _refuse_undownloadable(record, path, records) -> bool:
+    """Fail a fresh drop whose `.torrent` can never reach a peer, before it is queued.
+
+    A private, trackerless drop has every discovery channel switched off (DHT, PeX and
+    LSD are forbidden by the private flag; qBittorrent reports all three as "This torrent
+    is private"), so nothing can ever connect. Left to the download path, the only
+    symptom is the 24h stall clock expiring on a torrent no re-drop can heal -- measured
+    on a SpongeBob S16 pack, 2026-09-24. Failing it here turns that day into one log line
+    and one file under failed/, where the owner can see the reason.
+
+    Returns True when the drop was failed; the caller must not queue it.
+    """
+    reason = qbt.undownloadable_reason(path)
+    if not reason:
+        return False
+    records[record["info_hash"]] = record
+    _fail(record, reason)
+    return True
+
+
 def _source_hash(path):
     """The info hash a `.torrent`/`.magnet` in a state folder stands for, or None.
 
@@ -594,6 +614,8 @@ def register_new_torrents(records):
                 name = qbt.torrent_name_from_file(path) or path.stem
                 fresh = journal.new_record(h, path, name)
                 fresh["total_size"] = qbt.total_size_from_file(path)
+                if _refuse_undownloadable(fresh, path, records):
+                    continue
                 carried = _carry_chunk_progress(rec, fresh)
                 _file_torrent(fresh, config.QUEUED_DIR, "queued")
                 records[h] = journal.write_record(fresh)
@@ -629,6 +651,8 @@ def register_new_torrents(records):
         name = qbt.torrent_name_from_file(path) or path.stem
         rec = journal.new_record(h, path, name)
         rec["total_size"] = qbt.total_size_from_file(path)   # bytes, or None if unreadable
+        if _refuse_undownloadable(rec, path, records):
+            continue
         _file_torrent(rec, config.QUEUED_DIR, "queued")
         records[h] = journal.write_record(rec)
         sz = rec["total_size"]

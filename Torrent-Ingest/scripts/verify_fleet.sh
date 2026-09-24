@@ -93,6 +93,17 @@ run "hostile .torrent metadata refused (both ways)" \
 # own oracle, with its name and trackers cut away in the middle.
 run "truncated .torrent recovers as a magnet (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_truncated_torrent_recovery.py
+# A private trackerless `.torrent` has every peer-discovery channel switched off: DHT,
+# PeX and LSD are forbidden by the private flag (qBittorrent prints "This torrent is
+# private" for all three) and no tracker or web seed is there to replace them. Such a drop
+# can never connect, so it sat until the 24h stall clock abandoned it and a re-drop
+# repeated the day (SpongeBob S16, 2026-09-24 -- the failure was NOT its iCloud duplicate).
+# Registration now refuses it before qBittorrent is asked to add it. Both ways: every
+# private trackerless shape refused, every public DHT-only drop and every tracked private
+# drop -- the shapes that must keep working -- accepted, and the real corpus replayed to
+# prove a public or tracked torrent is never refused.
+run "private trackerless .torrent refused at registration (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_undownloadable_torrent.py
 # The duplicate-provider-id check is a check that reports NOTHING almost all the time, so
 # it must be able to prove it CAN report something (§ diagnosis 7). Fixture-based: two
 # series stamped with one key are found, a clean library is not.
