@@ -209,19 +209,99 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, **60 blocking checks** (2026-09-23 late, after the Smurfs re-fetch fix; `test_release_title_numbering.py` extended, no new check registered) |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, **65 blocking checks** (2026-09-24 evening: `test_show_summary_inventory.py` registered after the digest-scoping check; the 60-check figure predates `test_undownloadable_torrent.py` and the earlier session's count was stale) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
-| Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969), plus HANDOFF/commit follow-ups through `1b9cfc9`. The 2026-09-24 session added `48f9fd9` (a private trackerless `.torrent` is refused at registration — see the shipped section), deployed 05:47 via restart of torrentingest 72073 / directingest 72081 / driveingest 72094; that restart also put `bde8d71` (a log line) live on those three. On top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
+| Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969), plus HANDOFF/commit follow-ups through `1b9cfc9`. The 2026-09-24 session added `48f9fd9` (a private trackerless `.torrent` is refused at registration — see the shipped section), deployed 05:47 via restart of torrentingest 72073 / directingest 72081 / driveingest 72094; that restart also put `bde8d71` (a log line) live on those three. The 2026-09-24 **evening** session added `4202bb3` (the show summary counts evicted episodes; a proven collision retries instead of parking the pack — see the shipped section), deployed 21:37:41 via restart of torrentingest 88328 / directingest 88336 / driveingest 88349. On top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
 | Stall policy | **one 24h deadline, partial bytes kept — shipped `c9fd3aa`, deployed 2026-09-23 20:08 CDT.** `_abandon_stalled` no longer reads `availability < 1` as "no complete copy in the swarm" (it is a connected-peers fact and reads < 1 during every stall); `STALL_ABANDON_NO_COMPLETE_SEC` is gone; an abandon calls `qbt.remove(delete_files=False)` so a re-drop resumes. The four Bob's Burgers packs the owner moved back are downloading again (S02 27%, S06 10.8%, S01 stalled with 4 complete peers known, S03 parked between waves) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
-| In flight | The reaper drains (`reap.py` PID 6539) and ordinary queued drops identify through the chain. The four Bob's Burgers packs are fetching; **American Dad! (2005) is chunking through the fixed wave path — 34/390 filed at 22:15 CDT, next waves enabled.** **The Smurfs row-5 work is DONE live (see the shipped section): the 70-file re-fetch filed 22:06 CDT, Season 01 39/39, 405 mp4 on the mount.** The three One Piece re-queue tails (Chapter 1093/1098/1112.zip) are terminal `failed` with their bytes parked in `~/Downloads/.torrent-ingest/` (`verify_owner_report` prints them PENDING on purpose) — the content is already owned/superseded, so they need no action; the plan-time guard that refuses the misfiles is live (`library.validate_plan` chapter-ceiling). |
-| Parked re-drops | **Smurfs row 5 COMPLETE 2026-09-23 22:06 CDT.** The 2026-09-20 re-fetch drop exhausted all 14 providers and parked; the reordered-pack skeleton fix shipped and the drop was re-dropped through it: map for 70 titles, 70-file skeleton, first serving provider's plan accepted, `70 file(s) verified in destination`, source removed. The older repair stands: all 375 surviving files refiled to their TMDB slots in one ordered 147-move pass (`refile_season.py --mapping`), 142 `library.db` rows superseded, inventory/sync_state rewritten. No parked re-drops remain. |
-| Open work | Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented. The Smurfs row 5 (§10.0) is the only owner failure that was still open; it is now closed end to end. |
+| In flight | The reaper drains (`reap.py` PID 6539) and ordinary queued drops identify through the chain. The chain is saturated: `advance()` has been inside one wave's provider walk for >1.5 h (Bob's Burgers `86b44512…-w128`, providers 429ing/500ing/returning empty), so registration at the sweep's `REGISTER_REFRESH_SEC` check has not run since the 21:37 restart. **The Simpsons re-drop is visible to `find_drop_files` and waits behind that chain** (see the evening shipped section); it resumes from proven progress when registration runs. |
+| Parked re-drops | **The Simpsons (1989) `1d9098aa…` re-dropped 2026-09-24 ~21:38** from `failed/` to the watch root after the show-summary fix shipped; registration pending behind the identify sweep (above). Native progress: `chunk_done` 43 (0-39 + 787-789), `chunk_filed` 43, next wave `chunk_active` 40-71 (S03E05-S04E12). **American Dad! (2005) `06dd53e1…` and Family Guy `705febda…` stay in `failed/`** with every byte on disk; their resolutions are distinct (wrong-slot S04E06 re-file; same-key duplicate seam) — see the evening shipped section. No new downloads needed. |
+| Open work | Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented. **New from 2026-09-24 evening:** American Dad!'s wrong-slot `S04E06` (re-file, § evening shipped section) and Family Guy's same-release-key duplicate seam (the model placed one of two `S07E07` encodes; compute the duplicate relation or say it in the prompt). |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
+
+### Shipped 2026-09-24 (evening) — the show summary counts evicted episodes, and a proven collision retries instead of parking the pack
+
+**Three packs parked today; two of them by one measured blindness.** The Simpsons (1989)
+(`1d9098aa…`, 700 GB) parked at 10:21 CDT as `chunked: the wave plan left 2 file(s)
+unaccounted`; American Dad! (2005) (`06dd53e1…`) parked at 06:16 the same way. The plans
+were not the fault.
+
+**Root cause.** `show_metadata_summary` walked the SSD (`~/Media`) alone — the cache, where
+anything evicted to the pool is absent (HANDOFF §2.1). The mount held 40 Simpsons episodes
+with Season 03 = 4; the digest the run was built from said "Season 03 (2 eps)" and knew no
+other seasons (measured: the cached entry's directory signature still matched, so the subset
+was served). The prompt tells the run the library's season counts are ground truth, so the
+model renumbered the wave's S03E05-S03E24 down by two to continue from E02 — onto
+S03E03/E04, which wave 22 had already filed. American Dad! the same hour: the SSD said no
+seasons; the library held 34 episodes.
+
+**The fix.** `_episode_videos_complete` enumerates a show's episodes as the union of the
+disk walk and Media-Syncer's remote inventory — the same complete view `_comics_coverage`
+already reads ("the pool holds every comic even when the local copy is evicted"). The walk
+covers files too new to be uploaded and fixture directories; the inventory supplies every
+evicted episode. Sidecars survive eviction, so the `.nfo` halves stay local and the mount is
+only a fallback path. `_SUMMARY_CACHE_VERSION = "v2"` refuses the pre-fix subset readings.
+Measured after: The Simpsons 0.08s for 40 episodes (the mount walk was 8.9s), One Piece
+(1999) 1155 episodes in 0.32s, and the digest line now reads `Season 00 (2 eps), Season 01
+(11 eps), Season 02 (22 eps), Season 03 (4 eps), Season 33 (1 eps)`.
+
+**Second defect: the collision had no identity witness for chunked waves.**
+`_collapse_existing_episode_collisions` saw the planned S03E03 collide with the existing
+S03E03, `_existing_episode_mismatch` found no evidence (`journal.source_titles()` indexed
+only `plan.files`, and a chunked record has `plan: null`), so the planned file was dropped
+silently and the coverage contract parked the whole release terminally. Two additions:
+`source_titles()` now indexes the record's `applied` entries (the staging source path
+preserves the release filename), and when the journal is still silent the existing file's
+own NAME is the witness — compared on tag-cleaned titles, because two files of one release
+share their whole tag tail (raw similarity 0.838, a hair under the 0.85 same-episode bar).
+A proven mismatch raises `CollisionPark` (a `PlanError` subclass) so the chain retries the
+plan instead of the release failing, and the chunked per-file fallback returns the PARK
+verdict — never freeing bytes on a collision (§10.2).
+
+**Replay.** Every journal plan entry with a titled source at a known slot (2,052): 8 would
+now raise, all eight the Smurfs incident shape (the old dvdrip's wrong-slot S01 files
+against the replacement pack's correct ones), 0 false positives.
+
+**Tests.** New `scripts/test_show_summary_inventory.py` (registered after the digest-scoping
+check): an inventory-only episode is counted and its local sidecar still decides
+locked/blank; the digest line carries it; a pre-fix cache entry cannot serve its subset; an
+unreadable inventory falls back to the walk; fixture dirs are untouched; one show's inventory
+never bleeds into another. `test_existing_collision_identity.py` extended with the name
+witness (different episode parks; same episode under different tags still collapses;
+bare-numbered name proves nothing), `_clean_episode_title`, the `applied` journal witness,
+and the per-file PARK verdict.
+
+**Acceptance (owner-visible).**
+* `bash scripts/verify_fleet.sh` → **ALL CHECKS PASSED** (65 blocking checks).
+* Live summaries: The Simpsons 40 eps / Season 03 = 4; American Dad! 34 eps / Seasons 01-04
+  = 6/16/11/1.
+* Pushed `4202bb3`, deployed **2026-09-24 21:37:41 CDT** via `Torrent-Ingest/scripts/ship.sh`
+  (torrentingest 88328, directingest 88336, driveingest 88349). Two identify runs were in
+  flight and were interrupted by the restart; their waves retry next cycle.
+* The Simpsons `.torrent` was moved from `failed/` back to the watch root at ~21:38 and is
+  visible to `find_drop_files`; registration was still pending at session end behind a long
+  `advance()` identify sweep (the sweep re-registers within `REGISTER_REFRESH_SEC` once the
+  current wave's chain returns). It resumes from proven progress; **the next session must
+  confirm the wave files and the record's terminal state.**
+
+**Still parked, distinct seams (no new download needed for either).**
+* **American Dad! (2005)** (`06dd53e1…`, failed 06:16). Its wave-0 plan filed source
+  `S10E06 - Independent Movie` at `S04E06`; the wave-34 plan (correctly) files `S04E06 - The
+  42-Year-Old Virgin` at S04E06, which collides with the wrong-slot file. With the digest
+  fixed a re-drop plans correctly, but the wrong-slot S04E06 still blocks; the repair is a
+  reviewed re-file of that one file (`refile_season.py --mapping`), not a re-download.
+* **Family Guy - Seasons 1 to 20** (`705febda…`, failed 21:27). Wave w96 holds TWO files
+  named `S07E07 - Ocean's Three and a Half` (Uncensored + Bale Scene / Uncensored +
+  Commentary Audio Track); the harness deliberately leaves same-release-key files unslotted
+  and the model placed only one, so the coverage contract parked the pack. A different seam:
+  the model CAN express "both files, one destination" (the intra-torrent duplicate collapse
+  accounts it) but does not know to; the next fix is to compute the same-key duplicate
+  relation in the harness (or say it in the prompt) and replay it. Bytes are on disk; no new
+  torrent.
 
 ### Shipped 2026-09-24 — a private trackerless `.torrent` is refused at registration, not after a 24h stall
 
