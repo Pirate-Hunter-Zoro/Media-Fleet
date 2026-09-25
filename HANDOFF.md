@@ -300,14 +300,37 @@ Doctor Who's `S00E04 The End Of Time Part 1` moved to `S00E23` (remote on
 `S00E04 The Return Of Doctor Mysterio`'s nfo was corrected from `<episode>149</episode>`
 to `<episode>4</episode>`.
 
-**Deploy + re-drop.** Shipped via `ship-fleet.sh` at the first `ai_runner` gap (the
-restart also forces Media-Syncer's remote rescan so the moved files reappear through
-the mount). Then the three sources were moved out of `failed/`: Family Guy
-(`705FEBDA…torrent`) and Friends (the named `.torrent`) to the watch root, and American
-Dad from the `state/torrent_sources/06dd53e1…torrent` mirror — all three resume from
-`chunk_done` (Family Guy 96 with the S07E07 alternate pair computed as one episode;
-Friends wave 0 with all 32 Featurettes attributable; American Dad 34 with S04E06
-vacated). The Simpsons stays as §15.4.
+**Deploy + re-drop.** Shipped as `1dff91a` via `ship-fleet.sh` at a created
+`ai_runner` lull (the three ingest daemons were SIGSTOPped so the in-flight run could
+finish; the restart also forced Media-Syncer's remote rescan so the moved files
+reappeared through the mount). New daemons: torrentingest 84268, directingest 84301,
+driveingest 84381; mediafs 84172 / mediasync 84198. Then the three sources were moved
+out of `failed/`: Family Guy (`705FEBDA…torrent`) and Friends (the named `.torrent`) to
+the watch root, and American Dad from the `state/torrent_sources/06dd53e1…torrent`
+mirror — `failed/` now holds only `.DS_Store`.
+
+**Post-deploy acceptance (owner-visible).** Log line: `Re-queuing a failed torrent
+dropped again` for all three at **2026-09-25 05:07:28** — Family Guy "resuming chunked
+waves at 96 file(s) already filed", American Dad "…at 34", Friends wave 0 from zero.
+Mount after the rescan:
+
+```
+Shows/American Dad! (2005)/Season 10/… - S10E06 - Independent Movie …-playWEB.mkv  (+ .nfo, locked S10E06)
+Shows/Doctor Who (2005)/Season 00/… - S00E23 The End Of Time Part 1.mp4            (+ .nfo, locked S00E23)
+Shows/Doctor Who (2005)/Season 00/… - S00E04 The Return Of Doctor Mysterio.mp4     (+ .nfo, locked S00E04)
+```
+
+Jellyfin API after `Library/Refresh` + a targeted `Library/Media/Updated` on Season 10:
+`S10E6 | Independent Movie | …/Season 10/…-playWEB.mkv`; `S0E4 | The Return Of Doctor
+Mysterio`; `S0E23 | The End of Time Part 1`. The ffmpeg thumbnail probe on the
+pool-only S10E06 times out until the file hydrates, which is the normal cold-file
+behaviour. The tool's sidecar writer now always targets the SSD (`repair_slots._place_path`):
+writing through the mount into a pool-only directory has no writable lower and failed
+with `PermissionError` (fixed after the deploy, `save-and-push.sh` — no daemon loads
+the tool). **Still to confirm next session:** the three resumed packs' waves filing on
+the fixed code (Family Guy's S07E07 alternate recorded in `chunk_dropped`, Friends
+32/32 Featurettes, American Dad's S04E06 *The 42-Year-Old Virgin*), and the Simpsons
+§15.4 wave/terminal check.
 
 ### Shipped 2026-09-24 (evening) — the show summary counts evicted episodes, and a proven collision retries instead of parking the pack
 

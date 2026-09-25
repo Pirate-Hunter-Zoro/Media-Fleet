@@ -349,18 +349,13 @@ def _videos(folder, season=None):
 
 
 def _place_path(rel):
-    """The writable on-disk path for a library-relative video: SSD first, then mount.
+    """The writable on-disk path for a library-relative video's sidecar: the SSD.
 
-    When the video itself is remote-only (already evicted to the pool) NEITHER root has
-    it, but the sidecar still belongs on the SSD beside where the video lives -- mediafs
-    passes sidecars through, Jellyfin reads it immediately, and the syncer uploads it
-    with the file. So the SSD path is returned even when absent; the writer makes the
-    directory.
+    ALWAYS the SSD (`MEDIA_ROOT`). A sidecar written through the mount into a
+    pool-only directory fails -- the virtual directory has no writable lower -- and
+    mediafs passes the SSD sidecar through anyway, so the SSD is the one correct
+    place whether the video is local or evicted. The writer makes the directory.
     """
-    for root in (config.MEDIA_ROOT, config.MEDIAFS_MOUNT):
-        p = root / rel
-        if p.is_file():
-            return p
     return config.MEDIA_ROOT / rel
 
 
