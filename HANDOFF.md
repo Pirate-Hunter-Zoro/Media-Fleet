@@ -218,9 +218,9 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
-| In flight | The reaper drains (`reap.py` PID 6539) and ordinary queued drops identify through the chain. The chain is saturated: `advance()` has been inside one wave's provider walk for >1.5 h (Bob's Burgers `86b44512…-w128`, providers 429ing/500ing/returning empty), so registration at the sweep's `REGISTER_REFRESH_SEC` check has not run since the 21:37 restart. **The Simpsons re-drop is visible to `find_drop_files` and waits behind that chain** (see the evening shipped section); it resumes from proven progress when registration runs. |
-| Parked re-drops | **The Simpsons (1989) `1d9098aa…` re-dropped 2026-09-24 ~21:38** from `failed/` to the watch root after the show-summary fix shipped; registration pending behind the identify sweep (above). Native progress: `chunk_done` 43 (0-39 + 787-789), `chunk_filed` 43, next wave `chunk_active` 40-71 (S03E05-S04E12). **American Dad! (2005) `06dd53e1…` and Family Guy `705febda…` stay in `failed/`** with every byte on disk; their resolutions are distinct (wrong-slot S04E06 re-file; same-key duplicate seam) — see the evening shipped section. No new downloads needed. |
-| Open work | Doctor Who (2005)'s S00E04 two-file placement fault is the doctor's KNOWN NEEDS-REVIEW item (its locked nfos claim E16/E149 and both slots are occupied — needs a human decision, not an auto-move). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented. **New from 2026-09-24 evening:** American Dad!'s wrong-slot `S04E06` (re-file, § evening shipped section) and Family Guy's same-release-key duplicate seam (the model placed one of two `S07E07` encodes; compute the duplicate relation or say it in the prompt). |
+| In flight | The reaper drains (`reap.py` PID 6539). **The Simpsons (1989) `1d9098aa…` re-dropped itself and resumed**: registered 2026-09-24 23:48 ("resuming chunked waves at 43 file(s) already filed"), admitted 2026-09-25 03:11:33 with the corrected digest, now parked for disk space (43 MB admittable vs 592 MB next file) — it resumes automatically; see §15.4. |
+| Parked re-drops | **The Simpsons is recovering (§15.4). Friends (1994) `1a6558e5…` and Family Guy `705febda…` are the two `.torrent`s in `failed/`**; both were parked by the merge-unresolved seam and are diagnosed with named destinations in **§15** — no new downloads needed. **American Dad! (2005) `06dd53e1…` is `failed` too but its `failed/` copy is gone; the mirror at `state/torrent_sources/06dd53e1…torrent` is the re-drop source** (§15.1). |
+| Open work | **§15 is the work order for the next session.** It names every affected file's correct destination and the harness/prompt upgrade that must make the fleet decide these cases itself (owner's standing instruction: no hand-fixes). It covers American Dad!'s wrong-slot `S04E06`, Family Guy's same-key S07E07 duplicates, Friends' 4 lost Featurettes (the merge-unresolved seam), the Simpsons acceptance check, and Doctor Who (2005)'s S00E04 specials conflict with the computed answer. Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented; §15.3/§15.2 are its remaining gaps. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
 
 ### Shipped 2026-09-24 (evening) — the show summary counts evicted episodes, and a proven collision retries instead of parking the pack
@@ -1825,3 +1825,217 @@ protocol — there is no streaming headroom for WebDAV to win back. Reconsider o
 is replaced by a LAN-hosted store with no API metering; then a plain NFS/SMB/rclone mount
 could be simpler. Shipped docs-only with `Media-Syncer/scripts/save-and-push.sh` (no daemon
 runs this text, so no bounce).
+
+---
+
+## 15. Diagnosis queue — 2026-09-25 (the next session's work order)
+
+**OWNER'S STANDING INSTRUCTION FOR EVERY ITEM BELOW. The named answers are acceptance
+targets, NOT repair instructions. The deliverable is NOT this assistant hand-moving a
+file, hand-editing an `.nfo`, or typing a `--apply` with no new test behind it. Every
+item here is a missing computed fact, a harness seam, or a prompt gap: the free AI
+system must be upgraded so the fleet itself makes these calls and processes these
+torrents in the future. A session that hand-fixes the symptoms and leaves the tool
+blind has failed its brief, even if the mount looks right today. Same method as §10
+and §5: compute the answer in the harness, state it in the prompt as fact, enforce it
+in `validate_plan`/the repair tools, register a test in `scripts/verify_fleet.sh`
+(explicit list, never auto-discovered), replay every new rejection over
+`state/journal.jsonl` with the false-positive count in the commit message, fail open
+on network errors, and check the owner-visible artifact (mount/Jellyfin/bytes) before
+calling anything fixed.**
+
+Context: the 2026-09-24 evening fix `4202bb3` (shipped, live) closed the
+evicted-episodes-invisible digest and made a proven collision retry instead of fail.
+Four packs are affected by the seams below. The Simpsons re-drop is already
+recovering; the other three need the tool work.
+
+### 15.1 American Dad! (2005) — `06dd53e1…` — one wrong-slot library file
+
+* **State.** Record `failed` 2026-09-24 11:16Z. `chunk_done` 34, `chunk_filed` 34,
+  wave `chunk_active` 34-65, `chunk_unfiled` = `Season 04/… - S04E06 - The 42-Year-Old
+  Virgin …`. All bytes on disk under `~/Downloads/.torrent-ingest/American Dad! (2005)/`.
+* **What the library holds wrong.** `Shows/American Dad! (2005)/Season 04/American
+  Dad! (2005) - S04E06 - Independent Movie [WEBDL-1080p][EAC3 5.1][h265]-playWEB.mkv`
+  (plus its `.nfo`/thumb). It was filed by this torrent's **wave-0 plan**, which mapped
+  source `S10E06 - Independent Movie` to destination `S04E06` (stale-digest
+  remapping).
+* **THE COMPUTED ANSWER (TMDB 1433, the provider Jellyfin scrapes; verified this
+  session):**
+  * **"Independent Movie" is S10E06**, so the existing file belongs at
+    `Shows/American Dad! (2005)/Season 10/American Dad! (2005) - S10E06 - Independent
+    Movie [WEBDL-1080p][EAC3 5.1][h265]-playWEB.mkv`.
+  * **"The 42-Year-Old Virgin" is S04E06**, so the wave-34 plan was right to target
+    S04E06; the wrong-slot file is what blocked it (collision, then the old silent
+    drop, then the park).
+* **What to build (not do by hand).** The release's own `SxxExx` matches TMDB here;
+  the 4202bb3 digest fix removes the reason the model remapped. The remaining work is
+  (a) a repair path that computes a library file's true slot from TMDB + the release's
+  numbering and re-files it through `refile_season.py`-class machinery (mount unlink,
+  reaper queue, `dbhook.record_purge`, inventory rewrite), and (b) an identify-time
+  guard that the release-vs-TMDB numbering is stated as fact so a season remap cannot
+  be invented again. The source `.torrent` is **not** in `failed/` anymore; the mirror
+  `Torrent-Ingest/state/torrent_sources/06dd53e1…torrent` survives and is the re-drop
+  source.
+* **Acceptance.** After the repair, `S04E06` holds *The 42-Year-Old Virgin* and
+  `S10E06` holds *Independent Movie* through the mount, both `.nfo`s agree, and the
+  re-dropped pack resumes from `chunk_done=34` and files the wave. Paste the mount
+  listing + Jellyfin API output in the commit.
+
+### 15.2 Family Guy — Seasons 1 to 20 — `705febda…` — same-release-key duplicate left unresolved
+
+* **State.** Record `failed` 2026-09-25 02:27Z. `chunk_done` 96, `chunk_filed` 95,
+  `chunk_dropped` [0], wave `chunk_active` 96-103, `chunk_unfiled` = `Season 07/… -
+  S07E07 - Ocean's Three and a Half (Uncensored + Bale Scene).mkv`.
+* **The wave holds TWO encodes of one episode** (both on disk, measured):
+  * `Family Guy - S07E07 - Ocean's Three and a Half (Uncensored + Bale Scene).mkv`
+    — 220,012,939 bytes.
+  * `Family Guy - S07E07 - Ocean's Three and a Half (Uncensored + Commentary Audio
+    Track).mkv` — 252,752,246 bytes.
+  `plan_skeleton` leaves BOTH unslotted (two files, one release key), the model wrote a
+  one-file plan naming the Commentary copy, and the merge had no way to record the
+  other as the same episode → 1 unresolved → coverage park.
+* **THE COMPUTED ANSWER (TMDB 1434): "Ocean's Three and a Half" is S07E07.** One
+  destination only:
+  `Shows/Family Guy (1999)/Season 07/Family Guy (1999) - S07E07 - Ocean's Three and a
+  Half.mkv`. The second file is a deliberate same-episode alternate, not an
+  unresolved release file. The harness's existing duplicate rule
+  (`DUPLICATE_DEPRIORITIZE_MARKERS` + larger-size tiebreak) keeps the **Commentary**
+  copy (252.7 MB); if the owner wants the **Bale Scene** cut instead, the rule must say
+  so explicitly — either way the harness decides, records kept/dropped, and never the
+  model by omission.
+* **What to build.** Teach the harness that two files sharing a release `SxxEyy` and a
+  cleaned episode title are alternates: slot the survivor (ranked) and mark the
+  sibling `_deduped_dropped` (accounted), OR feed the merge's `unresolved` list back to
+  the provider chain as a fixable rejection (see 15.3 — same seam). The prompt must
+  state the rule: naming one file of a same-key pair means the other is the same
+  episode's alternate, and both files' episode_title must agree. Replay: count how
+  many historical plans carry same-key+same-cleaned-title pairs (start with the Family
+  Guy wave and the Smurfs incident) and prove no legitimate distinct-episode pair is
+  collapsed (the title clean is the guard: II vs III must NOT collapse).
+* **Acceptance.** One S07E07 file through the mount, `.nfo` title = *Ocean's Three and
+  a Half*, the dropped alternate recorded in `chunk_dropped`/`decisions.log`, and the
+  re-dropped pack (mirror `state/torrent_sources/705febda…torrent`) completes the
+  wave.
+
+### 15.3 Friends (1994) — `1a6558e5…` — the merge lost 4 entries to a mis-transcribed src
+
+* **State.** Record `failed` 2026-09-25 01:54Z. Wave 0 = **all 32 Featurettes** (Bonus
+  Disc + Featurettes/Season 1-5/10), `chunk_active` 0-31, total pack 181.97 GB. Every
+  byte is on disk under
+  `~/Downloads/.torrent-ingest/Friends (1994) Season 1-10 S01-S10 (1080p BluRay x265
+  HEVC 10bit AAC 5.1 Silence)/Featurettes/`.
+* **What the model wrote.** A complete 32-entry plan placing every featurette as a
+  locked Season-00 special, `Friends (1994) - S00E01…S00E32.mkv`, with titles/plots.
+  **But all 32 `src` paths dropped the closing `)` of the torrent root** — plan
+  `…AAC 5.1 Silence/Featurettes/…` vs disk `…AAC 5.1 Silence)/Featurettes/…` (32/32
+  entries; the model re-typed instead of copying the skeleton's `src`).
+  `merge_skeleton_plan` matched 28 by unique basename; the 4 whose basenames repeat
+  across season folders could not be attributed (its basename fallback requires a
+  unique name). The merge returned `filled 28, unresolved 4`; `run_identify` ignores
+  that list (and disables the `--require-list` nudge whenever a skeleton exists), so
+  the 28-file plan was accepted and the coverage contract parked the release.
+* **THE COMPUTED ANSWER — nothing here is content-ambiguous; the harness lost the
+  mapping.** The four unresolved files are distinct featurettes; the plan's slots and
+  titles are correct:
+  * `Featurettes/Season 10/Friends of Friends_new.mkv` → S00E11
+    ("Friends of Friends (Season 10)").
+  * `Featurettes/Season 2/Friends of Friends_new.mkv` → S00E15
+    ("Friends of Friends (Season 2)").
+  * `Featurettes/Season 3/“What’s Up with Your Friends”_new.mkv` → S00E25
+    ("What’s Up with Your Friends (Season 3)").
+  * `Featurettes/Season 4/“What’s Up with Your Friends”_new.mkv` → S00E28
+    ("What’s Up with Your Friends (Season 4)").
+  (Numbering is the plan's own; any unique S00 slots with the same titles are equally
+  acceptable — the requirement is all 32 filed as locked specials, titles/plots
+  intact.)
+* **What to build — THIS IS THE SYSTEMIC SEAM (Family Guy and Friends are the same
+  bug):**
+  1. `run_identify` must treat `merge_skeleton_plan`'s `unresolved` as a **fixable
+     rejection fed to the next provider** (the missing filenames in the failure
+     context / `--require-list`), and only park after the chain is exhausted. Today a
+     single unresolved file takes down a 700 GB pack terminally on the first
+     incomplete answer.
+  2. Attribute a model entry whose basename is ambiguous by **parent folder +
+     basename** (`Featurettes/Season 2/Friends of Friends_new.mkv` is unique) and/or
+     heal a mis-transcribed `src` root against the disk before matching
+     (`_heal_missing_src` exists in `validate_plan` but never sees merge-dropped
+     entries). The skeleton's `src` is the harness's enumeration and must never be
+     re-typed by the model — say that in the prompt and enforce it.
+  3. Replay the new matching/feedback rules over `state/journal.jsonl` (the Smurfs
+     151-file re-fetch, this Friends plan, and the Family Guy wave are the fixtures)
+     and register the test.
+* **Acceptance.** Re-drop the mirror `state/torrent_sources/1a6558e5…torrent`; wave 0
+  files 32/32 Featurettes as S00 specials with the four titles above, `chunk_filed`
+  records all 32, and the record advances to the next wave.
+
+### 15.4 The Simpsons (1989) — `1d9098aa…` — recovering; the live acceptance for `4202bb3`
+
+* Re-dropped from `failed/` 2026-09-24 23:48 ("resuming chunked waves at 43 file(s)
+  already filed"), admitted 2026-09-25 03:11:33 with the corrected digest, and
+  **parked waiting for disk space** (43 MB admittable, smallest next file 592 MB).
+  It resumes automatically. **Next session must confirm** the S03E05-S04E12 wave filed
+  at S03E05/E06 (not the old collision slots) and the record reaches terminal
+  `completed` — this is the owner-visible proof that the evicted-episode summary fix
+  works on the real pack. If it parks again, the failure line and
+  `state/tmp/1d9098aa…-w*` artifacts are the evidence.
+
+### 15.5 Doctor Who (2005) — the S00E04 specials conflict (doctor worklist, `auto: false`, sev 3)
+
+* **State.** `Season 00` holds two files at `S00E04`:
+  * `Doctor Who (2005) - S00E04 The End Of Time Part 1.mp4` — its locked `.nfo` says
+    `<season>0</season><episode>16</episode>`.
+  * `Doctor Who (2005) - S00E04 The Return Of Doctor Mysterio.mp4` — its locked `.nfo`
+    says `<episode>149</episode>`.
+  (`state/doctor_worklist.json`: "S00E04 has two files … rename DIFFERENT episodes …
+  re-file it, do not delete it.")
+* **THE COMPUTED ANSWER.** TMDB 57243 (pinned; Jellyfin scrapes it) numbers the
+  specials `S00E016 = The End of Time (1)`, `S00E066 = The Snowmen`,
+  `S00E149 = The Return of Doctor Mysterio`. But the LIBRARY owns its own sequential,
+  locked specials scheme `S00E01…S00E22` — era-ordered: E01 Day of the Doctor, E02
+  Time of the Doctor, **E03 Husbands of River Song, E04 Return of Doctor Mysterio,
+  E05 Twice Upon a Time**, … E14 A Christmas Carol, E15 Doctor/The Widow/Wardrobe,
+  E16 The Snowmen, E17 Christmas Invasion … E22 The Waters of Mars. So:
+  * **The Return Of Doctor Mysterio at S00E04 is CORRECT for the library's scheme**
+    (its `.nfo` `<episode>149</episode>` is the TMDB number and is the thing to
+    repair).
+  * **The End Of Time Part 1 belongs at S00E23** — the next free slot after The
+    Waters of Mars (E22); Part 2, if acquired, is E24. It currently sits at S00E04
+    with a TMDB `<episode>16</episode>`.
+  * The conflict is real (one slot, two files) but the doctor's "two different
+    episodes" read comes from TMDB-numbered nfos colliding with the library's own
+    scheme.
+* **What to build.** A repair path that (a) computes a special's slot from its content
+  identity + the library's own locked scheme (not from the nfo's foreign number),
+  (b) re-files through the tool with an nfo rewrite that matches the destination slot,
+  and (c) adds a guard in `validate_plan`/`media_doctor` that a filed special's `.nfo`
+  `<season>/<episode>` agrees with its destination (so a TMDB number can never again
+  be written beside a library-scheme filename). The specials scheme itself must be
+  computed/persisted (it is currently implicit in the locked nfos) so the free AI is
+  told it as fact. Register the test; replay the doctor worklist.
+
+### 15.6 Other open items already known (no action unless touched)
+
+* `verify_owner_report.py` (read-only) at the time of this diagnosis: **4 PASS, 0 FAIL,
+  1 PENDING, 0 REVIEW** — the PENDING is the three One Piece chapter tails
+  (`Chapter 1093/1098/1112.zip`), which are owned/superseded by design; leave them.
+* Toriko blank plots and TZ (2019) identity/art are repaired live (§10.0); the Smurfs
+  row 5 is closed. The free-AI upgrade is implemented; the seams in 15.1–15.5 are its
+  remaining gaps.
+* Provider capacity at diagnosis: `cloudflare` capped for the day, `gemini` 429ing,
+  `groq` confirm-mode only, `mistral`/`nvidia`/`openrouter` usable. A saturated chain
+  can delay registration for hours (measured this session) — the merge-unresolved
+  feedback (15.3) must not depend on a fresh provider being available, which is another
+  reason the harness should compute same-key duplicates itself.
+
+### 15.7 Definition of done for the next session
+
+1. Every seam above fixed in the tool — prompt, harness, validator, doctor — with a
+   registered test in `scripts/verify_fleet.sh`; `ALL CHECKS PASSED`.
+2. A journal replay for every new rejection/matching rule, false-positive count in the
+   commit message.
+3. The named files land at the named destinations through the fixed tools (no hand
+   `mv`, no hand-edited `.nfo`), and the owner-visible artifact (mount listing, Jellyfin
+   API, `chunk_filed`) is pasted into the commit.
+4. The free AI is demonstrably able to make the calls: the Family Guy same-key
+   duplicate, the Friends 32-featurette plan, and the American Dad TMDB numbering must
+   all be decided by the harness/prompt, not by the assistant.
