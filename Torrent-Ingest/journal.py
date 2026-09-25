@@ -19,6 +19,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import config
 
@@ -109,6 +110,15 @@ def source_titles():
     wrong-slot file survived (HANDOFF 10.9). The journal is the third witness: each plan
     records the SOURCE filename a destination was filed from, and the source title is
     what the bytes actually contain. Rebuilt when the journal changes.
+
+    THE CHUNKED BLIND SPOT THIS CLOSES (2026-09-24). A chunked wave files its episodes
+    with `plan` null on the record, so a witness that read only `plan.files` was blind
+    to every file a wave had filed -- exactly the files most likely to collide with the
+    next wave. The wave's `applied` entries carry the staging source path, which
+    preserves the release filename the bytes came from; they are indexed here too. It
+    is what tells The Simpsons' S03E03 (`When Flanders Failed`, filed by wave 22) apart
+    from the wave-40 plan's `Homer Defined`, so the collision guard can refuse the plan
+    instead of dropping a 700 GB release's file.
     """
     try:
         st = config.JOURNAL_FILE.stat()
@@ -126,9 +136,34 @@ def source_titles():
             title = title_from_release_name(str(s).rsplit("/", 1)[-1])
             if title:
                 out.setdefault(str(d), title)
+        for a in rec.get("applied") or []:
+            if not isinstance(a, dict):
+                continue
+            d, s = a.get("dst"), a.get("src")
+            if not d or not s:
+                continue
+            rel = _library_relative(d)
+            if not rel:
+                continue
+            title = title_from_release_name(str(s).rsplit("/", 1)[-1])
+            if title:
+                out.setdefault(rel, title)
     _SOURCE_TITLES_CACHE["key"] = key
     _SOURCE_TITLES_CACHE["map"] = out
     return out
+
+
+def _library_relative(path):
+    """`path` relative to MEDIA_ROOT, or None when it lives outside it (a Novels/ or
+    extra destination). `applied` records absolute destinations; the identity witness
+    indexes library-relative paths, the form the plan side also uses."""
+    roots = (config.MEDIA_ROOT.resolve(), config.MEDIA_ROOT)
+    for root in roots:
+        try:
+            return str(Path(path).relative_to(root))
+        except (ValueError, OSError):
+            continue
+    return None
 
 
 def write_record(record):

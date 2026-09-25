@@ -37,12 +37,18 @@ _EP_TAG_RE = re.compile(r"(?i)s\d{1,3}(?:e\d{1,3})+")
 # video file's `v2` re-release marker never overrides its real `SxxExx` anchor.
 _VOL_TAG_RE = re.compile(r"(?i)\bv(\d{1,4})\b")
 
-# The per-show summary scan reads every episode .nfo off the (slow, spinning)
-# the SSD library root, which is far too expensive to redo on every identify run. Cache each
-# show's summary keyed by a cheap directory-mtime signature; a show is rescanned
+# The per-show summary scan reads every episode .nfo off the library root, which is far
+# too expensive to redo on every identify run. Cache each show's summary keyed by a
+# cheap directory-mtime signature; a show is rescanned
 # only when its folder or a season folder changes (a new episode or a repaired
 # .nfo bumps the dir mtime). Warm-cache digest builds are ~O(one changed show).
 _SUMMARY_CACHE_FILE = config.STATE_DIR / "library_summary.json"
+# Bump when `show_metadata_summary` changes WHAT it counts. A cached summary is a
+# reading of the library and is served without any way to tell it is stale, so the
+# 2026-09-24 change that folded the Media-Syncer inventory's EVICTED episodes into the
+# counts would otherwise keep serving the SSD-only subset for any show whose directory
+# mtime had not moved since its entry was written.
+_SUMMARY_CACHE_VERSION = "v2"
 
 
 # --- folder-name normalization / resolution (shared by the digest + fast-path) ----
@@ -843,10 +849,101 @@ def episode_is_blank(video_path, show_title=None):
     return episode_nfo_state(video_path) in ("missing", "blank")
 
 
+_INVENTORY_EPISODES_CACHE: dict = {}
+
+
+def _inventory_episodes_by_show():
+    """`{show folder name: {library-relative episode path}}`, cached by the inventory stat.
+
+    Media-Syncer's remote inventory is the COMPLETE view of the library: a video evicted
+    to the pool is gone from `~/Media` but still listed here (HANDOFF §2.1). The comics
+    digest already reads it for exactly that reason (`_comics_coverage`).
+    """
+    try:
+        st = config.MEDIA_SYNCER_INVENTORY.stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    if _INVENTORY_EPISODES_CACHE.get("key") == key:
+        return _INVENTORY_EPISODES_CACHE.get("map") or {}
+    by_show: dict = {}
+    try:
+        data = json.loads(config.MEDIA_SYNCER_INVENTORY.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        data = None
+    if isinstance(data, dict):
+        for rel in data:
+            parts = str(rel).split("/")
+            if (len(parts) >= 4 and parts[0] == "Shows"
+                    and Path(parts[-1]).suffix.lower() in config.VIDEO_EXTENSIONS):
+                by_show.setdefault(parts[1], set()).add(str(rel))
+    _INVENTORY_EPISODES_CACHE["key"] = key
+    _INVENTORY_EPISODES_CACHE["map"] = by_show
+    return by_show
+
+
+def _episode_videos_complete(show_dir):
+    """Every episode video the library holds under one show, as absolute paths.
+
+    THE DISK WALK IS THE SUBSET, THE INVENTORY IS THE WHOLE. Measured 2026-09-24, the
+    day two season packs parked as FAILED: The Simpsons held 40 episodes on the mount
+    and 4 in Season 03, while the SSD the digest read had zero videos left (all
+    evicted) and its cached summary said "Season 03 (2 eps)". The identify run is told
+    the library's season counts are ground truth, so it renumbered the next wave's
+    S03E05-S03E24 down by two to "fill the gap", onto slots S03E03/E04 already hold --
+    the collision guard dropped those files and the coverage contract parked the whole
+    700 GB pack. American Dad! was parked the same hour by the same stale picture (the
+    SSD said no seasons at all; the inventory holds 34 episodes).
+
+    The walk still runs and is still authoritative for files too new to appear in the
+    inventory (it lags one upload cycle) and for fixture directories outside the
+    library roots. Inventory paths are returned rooted at `MEDIA_ROOT`, where the
+    `.nfo` sidecar lives: sidecars survive eviction even when the video does not, so
+    the metadata halves of the summary stay local and cheap. When the local sidecar is
+    gone, the mount is the fallback path -- never a mount round-trip per file.
+    """
+    show_dir = Path(show_dir)
+    found: dict = {}
+    for p in iter_episode_videos(show_dir):
+        rel = None
+        for base in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
+            try:
+                rel = p.relative_to(base)
+                break
+            except (ValueError, OSError):
+                continue
+        if rel is None:
+            found.setdefault(str(p), p)          # fixture dir: keep the walk's path
+            continue
+        local = config.MEDIA_ROOT / rel
+        if not episode_nfo_path(local).exists():
+            alt = config.MEDIAFS_MOUNT / rel
+            if episode_nfo_path(alt).exists():
+                local = alt
+        found.setdefault(str(rel), local)
+    try:
+        show_rel = None
+        for base in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
+            try:
+                show_rel = show_dir.relative_to(base)
+                break
+            except (ValueError, OSError):
+                continue
+        if show_rel is not None and show_rel.parts[:1] == ("Shows",):
+            for rel in _inventory_episodes_by_show().get(show_dir.name, ()):
+                found.setdefault(str(rel), config.MEDIA_ROOT / rel)
+    except OSError:
+        pass
+    return list(found.values())
+
+
 def show_metadata_summary(show_dir):
     """Cheap-ish one-pass summary of a show folder for the digest and tooling:
     episode count, how many episode .nfo are locked, how many episodes are blank,
     and the numbering style (one continuous absolute Season 01 vs real seasons).
+
+    Counts every episode the library HOLDS, evicted ones included -- see
+    `_episode_videos_complete` for the 2026-09-24 parking this prevents.
     """
     show_dir = Path(show_dir)
     show_title = re.sub(r"\s*\(\d{4}\)\s*$", "", show_dir.name).strip()
@@ -854,7 +951,7 @@ def show_metadata_summary(show_dir):
     seasons_seen = set()
     season_counts = {}                               # season number -> episode count
     max_ep_s1 = 0
-    for video in iter_episode_videos(show_dir):
+    for video in _episode_videos_complete(show_dir):
         episodes += 1
         m = _EP_RE.search(video.name)
         if m:
@@ -929,9 +1026,12 @@ def _show_signature(show_dir):
 
 def _summary_cache_load():
     try:
-        return json.loads(_SUMMARY_CACHE_FILE.read_text("utf-8"))
+        cache = json.loads(_SUMMARY_CACHE_FILE.read_text("utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+    # Keys carry the version; a reading of a subset is not a reading of the library.
+    return {k: v for k, v in cache.items()
+            if k.startswith(_SUMMARY_CACHE_VERSION + ":")}
 
 
 def _summary_cache_save(cache):
@@ -947,7 +1047,7 @@ def _summary_cache_save(cache):
 def _cached_show_summary(show_dir, cache):
     """Return (summary, changed). Reuses the cached summary when the show's
     directory signature is unchanged; otherwise rescans and updates `cache`."""
-    key = show_dir.name
+    key = f"{_SUMMARY_CACHE_VERSION}:{show_dir.name}"
     sig = _show_signature(show_dir)
     hit = cache.get(key)
     if hit and hit.get("sig") == sig:
@@ -961,6 +1061,18 @@ def _cached_show_summary(show_dir, cache):
 
 class PlanError(Exception):
     pass
+
+
+class CollisionPark(PlanError):
+    """A same-slot collision whose identity the harness can PROVE is a different episode.
+
+    A subclass so the callers that own the bytes can tell it from an ordinary rejection:
+    `_identify_wave` retries on a rejection (the next provider may produce a correct
+    plan), but the chunked per-file fallback must PARK on this one, never free it --
+    the bytes are the only copy and the collision is a question for a human/tool
+    (HANDOFF 10.2). `validate_plan` raises it where `_collision_parked` cannot reach the
+    caller.
+    """
 
 
 # Placement is decided PER FILE from its destination top-dir, so a single torrent
@@ -1908,6 +2020,23 @@ def _titles_same_episode(a, b):
     return difflib.SequenceMatcher(None, na, nb).ratio() >= 0.85
 
 
+def _clean_episode_title(text):
+    """An episode title with its release-tag tail removed, for identity comparison.
+
+    The raw extraction keeps everything between the SxxEyy dash and the extension, so
+    `... - Homer Defined [DSNP WEBDL-1080p][EAC3 5.1][h264]-HONE` and the SAME file at
+    another slot share a 40-character tag suffix. SequenceMatcher scores that pair
+    0.838 -- under `_titles_same_episode`'s 0.85 bar, but only by accident, and a
+    different codec/group pair crosses it and reads two different episodes as one.
+    The title is the part before the first bracket group; a trailing `-GROUP` (` -HONE`)
+    comes off too. Applied to BOTH sides of every comparison, so it cannot invent a
+    difference by cleaning only one.
+    """
+    t = _BRACKET_RE.sub(" ", str(text or ""))
+    t = re.sub(r"\s+-\s*[A-Za-z0-9_]+\s*$", "", t)
+    return t.strip()
+
+
 def _existing_episode_mismatch(planned, rel, collisions):
     """A PlanError message when a colliding existing file is provably a different episode.
 
@@ -1917,18 +2046,33 @@ def _existing_episode_mismatch(planned, rel, collisions):
     dropping the planned file would file nothing and cement the misplacement. Returns
     "" when identity cannot be proven different, so the historical duplicate-drop stands
     for the ordinary same-episode / no-evidence cases.
+
+    WHEN THE JOURNAL IS SILENT, THE EXISTING FILE'S OWN NAME IS THE SECOND WITNESS. A
+    chunked wave's already-filed episodes carry their release title in their filename;
+    the name alone proves `When Flanders Failed` is not the planned `Homer Defined`
+    (the 2026-09-24 wave that would have renamed a correct S03E05 into the occupied
+    S03E03). A bare-numbered filename carries no title and proves nothing, so that case
+    keeps the historical drop. Comparison is on tag-cleaned titles (see
+    `_clean_episode_title`), because the shared tag suffix of two same-release files
+    otherwise inflates their similarity toward the same-episode threshold.
     """
     plan_title = journal.title_from_release_name(
         str(planned.get("src") or "").rsplit("/", 1)[-1])
     if not plan_title:
+        return ""
+    plan_clean = _clean_episode_title(plan_title)
+    if not plan_clean:
         return ""
     book = journal.source_titles()
     base = Path(*rel.parts[:3])
     diffs = []
     for existing in collisions:
         have = book.get(str(base / existing.name))
-        if have and not _titles_same_episode(have, plan_title):
-            diffs.append((existing.name, have))
+        if not have:
+            have = journal.title_from_release_name(existing.name)
+        have_clean = _clean_episode_title(have)
+        if have_clean and not _titles_same_episode(have_clean, plan_clean):
+            diffs.append((existing.name, have_clean))
     if not diffs:
         return ""
     detail = "; ".join(f"{name!r} holds {title!r}" for name, title in diffs)
@@ -2052,9 +2196,11 @@ def _collapse_existing_episode_collisions(files):
             # known and clearly different, the existing file is a wrong-slot copy and
             # dropping the planned file would cement the misplacement. Park the release
             # instead: the repair is a re-file, never a silent choice between contents.
+            # `CollisionPark` (not PlanError) lets the chunked per-file caller park the
+            # release's bytes instead of freeing them (HANDOFF 10.2).
             mismatch = _existing_episode_mismatch(f, rel, collisions)
             if mismatch:
-                raise PlanError(mismatch)
+                raise CollisionPark(mismatch)
             dropped.append(f)
             print(f"[validate_plan] dropped duplicate of an existing episode "
                   f"S{key[0]:02d}E{key[1]:02d} (a differently-named file with that "

@@ -292,6 +292,20 @@ run "self-healing remedies are non-destructive" \
 # dropped, so nothing in the library can become invisible to the model.
 run "library digest relevance scoping (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_digest_scoping.py
+# The digest is the identify run's picture of the library, and that picture was reading
+# the SSD alone -- where anything evicted to the pool is simply absent (HANDOFF §2.1).
+# Measured 2026-09-24: The Simpsons held 40 episodes and Season 03 held 4, the SSD read
+# said "Season 03 (2 eps)" and no other seasons, and the run -- told the counts were
+# ground truth -- renumbered the next wave down by two onto occupied slots. The collision
+# guard dropped those files and the coverage contract parked the whole 700 GB pack as
+# FAILED; American Dad! parked the same hour (SSD: no seasons; library: 34 episodes).
+# The summary now counts the Media-Syncer inventory's episodes too (the same complete
+# view `_comics_coverage` reads), with the disk walk for not-yet-uploaded files and
+# fixtures. Both ways: an evicted episode is counted and its local sidecar still decides
+# locked/blank, a legacy cache entry cannot serve its subset, an unreadable inventory
+# falls back to the walk, and one show's inventory never bleeds into another's counts.
+run "show summary counts evicted episodes (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_show_summary_inventory.py
 # The most authoritative-sounding line in the identify prompt used to be the wrong one:
 # the retired searcher's stored file->item mapping, rendered as "reuse this mapping; do NOT
 # re-derive the numbering". Monogatari's stored mapping keeps one absolute run across
@@ -386,6 +400,12 @@ run "duplicates are deleted only on proven identity (both ways)" \
 # it. The scan now reads the MOUNT too, and a colliding file whose journal-recorded
 # content is a DIFFERENT episode parks the release instead of silently dropping the
 # planned copy. Same episode and unknown identity keep the historical collapse.
+# A chunked wave's filings had NO journal record (`plan` is null), so the identity
+# witness was blind to them -- exactly the files most likely to collide with the next
+# wave. The record's `applied` entries are indexed now, and when the journal is still
+# silent the existing FILE's own name is the witness (on tag-cleaned titles, because
+# two files of one release share their whole tag tail and raw similarity lands 0.838,
+# a hair under the same-episode bar). A bare-numbered name still proves nothing.
 run "same-slot collisions see the mount and check identity (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_existing_collision_identity.py
 # A provider id must name the show the plan says it does (HANDOFF 10.3). TZ (2019) was

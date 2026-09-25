@@ -1939,6 +1939,17 @@ def _ingest_one_file(record, file_abs, sub_id, sibling_seasons=None):
         # torrent those bytes are the only copy. Propagate so the caller aborts the wave
         # with the files still on disk.
         raise
+    except library.CollisionPark as exc:
+        # `validate_plan` proved the slot's existing file is a DIFFERENT episode (the
+        # journal's source title, or the existing file's own name). This is the raising
+        # twin of the `_collision_parked` check above, and it must end the same way: park
+        # with every byte on disk. Falling through to `return []` would keep the bytes
+        # for CHUNK_FILE_MAX_ATTEMPTS more cycles and then FREE them UNFILED, which is
+        # the one thing a collision must never do (HANDOFF 10.2).
+        log(f"  chunked file collides with an existing episode (identity proven "
+            f"different); parking the release instead of freeing it: {file_abs.name} "
+            f"({exc})")
+        return _PARK
     except Exception as exc:                                              # noqa: BLE001
         log(f"  chunked file ingest failed ({file_abs.name}): {exc}")
         return []
