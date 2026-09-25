@@ -1373,6 +1373,25 @@ def _nfo_covers(nfo_span, season, episode):
             and nfo_span[1] <= episode <= nfo_span[2])
 
 
+def _slot_disagreement(video_path, name_span):
+    """`(season, episode)` the sidecar claims when it disagrees with the filename.
+
+    HANDOFF 15.5's guard: a filed episode's `.nfo` `<season>/<episode>` must agree with
+    the slot its DESTINATION filename states. On a library with its own specials scheme
+    the sidecar routinely carries a FOREIGN provider number (Doctor Who S00E04
+    *Return Of Doctor Mysterio*: `<episode>149</episode>`), and a wrong-slot file carries
+    the number of the episode it really is (*The End Of Time*: `<episode>16</episode>`).
+    Reported, not auto-rewritten -- the repair must compute the true slot first.
+    Multi-episode files are exempt: their sidecar names the FIRST slot by convention.
+    """
+    slot = _nfo_episode_slot(video_path)
+    if not slot or not name_span:
+        return None
+    if (slot[0], slot[1]) == (name_span[0], name_span[1]):
+        return None
+    return slot
+
+
 def _parse_span(name):
     m = EP_SPAN_RE.search(name)
     if not m:
@@ -1794,6 +1813,7 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
     janky_fixable = janky_escalate = nfo_stale = jf_stale = blank = unreadable = 0
     contradicts_fixable = 0
     slot_missing = 0
+    slot_mismatch = []
     contradicts_review = []
     # WHICH episodes, not just how many. The escalation used to hand the model a COUNT
     # ("6 episode(s) with release-group/blank titles") and a folder path, though this very
@@ -1829,6 +1849,18 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
         # fleet's writer must put them back.
         if text and span and _nfo_episode_slot(v) is None:
             slot_missing += 1
+        elif text and span:
+            # A sidecar that names a DIFFERENT slot than its own filename. For a
+            # Season-00 special this is the HANDOFF 15.5 shape: the library's own
+            # era-ordered shelf is the scheme and the sidecar carries a FOREIGN
+            # provider number (Doctor Who's S00E04 *Return Of Doctor Mysterio* with
+            # `<episode>149</episode>`). Reported, never auto-rewritten: rewriting the
+            # tag to the filename would cement a wrong-slot file like *The End Of Time*
+            # at S00E04. The repair computes the true slot first.
+            nfo_slot = _slot_disagreement(v, span)
+            if nfo_slot:
+                slot_mismatch.append((v.name, span[0], span[1],
+                                      nfo_slot[0], nfo_slot[1]))
         generic_ok = bool(span) and span[0] in generic_ok_seasons
         nfo_janky = _title_is_janky(nfo_title, stem, generic_ok)
         jf_janky = _title_is_janky(rendered, stem, generic_ok) if rendered is not None else False
@@ -1915,6 +1947,18 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
             f"so Jellyfin shows a null index and a ghost season; the writer must emit "
             f"the slot the filename states",
             auto=True, sev=3)
+    if slot_mismatch:
+        detail = "; ".join(
+            f"{name!r} sits at S{s:02d}E{e:02d} but its .nfo says S{ns:02d}E{ne:02d}"
+            for name, s, e, ns, ne in slot_mismatch[:6])
+        add("episode_slot_mismatch",
+            f"{len(slot_mismatch)} episode sidecar(s) carry a <season>/<episode> that "
+            f"disagrees with the slot their filename states: {detail}. A Season-00 "
+            f"special's slot comes from the library's OWN locked scheme, never from the "
+            f"sidecar's provider number; compute and apply the repair with "
+            f"`scripts/repair_slots.py --specials` (it moves the file AND rewrites the "
+            f"sidecar). Do not hand-edit the tag.",
+            auto=False, sev=3)
     if jf_slot_null:
         add("episode_index_missing",
             f"{jf_slot_null} episode(s) resolve in Jellyfin with a NULL season/episode "

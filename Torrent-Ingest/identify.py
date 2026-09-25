@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import config
+import journal
 import library
 
 # Load the searcher's stdlib-only `librarydb` by file path, WITHOUT inserting the
@@ -759,7 +760,13 @@ def release_dash_title_entries(release_files):
         if not m:
             continue
         try:
-            out.append((rel, int(m.group(1)), int(m.group(2)), m.group(3).strip()))
+            # Clean the release-tag tail (`[WEBDL-1080p][EAC3 5.1]-playWEB`) before the
+            # title is matched. The dash form is the ordinary spelling of real packs
+            # (`American Dad! (2005) - S10E06 - Independent Movie [tags]-playWEB.mkv`),
+            # and comparing the raw capture against a provider name never matches --
+            # which left the identity map empty on the very pack it exists for.
+            out.append((rel, int(m.group(1)), int(m.group(2)),
+                        library._clean_episode_title(m.group(3).strip())))
         except ValueError:
             continue
     return out
@@ -896,7 +903,7 @@ def _match_titles(entries, guide, exact_only=False):
     return claims
 
 
-def _title_claims(strong_entries, weak_entries, guide):
+def _title_claims(strong_entries, weak_entries, guide, identity_weak=False):
     """All computed title claims, with the two witnesses kept separate.
 
     Brackets are the reliable form: `_match_titles` reads them with every pass and their
@@ -913,9 +920,22 @@ def _title_claims(strong_entries, weak_entries, guide):
     other seasons). The Smurfs shape this exists for is 69 bracket rows plus one dash
     file; there the pack is already proven, and the exact, unique dash title supplies the
     missing row (`Nobody Smurf` is TMDB S07E27 while the release calls it S07E49).
+
+    `identity_weak=True` (HANDOFF 15.1) also admits, from an unproven pack, weak claims
+    whose target is the release's OWN key -- and only those. Several real packs name
+    every episode in the dash form (`American Dad! (2005) - S10E06 - Independent
+    Movie.mkv`), and an exact, unique title match at exactly the release key is
+    positive evidence the numbering AGREES; it can only ever pin a file to the slot it
+    already states. A weak claim that would MOVE a file is still never admitted without
+    a bracket-proven reorder, so the 2026-09-20 class cannot return.
     """
     claims = _match_titles(strong_entries, guide)
     if not any(target != key for key, target in claims.items()):
+        if identity_weak and weak_entries:
+            for key, target in (_match_titles(weak_entries, guide, exact_only=True)
+                                or {}).items():
+                if key not in claims and tuple(target) == tuple(key):
+                    claims[key] = target
         return claims
     weak = _match_titles(weak_entries, guide, exact_only=True) if weak_entries else {}
     taken = set(claims.values())
@@ -955,33 +975,84 @@ def _guide_for(title, tmdb_id=None):
     return (guide, "TVMaze") if guide else (None, "")
 
 
-def release_title_map(content_path, release_files, show_hint=None, tmdb_id=None):
-    """Computed release->broadcast slots for a title-named pack, or {} (fail open).
+def release_numbering_claims(content_path, release_files, show_hint=None, tmdb_id=None):
+    """`(claims, reordered, provider)` for a titled release, or `({}, False, "")`.
 
-    Only returned when it actually DIFFERS from the release's own numbering somewhere
-    -- an ordinary pack whose numbers already match must not get a scary "this is not
-    broadcast order" block. Needs at least `_TITLE_MAP_MIN_ENTRIES` titled files and
+    `claims` maps each release key to the guide slot its own episode title names.
+    `reordered` says at least one claim lands somewhere OTHER than the release key --
+    the Smurfs case, where the pack's numbering is its catalogue order. A pack whose
+    every claim lands on its own key is ordinary numbering AGREEMENT (the American Dad
+    case, HANDOFF 15.1): the claims are still computed facts, but they must not trigger
+    the skeleton or the scary "this is not broadcast order" block.
+
+    Needs at least `_TITLE_MAP_MIN_ENTRIES` titled files and
     `_TITLE_MAP_MIN_FRACTION` of them matching a unique guide episode.
-
-    `tmdb_id` (the pinned id of the existing show folder, when there is one) makes the
-    map agree with Jellyfin's own episode names; without it the TVMaze fallback is used.
+    `tmdb_id` (the pinned id of the existing show folder) makes the map agree with
+    Jellyfin's own episode names; without it the TVMaze fallback is used.
     """
     strong = release_title_entries(release_files)
     weak = release_dash_title_entries(release_files)
     entries_n = len(strong) + len(weak)
     if entries_n < _TITLE_MAP_MIN_ENTRIES:
-        return {}
+        return {}, False, ""
     title = show_hint or _release_title_guess(content_path, release_files)
-    guide, _provider = _guide_for(title, tmdb_id)
+    guide, provider = _guide_for(title, tmdb_id)
     if not guide:
-        return {}
-    claims = _title_claims(strong, weak, guide)
+        return {}, False, ""
+    claims = _title_claims(strong, weak, guide, identity_weak=True)
     if len(claims) < max(_TITLE_MAP_MIN_ENTRIES,
                          int(entries_n * _TITLE_MAP_MIN_FRACTION)):
-        return {}
-    if all(target == key for key, target in claims.items()):
-        return {}
-    return claims
+        return {}, False, ""
+    reordered = any(target != key for key, target in claims.items())
+    return claims, reordered, provider
+
+
+def release_title_map(content_path, release_files, show_hint=None, tmdb_id=None):
+    """Computed release->broadcast slots for a REORDERED title-named pack, or {}.
+
+    Only returned when the pack actually DIFFERS from the release's own numbering
+    somewhere -- an ordinary pack whose numbers already match must not get a scary
+    "this is not broadcast order" block and must not trigger the skeleton. See
+    `release_numbering_claims` for the full claim set.
+    """
+    claims, reordered, _provider = release_numbering_claims(
+        content_path, release_files, show_hint=show_hint, tmdb_id=tmdb_id)
+    return claims if reordered else {}
+
+
+def release_identity_map(content_path, release_files, show_hint=None, tmdb_id=None):
+    """`(claims, provider)` for a pack whose numbering AGREES with the guide, or {}.
+
+    HANDOFF 15.1 (American Dad!): every titled file matched the guide at its OWN
+    `SxxEyy`, so the release's numbering IS broadcast numbering. A stale digest made a
+    model remap a wave onto an existing season; this map is the computed fact
+    `_reject_title_numbering` refuses a remap against.
+    """
+    claims, reordered, provider = release_numbering_claims(
+        content_path, release_files, show_hint=show_hint, tmdb_id=tmdb_id)
+    return ({}, "") if reordered else (claims, provider)
+
+
+def numbering_agreement_block(identity_map, provider=""):
+    """State the computed release-numbering AGREEMENT to the model as fact.
+
+    The companion of `title_numbering_block`: same computed claims, but when every one
+    lands on its own release key the block is reassurance, not a warning -- the file's
+    `SxxEyy` is the broadcast slot and must not be remapped to another season.
+    """
+    if not identity_map:
+        return ""
+    rows = [f"  {key[0]:02d}x{key[1]:02d}" for key in sorted(identity_map)[:24]]
+    more = (f"  ... and {len(identity_map) - 24} more\n"
+            if len(identity_map) > 24 else "")
+    return ("======================================================================\n"
+            "RELEASE NUMBERING CONFIRMED -- COMPUTED\n"
+            "======================================================================\n"
+            "Each file below carries its real episode title, and the harness matched it\n"
+            f"against {provider or 'the provider'}'s episode list at the SAME `SxxEyy` the release\n"
+            "states. For these files the release's own number IS the broadcast slot: file\n"
+            "each at its own `SxxEyy`. Do NOT remap one to another season or episode.\n"
+            + "".join(r + "\n" for r in rows) + more)
 
 
 def title_numbering_block(content_path, release_files, wave_names=None,
@@ -1083,15 +1154,50 @@ def plan_skeleton(release_files, title_map=None, title="", kind="show"):
     for _e, key, target in parsed:
         if not target:
             unmatched[key] = unmatched.get(key, 0) + 1
+
+    # ALTERNATE CUTS OF ONE EPISODE (HANDOFF 15.2). A release often ships one episode
+    # twice -- a main line plus an alternate audio track/scene set under the SAME
+    # `SxxEyy` -- and a free model names only one, so the other reads as an unplaced
+    # release file and a 700 GB pack parks on one unresolved entry. When every file in
+    # a release-key group carries the SAME core title (version tags stripped; see
+    # `journal.alternate_title_core`), the harness knows they are one episode: it slots
+    # them all at the group's computed destination and `validate_plan` keeps the ranked
+    # survivor, recording the sibling in `_deduped_dropped` (accounted-for, so coverage
+    # never parks). The core comparison is exact, so `II` vs `III` and `Part 1` vs
+    # `Part 2` are never collapsed. A group whose cores differ is left for the model.
+    alternate = {}
+    groups = {}
+    for entry, key, target in parsed:
+        groups.setdefault(key, []).append((entry, target))
+    for key, members in groups.items():
+        if len(members) < 2:
+            continue
+        cores = {journal.alternate_title_core(str(e.get("src") or ""))
+                 for e, _t in members}
+        cores.discard("")
+        if len(cores) != 1:
+            continue
+        target = next((t for _e, t in members if t), None)
+        if not target and not reordered:
+            target = key
+        if not target:
+            continue
+        alternate[key] = target
+        for e, _t in members:
+            e["_alternate"] = f"S{key[0]:02d}E{key[1]:02d}"
+
     for entry, key, target in parsed:
         if target:
             entry["season"], entry["episode"] = target
-            if target[0] == 0 and titles.get(str(entry["src"])):
-                entry["episode_title"] = titles[str(entry["src"])]
+        elif key in alternate:
+            entry["season"], entry["episode"] = alternate[key]
         elif reordered or key in claimed or unmatched.get(key, 0) > 1:
             entry["season"], entry["episode"] = None, None
         else:
             entry["season"], entry["episode"] = key
+        if entry.get("season") == 0 and titles.get(str(entry["src"])) \
+                and not entry.get("episode_title"):
+            entry["episode_title"] = titles[str(entry["src"])]
     if non_episode_videos:
         kind = "mixed"
     return {"media_type": kind, "title": title, "files": files}
@@ -1227,6 +1333,35 @@ def _pinned_show_tmdb_id(title, year=None):
     return None
 
 
+def _src_tail(src, n):
+    """The last `n` path components of `src` (fewer when the path is shorter)."""
+    parts = Path(str(src)).parts
+    return tuple(parts[-n:]) if len(parts) >= n else tuple(parts)
+
+
+def _incomplete_plan_feedback(unresolved):
+    """`(error_text, missing_basenames)` for a merge that could not place files.
+
+    HANDOFF 15.3: an unresolved release file is a FIXABLE rejection, not a terminal
+    park. The next provider is told exactly which names were unplaced, and those names
+    become its `--require-list`, so the run cannot finish without answering for them.
+    """
+    missing = []
+    for u in unresolved or ():
+        n = Path(str(u)).name
+        if n and n not in missing:
+            missing.append(n)
+    err = (f"the harness could not place {len(unresolved)} release "
+           f"file(s) from your plan and its own computed enumeration: "
+           + ", ".join(missing[:8])
+           + (" ..." if len(missing) > 8 else "")
+           + ". Every release file must appear in `files` with its own "
+             "destination -- for a file at one release SxxEyy whose "
+             "siblings are alternate cuts, name it at the same "
+             "destination; the harness records the ranked survivor.")
+    return err, missing
+
+
 def merge_skeleton_plan(plan, skeleton, log_fn=None):
     """Complete a partial model plan from the deterministic skeleton.
 
@@ -1237,12 +1372,24 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
     place (a movie/special with no episode number) is left out so the coverage guard
     parks the release rather than guessing.
 
+    MATCHING IS BY PATH, NOT BY BASENAME ALONE (HANDOFF 15.3, the Friends Featurettes).
+    The model routinely re-types `src` instead of copying the skeleton's path -- it
+    dropped the trailing `)` of the torrent root for all 32 entries -- and the merge,
+    which only compared exact strings and unique basenames, lost the four whose
+    basenames repeat across season folders (`Friends of Friends_new.mkv` exists in
+    Season 2 and Season 10). Exact src, then a unique 3-component tail, then a unique
+    2-component tail (parent folder + basename), then a unique basename: each fallback
+    only claims when exactly ONE skeleton file can match, so a genuinely ambiguous
+    entry still goes to `unresolved` rather than to a guess.
+
     A destination TWO sources claim is a DISAGREEMENT, not a duplicate: it happens when
     an unmapped file keeps its release number and a mapped file's computed slot lands
     on that same number (the guide's order and the release's order differ). The
     intra-torrent duplicate collapse would otherwise pick the larger copy and silently
     delete the mapped episode; measured on the Smurfs pack. Both go to `unresolved`
-    (park) instead.
+    (park) instead -- UNLESS every entry at that destination is a marked ALTERNATE
+    sibling from `plan_skeleton` (`_alternate`), which is a deliberate same-episode
+    collapse the validator will rank and record.
 
     Never raises; returns `(plan, filled, unresolved)`.
     """
@@ -1254,10 +1401,14 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
         return plan, 0, []
     by_src = {}
     by_name = {}
+    by_tail = {2: {}, 3: {}}
     for f in plan.get("files") or []:
-        if isinstance(f, dict) and f.get("src"):
-            by_src[str(f["src"])] = f
-            by_name.setdefault(Path(str(f["src"])).name, []).append(f)
+        if not isinstance(f, dict) or not f.get("src"):
+            continue
+        by_src[str(f["src"])] = f
+        by_name.setdefault(Path(str(f["src"])).name, []).append(f)
+        for n in (2, 3):
+            by_tail[n].setdefault(_src_tail(f["src"], n), []).append(f)
     title = plan.get("title") or (skeleton or {}).get("title") or ""
     year = plan.get("year") or (skeleton or {}).get("year")
     folder = _show_folder_for(title, year)
@@ -1269,6 +1420,12 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
         entry = dict(sk)
         src = str(sk["src"])
         got = by_src.get(src)
+        if got is None:
+            for n in (3, 2):
+                same = by_tail[n].get(_src_tail(src, n)) or []
+                if len(same) == 1:
+                    got = same[0]
+                    break
         if got is None:
             same = by_name.get(Path(src).name) or []
             got = same[0] if len(same) == 1 else None
@@ -1298,15 +1455,28 @@ def merge_skeleton_plan(plan, skeleton, log_fn=None):
     for e in pending:
         seen.setdefault(str(e["dst_rel"]), []).append(e)
     merged, filled = [], 0
+
+    def _harness_filled(e):
+        return (by_src.get(str(e.get("src"))) is None
+                and not any(sk.get("dst_rel") for sk in skel_files
+                            if str(sk.get("src")) == str(e.get("src"))))
+
     for dst, entries in seen.items():
         if len(entries) > 1:
+            alt_ids = {str(e.get("_alternate") or "") for e in entries}
+            if alt_ids != {""} and "" not in alt_ids:
+                # Every entry here is a marked alternate sibling of ONE episode
+                # (`plan_skeleton`): a deliberate same-destination set, not the
+                # two-sources-originally-disagree shape. Keep them all; `validate_plan`
+                # ranks the survivor and records the rest in `_deduped_dropped`.
+                filled += sum(1 for e in entries if _harness_filled(e))
+                merged.extend(entries)
+                continue
             for e in entries:
                 unresolved.append(str(e.get("src")))
             continue
         e = entries[0]
-        if by_src.get(str(e.get("src"))) is None and not any(
-                sk.get("dst_rel") for sk in skel_files
-                if str(sk.get("src")) == str(e.get("src"))):
+        if _harness_filled(e):
             filled += 1
         merged.append(e)
     if not merged:
@@ -1615,7 +1785,8 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                     series_hint=None, kind=None, failure_context=None, sections=None,
                     release_files=None, title_block="", skeleton_path=None,
                     require_count=0, skeleton_slotted=0, skeleton_unslotted=0,
-                    unslotted_files=None, metadata_files=None, tmdb_id=None):
+                    unslotted_files=None, metadata_files=None, tmdb_id=None,
+                    identity_block="", alternate_files=None, specials_scheme_text=""):
     """The engineered base prompt plus this torrent's concrete context.
 
     With `series_hint`/`kind` (the settled case) the library digest is scoped to that one
@@ -1638,11 +1809,12 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
     structure = _release_structure_block(content_path, release_files)
     serial = serial_numbering_block(content_path, release_files,
                                     wave_names=_listing_names(file_listing))
-    titles = title_block or ""
+    titles = title_block or identity_block or ""
     if not titles and release_files:
         titles, _tm = title_numbering_block(content_path, release_files,
                                             wave_names=_listing_names(file_listing),
                                             tmdb_id=tmdb_id)
+    specials_scheme = specials_scheme_text
     provider = _provider_season_block(content_path, release_files)
     arcs = _arc_season_block(content_path, release_files)
     specials = _specials_metadata_block(content_path, release_files,
@@ -1663,6 +1835,16 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                            f"{shown}\n"
                            + (f"    ... and {len(unslotted_files) - 25} more\n"
                               if len(unslotted_files) > 25 else ""))
+            alternates = ""
+            if alternate_files:
+                shown = "\n".join(f"    {n}" for n in alternate_files[:25])
+                alternates = (
+                    f"\nALTERNATE CUTS OF ONE EPISODE ({len(alternate_files)}):\n"
+                    f"{shown}\n"
+                    "  These are the SAME episode under one release `SxxEyy` (alternate\n"
+                    "  audio/scene cuts), already placed at one destination by the\n"
+                    "  harness. Do NOT give them separate destinations; if you list one,\n"
+                    "  its `episode_title` must be the episode's real title.\n")
             specials = ""
             if metadata_files:
                 shown = "\n".join(f"    {n}" for n in metadata_files[:25])
@@ -1682,9 +1864,12 @@ def _runtime_prompt(content_path, file_listing, plan_path, stored_plan=None,
                 "  * do NOT read the skeleton file back, and do NOT re-list the episodes;\n"
                 "  * put ONLY the file(s) below in `files`, each with its final `dst_rel`\n"
                 "    (and `tmdb_id` for a movie), plus any top-level title/year/ids;\n"
+                "  * the skeleton's `src` values are absolute paths that exist on disk:\n"
+                "    copy one verbatim if you include it, and NEVER retype, re-root or\n"
+                "    'tidy' it -- a retyped path matches nothing and parks the release;\n"
                 "  * if you have a real episode title or plot to add, include the entry;\n"
                 "    the harness keeps it, but an omitted episode is still placed correctly."
-                + listing + specials)
+                + listing + alternates + specials)
         if require_count:
             bits.append(
                 f"COVERAGE IS REQUIRED. All {require_count} release file(s) must appear in\n"
@@ -1711,6 +1896,7 @@ Files in the download (relative to that path):
 {structure}
 {serial}
 {titles}
+{specials_scheme}
 {provider}
 {arcs}
 {specials}
@@ -2105,6 +2291,29 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
             _note(f"identify: computed release->broadcast numbering for "
                   f"{len(title_map)} file(s) from their own titles"
                   + (f" (matched against TMDB {show_tmdb_id})" if show_tmdb_id else ""))
+    # The CONVERSE fact (HANDOFF 15.1, American Dad!): the release's own numbering is
+    # confirmed broadcast numbering by its titles, so a season remap cannot be invented.
+    # Only computed when the pack is NOT reordered (then `title_map` already governs).
+    identity_map, identity_block = {}, ""
+    if release_files and not serial_map and not title_map:
+        identity_map, _prov = release_identity_map(
+            content_path, release_abs or release_files, show_hint=show_title,
+            tmdb_id=show_tmdb_id)
+        if identity_map:
+            identity_block = numbering_agreement_block(identity_map, _prov)
+            _note(f"identify: release numbering confirms the provider for "
+                  f"{len(identity_map)} file(s); a season remap is refused")
+    # The library's OWN Season-00 scheme, when this show already owns specials
+    # (HANDOFF 15.5): a provider's special number is not the library's slot, and the
+    # free AI must be told the scheme as fact rather than scraping the provider.
+    specials_scheme_text = ""
+    if release_files and show_title:
+        try:
+            _folder = library.find_show_folder(show_title)
+            if _folder is not None:
+                specials_scheme_text = library.specials_scheme_block(_folder)
+        except Exception:                                             # noqa: BLE001
+            specials_scheme_text = ""
     # A large OR reordered release gets a deterministic skeleton and a coverage
     # contract: one Write cannot hold a 409-file plan (10.9), and below that floor a
     # release-ordered pack still cannot be enumerated by the model (the 70-file Smurfs
@@ -2131,7 +2340,7 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
         except OSError:
             skeleton_path = None
     skeleton_slotted = skeleton_unslotted = 0
-    unslotted_files, metadata_files = [], []
+    unslotted_files, metadata_files, alternate_files = [], [], []
     if skeleton_path is not None:
         try:
             _sk = json.loads(skeleton_path.read_text(encoding="utf-8"))
@@ -2144,6 +2353,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                     # model so it writes the plot with its entry.
                     if int(_f.get("season")) == 0:
                         metadata_files.append(Path(str(_f.get("src") or "")).name)
+                    # An ALTERNATE sibling (`plan_skeleton` marked it) is named to the
+                    # model so it never invents a second destination for one episode.
+                    if _f.get("_alternate"):
+                        alternate_files.append(Path(str(_f.get("src") or "")).name)
                 else:
                     skeleton_unslotted += 1
                     unslotted_files.append(Path(str(_f.get("src") or "")).name)
@@ -2220,7 +2433,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                  skeleton_unslotted=skeleton_unslotted,
                                  unslotted_files=unslotted_files,
                                  metadata_files=metadata_files,
-                                 tmdb_id=show_tmdb_id)
+                                 tmdb_id=show_tmdb_id,
+                                 identity_block=identity_block,
+                                 alternate_files=alternate_files,
+                                 specials_scheme_text=specials_scheme_text)
         # Per ATTEMPT, not per run: confirm mode below narrows these for the one provider
         # that needs it, and leaking that narrowing to the next provider would cap a run
         # that has no reason to be capped.
@@ -2240,7 +2456,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                       skeleton_unslotted=skeleton_unslotted,
                                       unslotted_files=unslotted_files,
                                       metadata_files=metadata_files,
-                                      tmdb_id=show_tmdb_id)
+                                      tmdb_id=show_tmdb_id,
+                                      identity_block=identity_block,
+                                      alternate_files=alternate_files,
+                                      specials_scheme_text=specials_scheme_text)
             if len(compact) < len(prompt):
                 _note(f"  {provider_name}: full prompt is {len(prompt)} chars, over its "
                       f"measured {_TOO_LARGE_CEILING[provider_name]}; retrying with the "
@@ -2407,7 +2626,10 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                             skeleton_unslotted=skeleton_unslotted,
                             unslotted_files=unslotted_files,
                             metadata_files=metadata_files,
-                            tmdb_id=show_tmdb_id)
+                            tmdb_id=show_tmdb_id,
+                            identity_block=identity_block,
+                            alternate_files=alternate_files,
+                            specials_scheme_text=specials_scheme_text)
                         if len(compact) < len(prompt) and _fits(provider_name, compact):
                             _note(f"  {provider_name}: retrying with the "
                                   f"{'+'.join(sections)} digest only "
@@ -2448,17 +2670,42 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
             # destination from the computed slot. A partial prefix therefore stops being
             # a parked release and becomes a correct plan.
             if skeleton_path is not None:
+                merge_unresolved = []
                 try:
                     skeleton_data = json.loads(
                         skeleton_path.read_text(encoding="utf-8"))
                     plan, filled, unresolved = merge_skeleton_plan(plan, skeleton_data,
                                                                    _note)
+                    merge_unresolved = list(unresolved or ())
                     if filled:
                         rationale = ((rationale or "")
                                      + f"\n\n[skeleton merge filled {filled} episode "
                                        f"destination(s) from the computed slots]")
                 except (OSError, ValueError):
                     pass
+                # AN UNRESOLVED RELEASE FILE IS A FIXABLE REJECTION, NOT A PARK
+                # (HANDOFF 15.3, the systemic seam Family Guy and Friends share). The
+                # model still gets to place the file it omitted; only when the whole
+                # chain has seen the failure does the release park. The missing names
+                # become the next attempt's `--require-list`, so ai_client names them
+                # before the run ends instead of the wave parking after it.
+                if merge_unresolved:
+                    err, missing = _incomplete_plan_feedback(merge_unresolved)
+                    _note(f"  {provider_name}/{model} plan incomplete: "
+                          f"{len(merge_unresolved)} release file(s) unplaced "
+                          f"({', '.join(missing[:4])}); handing to the next provider")
+                    rejections.append({"provider": provider_name, "model": model,
+                                       "plan": plan, "error": err})
+                    _save_rejections(info_hash, [rejections[-1]])
+                    last_err = err
+                    if missing:
+                        require_files = missing
+                        try:
+                            require_list.write_text(json.dumps(require_files),
+                                                    encoding="utf-8")
+                        except OSError:
+                            require_files = []
+                    break
             # An empty plan is a legitimate "nothing to place" verdict (repeat/extras), NOT
             # a fixable mistake — the caller decides how to treat it. Return it unchanged.
             # (With a skeleton, an empty model answer has just been replaced by the
@@ -2475,7 +2722,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                 library.validate_plan(plan, str(content_path),
                                       sibling_seasons=sibling_seasons,
                                       serial_map=serial_map,
-                                      title_map=title_map or None)
+                                      title_map=title_map or None,
+                                      identity_map=identity_map or None)
                 # An id the provider contradicted was stripped in place (10.3). Log it
                 # loudly -- the plan is still good, but the next reader must not wonder
                 # why the nfo has no provider id.

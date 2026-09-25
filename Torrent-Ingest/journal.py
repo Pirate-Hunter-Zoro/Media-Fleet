@@ -98,6 +98,39 @@ def title_from_release_name(name):
     return m.group(1).strip() if m else ""
 
 
+# An ALTERNATE-VERSION parenthetical: a release tag that says "same episode, different
+# cut", never a different episode. `(Part 2)`, `(II)`, `(Season 3)` and a bare `(1)` are
+# deliberately absent -- those keep distinct cores, which is what stops a two-part story
+# or two numbered episodes from collapsing (HANDOFF 15.2: II vs III must NOT collapse).
+_ALT_VERSION_RE = re.compile(
+    r"(?i)\b(uncensored|unrated|censored|extended|commentar\w*|director'?s? ?cut|"
+    r"remaster(?:ed)?|alternate|\balt\.? ?(?:scene|cut|audio|track)|deleted ?scene|"
+    r"bale ?scene|dual ?audio|multi ?audio|re-?encode)\b")
+
+
+def alternate_title_core(name):
+    """The episode title of one cut, version tags stripped, or "" when unreadable.
+
+    Two files at one release `SxxEyy` whose names carry the SAME core are alternate
+    versions of ONE episode -- Family Guy's `(Uncensored + Bale Scene)` beside
+    `(Uncensored + Commentary Audio Track)` (HANDOFF 15.2). The harness files them at
+    one destination and drops the ranked sibling into `_deduped_dropped`, so the
+    coverage contract counts the dropped copy as accounted-for instead of parking the
+    whole release.
+
+    The strip is deliberately narrow (release version markers only, and only a trailing
+    parenthetical), so `II` vs `III` and `Part 1` vs `Part 2` never collapse.
+    """
+    title = title_from_release_name(Path(name).name)
+    core = title
+    while True:
+        m = re.search(r"\s*[\(\[]([^)\]]*)[\)\]]\s*$", core)
+        if not m or not _ALT_VERSION_RE.search(m.group(1)):
+            break
+        core = core[:m.start()].strip()
+    return re.sub(r"[^a-z0-9]+", " ", core.lower()).strip()
+
+
 _SOURCE_TITLES_CACHE: dict = {}
 
 

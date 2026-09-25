@@ -480,6 +480,24 @@ run "no incident hard-coding in shipped code" \
 # still holds a file. The replay over state/journal.jsonl prints the live counts.
 run "a completion is re-queued only on every-witness loss (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_reconcile_presence.py
+# Family Guy (S07E07) ships ONE episode twice under one release key (Uncensored + Bale
+# Scene beside Uncensored + Commentary), the model names one, and the other parked a
+# 95 GB pack. The harness now computes same-key + same-cleaned-title pairs as alternates
+# of one episode, ranks the survivor and records the sibling as accounted-for; the merge
+# attributes a re-typed `src` by parent path instead of basename alone (Friends lost 4 of
+# 32 Featurettes to `Friends of Friends_new.mkv` existing in two season folders); and an
+# incomplete skeleton answer is handed to the NEXT provider (with a --require-list)
+# instead of parking the release -- the systemic seam Family Guy and Friends share.
+run "skeleton merge attribution, alternates and feedback (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_skeleton_merge_feedback.py
+# American Dad's wrong-slot `S04E06 - Independent Movie` (TMDB says S10E06) and Doctor
+# Who's S00E04 collision: the repair path computes the true slot -- TMDB for a numbered
+# episode, the library's own era-ordered Season-00 shelf for a special -- and re-files
+# through refile_season machinery with an nfo rewrite that matches the destination. The
+# doctor guard reports a sidecar slot that disagrees with the filename, and the live
+# doctor worklist is replayed.
+run "computed episode-slot repairs and the specials scheme (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_slot_repair.py
 
 # ---- advisory: is the acceptance gate still being REACHED? (§4.120) ----------
 # Deliberately NOT part of the pass/fail above. This script answers "is the code sound?",

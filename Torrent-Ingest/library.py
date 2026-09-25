@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -1345,16 +1346,95 @@ def verify_provider_ids(plan):
     return reasons
 
 
-def _reject_title_numbering(files, title_map):
-    """Refuse a destination that contradicts the computed release->broadcast map.
+def _duplicate_rank(f):
+    """Which copy of one episode to keep: untagged first, then the largest file.
 
-    The map comes from `identify.release_title_map` (the release's own episode TITLES
-    matched against the provider), for packs whose `SxxEyy` is release order. The
-    Smurfs replacement pack is the case: its `S01E01` is *The Smurfette*, broadcast
-    S01E31, and the old dvdrip was filed positionally (HANDOFF 10.1/10.9). Only files
-    the map covers are checked; anything unmatched fails open.
+    Shared by the intra-torrent destination collapse and the same-episode ALTERNATE
+    collapse so the two can never disagree about the survivor.
     """
-    if not title_map:
+    low = str(f.get("src") or "").lower()
+    clean = 0 if any(m in low for m in config.DUPLICATE_DEPRIORITIZE_MARKERS) else 1
+    try:
+        p = f.get("src")
+        size = _page_size(p) if p and os.path.exists(p) else 0
+    except OSError:
+        size = 0
+    return (clean, size)
+
+
+def _collapse_same_episode_alternates(files):
+    """Collapse files that are ALTERNATE CUTS of one release episode to one copy.
+
+    HANDOFF 15.2 (Family Guy `S07E07`). A pack ships one episode twice -- a main cut
+    plus an alternate scene/audio version under the SAME release `SxxEyy` -- and the
+    model names only one. The other then reads as an unplaced release file and the
+    coverage contract parks a whole pack. When two planned files share a destination
+    episode key AND their source names reduce to the SAME core title
+    (`journal.alternate_title_core`, which strips only release version markers), they
+    are one episode: the ranked survivor is kept and every sibling is recorded in
+    `_deduped_dropped` (accounted-for, so coverage never parks).
+
+    The core comparison is exact, so `II` vs `III` and `Part 1` vs `Part 2` keep
+    distinct cores and are never collapsed -- and a group with no provable core (bare
+    file numbers) is left alone.
+
+    Returns `(kept, dropped)`; the caller folds `dropped` into `_deduped_dropped`.
+    """
+    groups = {}
+    for f in files:
+        rel = Path(f.get("dst_rel") or "")
+        if rel.parts[:1] != ("Shows",) or rel.suffix.lower() not in config.VIDEO_EXTENSIONS:
+            continue
+        key = _file_episode_key(f)
+        if key is None:
+            continue
+        core = journal.alternate_title_core(Path(str(f.get("src") or "")).name)
+        if not core:
+            continue
+        groups.setdefault(key, []).append((f, core))
+    dropped = []
+    for key, entries in groups.items():
+        if len(entries) < 2:
+            continue
+        if len({core for _f, core in entries}) != 1:
+            continue                     # not provably one episode: fail open
+        survivor = max((f for f, _c in entries), key=_duplicate_rank)
+        # The survivor keeps its own bytes; the model's AUTHORED metadata (title, plot,
+        # ids) is carried over from whichever sibling supplied it, so dropping the cut
+        # the model happened to name never drops the episode's metadata with it.
+        for f, _core in entries:
+            if f is survivor:
+                continue
+            for field in ("episode_title", "plot", "tmdb_id", "type"):
+                if not survivor.get(field) and f.get(field):
+                    survivor[field] = f[field]
+            print(f"[validate_plan] dropped alternate cut of "
+                  f"S{key[0]:02d}E{key[1]:02d} (kept {Path(str(survivor.get('src') or '')).name!r}): "
+                  f"{Path(str(f.get('src') or '')).name!r}", flush=True)
+            dropped.append(f)
+    if not dropped:
+        return files, []
+    kept = [f for f in files if all(f is not d for d in dropped)]
+    return kept, dropped
+
+
+def _reject_title_numbering(files, title_map, identity_map=None):
+    """Refuse a destination that contradicts the computed release numbering.
+
+    TWO computed facts, one rule each:
+
+      * `title_map` (reordered release, the Smurfs): the release's own `SxxEyy` is its
+        catalogue order, and the harness matched the file's title against the provider
+        to compute the true broadcast slot. Filing the release number is refused.
+      * `identity_map` (HANDOFF 15.1, American Dad!): the release's own `SxxEyy` IS the
+        broadcast slot -- the file's title matched the provider at exactly that number.
+        REMAPPING it to another season/episode is refused. Numbered seasons only:
+        Season 00's library scheme is its own (HANDOFF 15.5), so a special is never
+        constrained by a TMDB number.
+
+    Only files the maps cover are checked; anything unmatched fails open.
+    """
+    if not title_map and not identity_map:
         return
     for idx, f in enumerate(files):
         src_p = Path(f.get("src") or "")
@@ -1362,9 +1442,14 @@ def _reject_title_numbering(files, title_map):
         if not m:
             continue
         try:
-            exp = title_map.get((int(m.group(1)), int(m.group(2))))
+            key = (int(m.group(1)), int(m.group(2)))
         except ValueError:
             continue
+        exp = (title_map or {}).get(key)
+        identity = False
+        if not exp and key[0] >= 1:
+            exp = (identity_map or {}).get(key)
+            identity = bool(exp)
         if not exp:
             continue
         # The DESTINATION is what gets filed, so that is what is checked. The optional
@@ -1382,17 +1467,32 @@ def _reject_title_numbering(files, title_map):
                 got = (int(f.get("season")), int(f.get("episode")))
             except (TypeError, ValueError):
                 got = None
-        if got != tuple(exp):
+        if got == tuple(exp):
+            continue
+        if identity:
+            # Season 00 is the LIBRARY's own specials scheme, which routinely differs
+            # from the provider's numbering (HANDOFF 15.5, Doctor Who: TMDB calls
+            # *The Return of Doctor Mysterio* S00E149 while the locked shelf holds it at
+            # S00E04). A numbered release file filed as a special is therefore not
+            # constrained by its TMDB number, and an unparseable destination fails open.
+            if got is None or got[0] == 0:
+                continue
             raise PlanError(
-                f"file[{idx}] {src_p.name!r}: this release's `S{m.group(1)}E{m.group(2)}` "
-                f"is its OWN catalogue order, not the broadcast slot. The harness matched "
-                f"the file's episode title against the provider and computed "
-                f"S{exp[0]:02d}E{exp[1]:02d}, but the plan files it at "
-                f"{f.get('dst_rel')!r}. File it at the computed slot.")
+                f"file[{idx}] {src_p.name!r}: the harness matched this file's episode "
+                f"title against the provider at its own `S{key[0]:02d}E{key[1]:02d}` -- "
+                f"the release numbering HERE IS the broadcast numbering. The plan would "
+                f"remap it to {f.get('dst_rel')!r}. File it at S{key[0]:02d}E{key[1]:02d}; "
+                f"do not shift a season.")
+        raise PlanError(
+            f"file[{idx}] {src_p.name!r}: this release's `S{m.group(1)}E{m.group(2)}` "
+            f"is its OWN catalogue order, not the broadcast slot. The harness matched "
+            f"the file's episode title against the provider and computed "
+            f"S{exp[0]:02d}E{exp[1]:02d}, but the plan files it at "
+            f"{f.get('dst_rel')!r}. File it at the computed slot.")
 
 
 def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
-                  release_name=None, title_map=None):
+                  release_name=None, title_map=None, identity_map=None):
     """Raise PlanError if the plan is unsafe or malformed. Returns normalized plan.
 
     `sibling_seasons` is the set of season numbers the SOURCE the plan was cut from
@@ -1402,6 +1502,11 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
     `serial_map` is `identify.serial_release_map` over the whole release, and it makes
     the computed broadcast numbering BINDING for a pack that names its files by serial
     (see the guard below). Optional: None simply disables that check.
+
+    `title_map` is `identify.release_title_map`: the release is REORDERED, and this is
+    its computed broadcast numbering. `identity_map` is `identify.release_identity_map`:
+    the release's own numbering AGREES with the provider, so a remap is refused
+    (HANDOFF 15.1). Either may be None; both fail open on uncovered files.
 
     `release_name` is the torrent/content name the drop arrived under. It feeds the
     release-identity guard (`_reject_release_identity`): a release whose own name
@@ -1495,19 +1600,12 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
             return None
 
     def _dup_rank(f):
-        low = str(f.get("src") or "").lower()
-        clean = 0 if any(m in low for m in config.DUPLICATE_DEPRIORITIZE_MARKERS) else 1
-        try:
-            p = f.get("src")
-            size = _page_size(p) if p and os.path.exists(p) else 0
-        except OSError:
-            size = 0
-        return (clean, size)
+        return _duplicate_rank(f)
 
     groups = {}
     for f in files:
         groups.setdefault(_dst_key(f), []).append(f)
-    dropped = []
+    dropped_records = []
     if any(k is not None and len(g) > 1 for k, g in groups.items()):
         deduped = []
         for f in files:
@@ -1515,16 +1613,24 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
             if _dst_key(f) is None or g is None or len(g) == 1 or f is max(g, key=_dup_rank):
                 deduped.append(f)
             else:
-                dropped.append(f)
-        for d in dropped:
-            print(f"[validate_plan] dropped duplicate of {d.get('dst_rel')} "
-                  f"(kept higher-quality copy): {d.get('src')}", flush=True)
-        plan["_deduped_dropped"] = [
-            {"src": d.get("src"), "dst_rel": d.get("dst_rel"), "reason": "duplicate"}
-            for d in dropped
-        ]
+                dropped_records.append({"src": f.get("src"), "dst_rel": f.get("dst_rel"),
+                                        "reason": "duplicate"})
+                print(f"[validate_plan] dropped duplicate of {f.get('dst_rel')} "
+                      f"(kept higher-quality copy): {f.get('src')}", flush=True)
         files = deduped
         plan["files"] = deduped
+
+    # ALTERNATE CUTS of one release episode that the model gave DIFFERENT destinations
+    # (HANDOFF 15.2, Family Guy S07E07): one episode, two cuts under the same release
+    # key. The ranked survivor stays; the sibling is recorded as accounted-for.
+    files, dropped_alt = _collapse_same_episode_alternates(files)
+    for f in dropped_alt:
+        dropped_records.append({"src": f.get("src"), "dst_rel": f.get("dst_rel"),
+                                "reason": "alternate"})
+    if dropped_alt:
+        plan["files"] = files
+    if dropped_records:
+        plan["_deduped_dropped"] = dropped_records
 
     # Two distinct video files on one episode of one show is a misnumbering (or a
     # duplicate); see `_reject_same_episode` for why the replay allows the shapes it does.
@@ -1817,7 +1923,7 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
 
     _reject_comic_at_franchise_root(files)
     _reject_manga_mislabels(plan, files)
-    _reject_title_numbering(files, title_map)
+    _reject_title_numbering(files, title_map, identity_map)
     _reject_absolute_run_split(files)
     _reject_arc_split_across_seasons(files)
     _reject_season_over_provider_count(plan, files)
@@ -3032,6 +3138,125 @@ def existing_show_tmdb_id(series_name):
 def _series_name_of(folder: str) -> str:
     """The bare series name behind a library show-folder name (drops the `(year)`)."""
     return re.sub(r"\s*\(\d{4}\)\s*$", "", folder or "").strip()
+
+
+def find_show_folder(series_name):
+    """The library folder for a show, on the MOUNT first (the complete view), or None.
+
+    YEAR-AWARE: `Doctor Who (2005)` and `Doctor Who (1963)` normalize to one bare name,
+    and a first-match lookup returns the wrong series (it did). When the requested name
+    states a year, a folder whose own `(year)` differs by more than one is skipped.
+    """
+    if not series_name:
+        return None
+    want = normalize_folder_name(_series_name_of(str(series_name)))
+    if not want:
+        return None
+    want_year = _folder_year(str(series_name))
+    for root in (config.MEDIAFS_MOUNT / "Shows", config.SHOWS_ROOT):
+        try:
+            if not root.is_dir():
+                continue
+            for d in sorted(root.iterdir()):
+                if not d.is_dir():
+                    continue
+                if normalize_folder_name(_series_name_of(d.name)) != want:
+                    continue
+                have_year = _folder_year(d.name)
+                if want_year and have_year and abs(want_year - have_year) > 1:
+                    continue
+                return d
+        except OSError:
+            continue
+    return None
+
+
+_SPECIALS_SCHEME_FILE = config.STATE_DIR / "specials_schemes.json"
+
+
+def specials_scheme(show_folder):
+    """`[{slot, title, plot, file}]` for a show's Season-00 episodes, or [].
+
+    THE SLOT IS THE FILENAME'S, NEVER THE `.nfo`'s. A library that owns its specials
+    scheme has, by construction, `.nfo`s whose `<episode>` is a FOREIGN provider number:
+    Doctor Who (2005)'s S00E04 *The Return Of Doctor Mysterio* carries `<episode>149` and
+    its S00E04 companion *The End Of Time (1)* carries `<episode>16` (HANDOFF 15.5).
+    Reading the sidecar as the scheme is what made the shelf look self-contradictory.
+    The filename's `S00Exx` is the library's own slot; the `.nfo` supplies the title/plot.
+
+    The scheme is PERSISTED to `state/specials_schemes.json` so the free AI can be told
+    it as fact (the locked nfos are the authority, but a prompt cannot read the mount).
+    Fail open: an unreadable folder is [].
+    """
+    folder = Path(show_folder) if show_folder else None
+    if folder is None or not folder.is_dir():
+        folder = find_show_folder(show_folder)
+    out = []
+    if folder is None or not folder.is_dir():
+        return out
+    season_dir = folder / "Season 00"
+    try:
+        entries = sorted(season_dir.iterdir())
+    except OSError:
+        return out
+    for p in entries:
+        if not p.is_file() or p.suffix.lower() not in config.VIDEO_EXTENSIONS:
+            continue
+        m = re.search(r"[Ss]00[Ee](\d{1,3})", p.name)
+        if not m:
+            continue
+        slot = int(m.group(1))
+        text = _read_text(episode_nfo_path(p)) or ""
+        title = _xml_tag(text, "title")
+        plot = _xml_tag(text, "plot")
+        out.append({"slot": slot, "title": title or _filename_episode_title(p.name),
+                    "plot": plot, "file": p.name})
+    out.sort(key=lambda e: e["slot"])
+    try:
+        blob = {}
+        if _SPECIALS_SCHEME_FILE.exists():
+            blob = json.loads(_SPECIALS_SCHEME_FILE.read_text(encoding="utf-8")) or {}
+        blob[folder.name] = {"computed_at": time.time(), "scheme": out}
+        _SPECIALS_SCHEME_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(_SPECIALS_SCHEME_FILE, json.dumps(blob, indent=1))
+    except OSError:
+        pass
+    return out
+
+
+def specials_scheme_block(show_folder, limit=14):
+    """The computed Season-00 scheme as prompt text, or "" when the show has none.
+
+    Told to the free AI as fact so it stops treating a provider's special number as the
+    library's slot (HANDOFF 15.5). Bounded: at most `limit` rows plus a count.
+    """
+    scheme = specials_scheme(show_folder)
+    if len(scheme) < 3:
+        return ""
+    rows = [f"  E{int(e['slot']):02d} {str(e['title'])[:52]}"
+            for e in scheme[:limit]]
+    more = (f"  ... and {len(scheme) - limit} more slot(s)\n"
+            if len(scheme) > limit else "")
+    return ("======================================================================\n"
+            "LIBRARY SPECIALS SCHEME -- COMPUTED (Season 00)\n"
+            "======================================================================\n"
+            "This show's Season-00 shelf is the LIBRARY'S OWN locked, era-ordered\n"
+            "scheme; it routinely differs from the provider's special numbers, which\n"
+            "are NOT this scheme. The slots already on disk are:\n"
+            + "".join(r + "\n" for r in rows) + more
+            + "A NEW special is placed by where its air date falls in this scheme --\n"
+              "after the last existing special of its era -- NOT at the provider's\n"
+              "number. The harness computes that slot; do not invent one.\n")
+
+
+def _filename_episode_title(name):
+    """A best-effort title from an episode filename (`... - S01E02 - Title.ext`)."""
+    stem = Path(name).stem
+    m = re.search(r"[Ss]\d{1,3}[Ee]\d{1,4}\s*[-–]\s*(.+)$", stem)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"[Ss]\d{1,3}[Ee]\d{1,4}\s+(.+)$", stem)
+    return m.group(1).strip() if m else ""
 
 
 def _provider_season_shape(folder: str):

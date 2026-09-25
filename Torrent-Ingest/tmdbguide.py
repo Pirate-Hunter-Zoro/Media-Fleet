@@ -259,6 +259,57 @@ def specials_runs(tmdb_id):
     return runs
 
 
+_SPECIALS_INDEX_CACHE_V = 1
+
+
+def specials_index(tmdb_id):
+    """TMDB's full Season-0 list: `[{number, name, air_date, overview}]`, or [].
+
+    The repair path needs the AIR DATE, which `specials_runs` (name-grouped) does not
+    carry: a library with its own era-ordered specials scheme places a new special by
+    where it aired, not by TMDB's number (HANDOFF 15.5, Doctor Who: TMDB S00E016 vs the
+    library's S00E23). Fail open: [] on a missing key or any transport error.
+    """
+    if not tmdb_id:
+        return []
+    try:
+        tmdb_id = int(tmdb_id)
+    except (TypeError, ValueError):
+        return []
+    p = _cache_path(tmdb_id).with_name(f"{tmdb_id}-specials.json")
+    try:
+        blob = json.loads(p.read_text(encoding="utf-8"))
+        if blob.get("v") == _SPECIALS_INDEX_CACHE_V \
+                and time.time() - float(blob.get("fetched_at", 0)) < CACHE_TTL_SEC:
+            return blob.get("episodes") or []
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+    data = _get_json(f"/tv/{tmdb_id}/season/0", {})
+    if not data or data.get("_http_error"):
+        return []
+    eps = []
+    for e in data.get("episodes") or []:
+        n = e.get("episode_number")
+        if n is None:
+            continue
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            continue
+        eps.append({"number": n, "name": (e.get("name") or "").strip(),
+                    "air_date": str(e.get("air_date") or ""),
+                    "overview": (e.get("overview") or "").strip()})
+    try:
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"v": _SPECIALS_INDEX_CACHE_V,
+                                   "fetched_at": time.time(), "episodes": eps}),
+                       encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+    return eps
+
+
 def movie_exists(tmdb_id):
     """Whether TMDB still has this FILM id. None when the question cannot be put.
 

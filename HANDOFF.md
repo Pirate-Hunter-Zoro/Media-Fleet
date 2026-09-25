@@ -209,7 +209,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, **65 blocking checks** (2026-09-24 evening: `test_show_summary_inventory.py` registered after the digest-scoping check; the 60-check figure predates `test_undownloadable_torrent.py` and the earlier session's count was stale) |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, **67 blocking checks** (2026-09-25: `test_skeleton_merge_feedback.py` and `test_slot_repair.py` registered after `test_reconcile_presence.py`; the 65-check figure added `test_show_summary_inventory.py` on 2026-09-24, and the 60-check figure predates `test_undownloadable_torrent.py`) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
 | `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
 | Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969), plus HANDOFF/commit follow-ups through `1b9cfc9`. The 2026-09-24 session added `48f9fd9` (a private trackerless `.torrent` is refused at registration — see the shipped section), deployed 05:47 via restart of torrentingest 72073 / directingest 72081 / driveingest 72094; that restart also put `bde8d71` (a log line) live on those three. The 2026-09-24 **evening** session added `4202bb3` (the show summary counts evicted episodes; a proven collision retries instead of parking the pack — see the shipped section), deployed 21:37:41 via restart of torrentingest 88328 / directingest 88336 / driveingest 88349. On top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
@@ -218,10 +218,96 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
-| In flight | The reaper drains (`reap.py` PID 6539). **The Simpsons (1989) `1d9098aa…` re-dropped itself and resumed**: registered 2026-09-24 23:48 ("resuming chunked waves at 43 file(s) already filed"), admitted 2026-09-25 03:11:33 with the corrected digest, now parked for disk space (43 MB admittable vs 592 MB next file) — it resumes automatically; see §15.4. |
-| Parked re-drops | **The Simpsons is recovering (§15.4). Friends (1994) `1a6558e5…` and Family Guy `705febda…` are the two `.torrent`s in `failed/`**; both were parked by the merge-unresolved seam and are diagnosed with named destinations in **§15** — no new downloads needed. **American Dad! (2005) `06dd53e1…` is `failed` too but its `failed/` copy is gone; the mirror at `state/torrent_sources/06dd53e1…torrent` is the re-drop source** (§15.1). |
-| Open work | **§15 is the work order for the next session.** It names every affected file's correct destination and the harness/prompt upgrade that must make the fleet decide these cases itself (owner's standing instruction: no hand-fixes). It covers American Dad!'s wrong-slot `S04E06`, Family Guy's same-key S07E07 duplicates, Friends' 4 lost Featurettes (the merge-unresolved seam), the Simpsons acceptance check, and Doctor Who (2005)'s S00E04 specials conflict with the computed answer. Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented; §15.3/§15.2 are its remaining gaps. |
+| In flight | The reaper drains (`reap.py` PID 6539). **The Simpsons (1989) `1d9098aa…` re-dropped itself and resumed**: registered 2026-09-24 23:48 ("resuming chunked waves at 43 file(s) already filed"), admitted 2026-09-25 03:11:33 with the corrected digest, parked for disk space (43 MB admittable vs 592 MB next file) and resuming automatically; the `4202bb3` S03 wave acceptance is still to be confirmed (§15.4). |
+| Parked re-drops | **§15's seams shipped 2026-09-25** (HANDOFF top section). American Dad's wrong-slot S04E06 and Doctor Who's S00E04 collision were repaired through `scripts/repair_slots.py`; after the deploy the three sources were moved out of `failed/` back to the watch root — Family Guy `705febda…`, Friends `1a6558e5…`, and American Dad `06dd53e1…` from its `state/torrent_sources/` mirror — each resuming from its `chunk_done`. The Simpsons is separately recovering (§15.4). |
+| Open work | **§15 is closed except the live acceptance checks**: the Simpsons wave/terminal confirmation (§15.4), and the three re-dropped packs completing their waves on the fixed code (Family Guy's S07E07 alternate, Friends' 32 Featurettes, American Dad's S10E06). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented; the §15.1–15.3 seams are its last measured gaps and are now shipped. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
+
+### Shipped 2026-09-25 — §15: the harness computes alternates, re-types are attributed, and a misfiled slot is repaired from its identity
+
+**One systemic seam, three packs.** Friends (`1a6558e5…`) and Family Guy
+(`705febda…`) both parked on the merge-unresolved seam: a model that re-types `src`
+instead of copying the skeleton's path (Friends dropped the torrent root's closing `)`
+on all 32 Featurettes) lost the four whose basenames repeat across season folders, and
+one unresolved file parked a 182 GB pack. American Dad (`06dd53e1…`) parked when a
+wave-0 plan (from the pre-`4202bb3` stale digest) filed `S10E06 - Independent Movie` at
+`S04E06`; the digest fix removed the cause but not the wrong-slot file, and nothing
+could compute its true slot.
+
+**The fix, all computed.**
+
+1. **Merge attribution by path, not basename alone.** `merge_skeleton_plan` matches the
+   model's entry to a skeleton file by exact `src`, then a unique 3-component tail, then
+   a unique parent+basename tail, then a unique basename. Each fallback claims only when
+   exactly ONE skeleton file can match, so a genuine ambiguity still goes unresolved.
+   The skeleton's on-disk `src` always wins, and the prompt now says so explicitly.
+2. **Alternate cuts are computed, not modeled.** `plan_skeleton` groups files sharing a
+   release `SxxEyy` whose names reduce to the SAME version-stripped title
+   (`journal.alternate_title_core`) and slots them at one destination;
+   `library._collapse_same_episode_alternates` keeps the ranked survivor
+   (`DUPLICATE_DEPRIORITIZE_MARKERS`, then size) and records the sibling in
+   `_deduped_dropped` (accounted-for, so the coverage contract never parks). The core
+   comparison is exact on a trailing version parenthetical, so `II` vs `III` and
+   `Part 1` vs `Part 2` never collapse. The model's authored title/plot/ids are carried
+   onto whichever cut survives.
+3. **An unresolved file is a fixable rejection.** `run_identify` hands
+   `merge_skeleton_plan`'s `unresolved` list to the NEXT provider (persisted like any
+   rejection, with those basenames as its `--require-list`); only a chain that never
+   completes leaves the wave retrying. One incomplete free-model answer no longer parks
+   a pack.
+4. **Release-numbering AGREEMENT is a computed fact (the converse of 10.9).** For a
+   pack whose titled files match the provider at their OWN `SxxEyy`
+   (`release_identity_map`, dash titles tag-cleaned and admitted exact-only at the
+   release key — the real American Dad mirror computes **346** claims against TMDB
+   1433, including `S10E06`),
+   `validate_plan(identity_map=)` refuses a remap to another numbered season, and the
+   prompt states the agreement. Season 00 is exempt — that shelf has its own scheme.
+5. **A computed repair path, `scripts/repair_slots.py`.** Numbered episode: its content
+   title (a LOCKED nfo, else the filename — an unlocked nfo is Jellyfin's scrape of the
+   slot and names the wrong episode) is matched against TMDB and re-filed through
+   `refile_season` mapping machinery (remote move, mount unlink, `dbhook` purge/record,
+   inventory/sync-state rewrite, then a locked destination nfo authored from TMDB).
+   Specials: the library's OWN era-ordered Season-00 shelf is the authority
+   (`library.specials_scheme`, persisted to `state/specials_schemes.json` and told to
+   the AI as fact); a slot collision is resolved by air-date order — the file out of
+   order moves to the shelf's next free slot, never to the provider's number — and a
+   sidecar carrying a foreign provider number is queued for rewrite.
+6. **Doctor guard.** `media_doctor._slot_disagreement` reports a filed episode whose
+   `.nfo` `<season>/<episode>` disagrees with its destination filename
+   (`episode_slot_mismatch`, `auto: false`); `find_show_folder` is year-aware (it
+   matched Doctor Who (1963) for (2005)).
+
+**Replay.** 53 titled historical plans: 6 computed identity maps, **0 remap
+contradictions**; 0 historical same-episode alternate collapses (the same-slot guard
+had always refused them); the new rejection changes no accepted plan. `media_doctor`'s
+live DW shelf guard reports exactly the two known sidecars (E16 under S00E04, E149
+under S00E04) and nothing else.
+
+**Tests.** New `scripts/test_skeleton_merge_feedback.py` (alternates + II/III and
+Part 1/2 controls, alternate merge and metadata carry-over, coverage accounting, tail
+attribution, incomplete-plan feedback, identity guard + Season-00 exemption, replay)
+and `scripts/test_slot_repair.py` (specials scheme from filenames not nfo numbers, AD
+remap, DW collision → S00E23, Mysterio nfo fix, ambiguous collision refusal, doctor
+guard, worklist replay). Registered in `verify_fleet.sh`: **67 blocking checks, ALL
+CHECKS PASSED**.
+
+**Live repairs applied through the tool (before ship).** American Dad's
+`Season 04/S04E06 - Independent Movie` moved to
+`Season 10/S10E06 - Independent Movie` (remote on `automega306`, records rewritten:
+1 `chunk_filed` path, 1 `applied` entry; `library.db` 1 superseded + 1 recorded).
+Doctor Who's `S00E04 The End Of Time Part 1` moved to `S00E23` (remote on
+`automega282`), its new locked nfo carries `<episode>23</episode>`, and
+`S00E04 The Return Of Doctor Mysterio`'s nfo was corrected from `<episode>149</episode>`
+to `<episode>4</episode>`.
+
+**Deploy + re-drop.** Shipped via `ship-fleet.sh` at the first `ai_runner` gap (the
+restart also forces Media-Syncer's remote rescan so the moved files reappear through
+the mount). Then the three sources were moved out of `failed/`: Family Guy
+(`705FEBDA…torrent`) and Friends (the named `.torrent`) to the watch root, and American
+Dad from the `state/torrent_sources/06dd53e1…torrent` mirror — all three resume from
+`chunk_done` (Family Guy 96 with the S07E07 alternate pair computed as one episode;
+Friends wave 0 with all 32 Featurettes attributable; American Dad 34 with S04E06
+vacated). The Simpsons stays as §15.4.
 
 ### Shipped 2026-09-24 (evening) — the show summary counts evicted episodes, and a proven collision retries instead of parking the pack
 
@@ -1828,7 +1914,12 @@ runs this text, so no bounce).
 
 ---
 
-## 15. Diagnosis queue — 2026-09-25 (the next session's work order)
+## 15. Diagnosis queue — 2026-09-25 — **SHIPPED; kept as the evidence of record**
+
+> **Status 2026-09-25.** Every seam below is implemented, tested and shipped — see the
+> top shipped section. The items remain as the written diagnosis and the named
+> acceptance targets: 15.1/15.2/15.3/15.5 shipped (the fixes are in the harness, not
+> hand-moves), 15.4 is the live Simpsons acceptance, 15.6/15.7 are unchanged.
 
 **OWNER'S STANDING INSTRUCTION FOR EVERY ITEM BELOW. The named answers are acceptance
 targets, NOT repair instructions. The deliverable is NOT this assistant hand-moving a
