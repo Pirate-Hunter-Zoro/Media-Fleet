@@ -127,23 +127,35 @@ ART_NO_STILL_TTL_SEC = int(os.environ.get("MEDIA_DOCTOR_ART_NO_STILL_TTL_SEC",
 STUCK_AFTER_PASSES = int(os.environ.get("MEDIA_DOCTOR_STUCK_AFTER_PASSES", "4"))
 
 
-def _stuck_count(state, show, prob):
-    """How many consecutive passes this exact problem has been reported. Best-effort.
+def _stuck_key(prob):
+    """The identity of a report line across passes: kind + the exact detail text."""
+    return f"{prob.get('kind')}|{prob.get('detail')}"
+
+
+def _note_problem_pass(state, show, problems):
+    """Count this pass's problems and forget any that are no longer reported.
 
     Keyed by show + problem KIND + detail, so a count that changes ("3 episode(s) blank"
     -> "1 episode(s) blank") reads as progress and resets, while a line that never moves
-    accumulates.
+    accumulates. Returns the per-key count for the report.
+
+    These counters ARE state, so the caller must persist `state` AFTER calling this --
+    the save used to run before the report, which meant a genuinely stuck `[auto]` line
+    could never be demoted to NEEDS REVIEW: the exact promise `STUCK_AFTER_PASSES`
+    makes, silently unkept for every problem it existed for. An empty `problems` list
+    forgets the show's counters, which is how a healthy show starts clean.
     """
     try:
-        key = f"{prob.get('kind')}|{prob.get('detail')}"
         st = state.setdefault(show, {}).setdefault("stuck", {})
-        st[key] = int(st.get(key, 0)) + 1
-        # Forget anything not seen this pass, so a fixed problem does not keep its count.
-        for k in [k for k in st if k != key and st.get(k, 0) < 0]:
+        keys = {_stuck_key(q) for q in problems}
+        for q in problems:
+            k = _stuck_key(q)
+            st[k] = int(st.get(k, 0)) + 1
+        for k in [k for k in st if k not in keys]:
             del st[k]
-        return st[key]
+        return {k: st[k] for k in keys}
     except Exception:                                                 # noqa: BLE001
-        return 0
+        return {}
 # How many episodes must share one image before it reads as a smeared fallback rather
 # than a coincidence. Two neighbouring episodes can legitimately reuse a frame.
 ART_DUP_MIN = int(os.environ.get("MEDIA_DOCTOR_ART_DUP_MIN", "3"))
@@ -328,11 +340,13 @@ class Jellyfin:
         season poster as an episode `Primary`, which is the very thing being repaired.
         Restricted to TheMovieDb because the OMDb entries carry no dimensions, so they
         cannot be aspect-checked and are as likely to be a poster as a still.
+
+        `None` means the provider GENUINELY offers no landscape still. A lookup that
+        could not be made RAISES, because callers remember a `None` as a refusal (the
+        art check stops re-asking for `ART_NO_STILL_TTL_SEC`), and a transport blip must
+        never be written down as a provider-catalogue fact.
         """
-        try:
-            data = self.get(f"Items/{item_id}/RemoteImages", type="Primary", limit="50")
-        except Exception:                                             # noqa: BLE001
-            return None
+        data = self.get(f"Items/{item_id}/RemoteImages", type="Primary", limit="50")
         ims = [i for i in (data or {}).get("Images", [])
                if i.get("Type") == "Primary" and i.get("ProviderName") == "TheMovieDb"
                and i.get("Width") and i.get("Height")]
@@ -1133,6 +1147,63 @@ def _art_verdict(show_dir, cache):
     return bad
 
 
+def _refused_ts(rec):
+    """When an image's refusal was recorded; 0.0 when it was never refused.
+
+    Entries written by the first deployment are bare timestamps; entries written since
+    the repair learned to distinguish its two refusal reasons are `{"ts", "url",
+    "reason"}` dicts. Both are understood, so an upgrade does not silently un-refuse
+    every image the fleet already gave up on.
+    """
+    if isinstance(rec, dict):
+        rec = rec.get("ts")
+    try:
+        return float(rec or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _drop_refused_art(art_bad, show_state, now=None):
+    """Drop bad images whose provider-best answer is known not to fix them.
+
+    The shape check is a fact -- this image is not a still -- but the repair asks the
+    provider for a real one, and for some episodes the provider has nothing BETTER to
+    give: no landscape still at all, or one shared image re-used for every missing
+    episode (classic serials are the shape; the rule names no series). Re-adopting the
+    same shared image rewrites the same bytes, the shape check re-fires, and the report
+    lists a problem whose only repair has already been attempted. That is §5's lesson
+    ("87 items ... they were not 87 problems"): a report that lists what cannot be acted
+    on buries what can.
+
+    So a refusal is remembered per IMAGE, for `ART_NO_STILL_TTL_SEC`, and an image is
+    only dropped while its refusal is fresh. A different episode next to it is
+    unaffected, and a still the provider adds later is picked up after the expiry.
+    """
+    seen = (show_state or {}).get("art_no_still") or {}
+    if not art_bad or not seen:
+        return list(art_bad)
+    fresh = (time.time() if now is None else now) - ART_NO_STILL_TTL_SEC
+    return [(pth, r) for pth, r in art_bad if _refused_ts(seen.get(pth)) < fresh]
+
+
+def _art_next_action(best_url, tried_url):
+    """What to do with one bogus episode image. Computed from the provider's own answer.
+
+    `no-still`    -- the provider genuinely has no landscape still; nothing to fetch.
+    `already-tried` -- the provider's current best answer was already adopted and the
+                    shape persisted (measured: TMDB re-uses one still across every
+                    missing episode of a serial). Fetching it again cannot change the
+                    bytes; the caller remembers the refusal instead of looping.
+    `adopt`       -- an answer not yet applied (first attempt, or a NEW best still the
+                    provider gained since -- the retry is immediate, not TTL-bound).
+    """
+    if not best_url:
+        return "no-still"
+    if tried_url and best_url == tried_url:
+        return "already-tried"
+    return "adopt"
+
+
 # Which provider ids identify a show. A key going from ABSENT to SET is the
 # "series had no identity" case -- its artwork was supplied locally and must be
 # KEPT. A key that was set and then CHANGED is a re-match: the old artwork is the
@@ -1730,7 +1801,7 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
     # shared by several episodes, or equals a season poster is not a still.
     if art_cache is not None:
         art_bad = _art_verdict(show_dir, art_cache)
-        # DROP the ones we have already ASKED the provider about and been told no.
+        # DROP the ones whose provider-best answer is already known not to fix them.
         #
         # Detection and repair disagreed, and the report paid for it. The shape check is
         # a fact -- this image is not a still -- but the repair then asks the provider for
@@ -1739,19 +1810,13 @@ def diagnose_show(show_dir, jf, series_by_path, pids_by_id=None,
         # fix had already been attempted and refused, and the report read as twenty shows
         # in trouble when one movie was the only thing a human could act on.
         #
-        # That is §5's lesson again ("87 items ... they were not 87 problems"): a report
-        # that lists what cannot be acted on buries what can. So the refusal is REMEMBERED,
-        # per image, and an image the provider has no still for stops being an issue.
-        #
-        # It expires (`ART_NO_STILL_TTL_SEC`), because "TMDB has no still for this episode"
-        # is a fact about a PLAN, not about physics -- stills get added. And it is keyed
-        # per IMAGE, never per show, so one unfixable still cannot hide a fixable one that
-        # appears next to it later.
-        seen_none = ((state or {}).get(show_dir.name) or {}).get("art_no_still") or {}
-        if art_bad and seen_none:
-            fresh = time.time() - ART_NO_STILL_TTL_SEC
-            art_bad = [(pth, r) for pth, r in art_bad
-                       if float(seen_none.get(pth, 0)) < fresh]
+        # The refusal is REMEMBERED per image (see `_drop_refused_art` for both shapes:
+        # no still at all, or the provider's own still re-used across episodes so that
+        # adoption rewrites the same bytes and the shape persists), and it expires after
+        # `ART_NO_STILL_TTL_SEC` because a provider's catalogue is a fact about a moment,
+        # not about physics -- stills do get added. Keyed per IMAGE, never per show, so
+        # one unfixable still cannot hide a fixable one that appears next to it later.
+        art_bad = _drop_refused_art(art_bad, (state or {}).get(show_dir.name))
         if art_bad:
             reasons = sorted({r.split(" --")[0].split(" (")[0] for _p, r in art_bad})
             add("artwork_bogus",
@@ -2069,7 +2134,13 @@ def apply_auto_fixes(probs, jf, state, dry_run, cycle_budget):
         # `pids` is NOT part of the ladder -- it is the record of which identity the
         # artwork was fetched under. Clearing it on an episode drop would erase the
         # only evidence a later re-match ever happened.
-        keep = {k: st[k] for k in ("pids",) if k in st}
+        #
+        # Neither are the art refusals (`art_no_still`, `art_still_tried`): they record
+        # what the PROVIDER's catalogue holds for an image, a fact about the episode, not
+        # an attempt tied to this show's episode count. Clearing them on one new episode
+        # would re-open the adopt-and-reflag loop for every already-refused image. The
+        # 30-day TTL is the only thing that expires a refusal, by design.
+        keep = {k: st[k] for k in ("pids", "art_no_still", "art_still_tried") if k in st}
         st.clear(); st.update(keep); st["sig"] = sig
     kinds = {p["kind"] for p in probs["problems"]}
     acted = []
@@ -2478,7 +2549,11 @@ def apply_auto_fixes(probs, jf, state, dry_run, cycle_budget):
                     ep_by_path[str(Path(e["Path"]).resolve())] = e["Id"]
                 except Exception:                                     # noqa: BLE001
                     pass
-        fixed = refused = 0
+        # Which provider URL each image has already had adopted (per image, survives a
+        # signature reset): the memory that turns "adopted, shape persisted" into a
+        # refusal instead of an every-pass re-adopt of the same bytes.
+        tried_map = st.setdefault("art_still_tried", {})
+        would = adopted = refused_absent = refused_tried = 0
         for bad_path in sorted(bad):
             if cycle_budget["art"] <= 0:
                 break
@@ -2487,27 +2562,55 @@ def apply_auto_fixes(probs, jf, state, dry_run, cycle_budget):
             eid = next((i for p, i in ep_by_path.items() if Path(p).stem == stem), None)
             if eid is None:
                 continue
-            cycle_budget["art"] -= 1
             if dry_run:
-                fixed += 1
+                would += 1
+                cycle_budget["art"] -= 1
                 continue
-            url = jf.best_remote_still(eid)
-            if not url:
-                # Provider has no real still. Leave what is there AND remember the answer,
-                # so the shape check stops re-raising a problem whose only fix has already
-                # been asked for and refused. See the detection side in `diagnose_show`.
-                refused += 1
-                st.setdefault("art_no_still", {})[bad_path] = now
+            # A failed LOOKUP must not become a remembered refusal. `best_remote_still`
+            # raises on transport errors and returns None only when the provider
+            # genuinely offers no landscape still, so a TMDB blip cannot hide an image
+            # from the report for `ART_NO_STILL_TTL_SEC`.
+            try:
+                url = jf.best_remote_still(eid)
+            except Exception as exc:                                  # noqa: BLE001
+                _log(f"  {show}: still lookup failed for {stem} (not remembered): {exc}")
                 continue
+            action = _art_next_action(url, tried_map.get(bad_path))
+            if action != "adopt":
+                # Leave the image AND remember the provider's answer, so the shape check
+                # stops re-raising a problem whose only fix has been asked for and
+                # refused. `no-still`: the provider offers nothing. `already-tried`: the
+                # offered still is already what is on disk (the provider re-uses one
+                # image across these episodes), so fetching it again cannot change the
+                # bytes -- this is the loop the `already-tried` state exists to break.
+                if action == "no-still":
+                    refused_absent += 1
+                else:
+                    refused_tried += 1
+                st.setdefault("art_no_still", {})[bad_path] = {
+                    "ts": now, "url": url or "", "reason": action}
+                continue
+            cycle_budget["art"] -= 1
             try:
                 jf.adopt_remote_image(eid, "Primary", url)
-                fixed += 1
+                tried_map[bad_path] = url
+                # A NEW provider answer starts a fresh attempt: drop any stale refusal
+                # so the next shape verdict is a real one, not a remembered one.
+                st.get("art_no_still", {}).pop(bad_path, None)
+                adopted += 1
             except Exception as exc:                                  # noqa: BLE001
                 _log(f"  {show}: still adopt failed for {stem}: {exc}")
-        if fixed:
-            acted.append(f"re-adopt {fixed} bogus episode image(s) from the provider")
-        if refused:
-            acted.append(f"{refused} episode image(s) left as-is (provider has no real still)")
+        if would:
+            acted.append(f"re-examine {would} bogus episode image(s)")
+        if adopted:
+            acted.append(f"re-adopt {adopted} bogus episode image(s) from the provider")
+        if refused_absent:
+            acted.append(f"{refused_absent} episode image(s) left as-is "
+                         f"(provider has no real still)")
+        if refused_tried:
+            acted.append(f"{refused_tried} episode image(s) left as-is (the provider's "
+                         f"own still is already applied and still shared; re-checked "
+                         f"after {ART_NO_STILL_TTL_SEC // 86400} days)")
 
     # --- deterministic title fixes (no AI run): three cases, each idempotent ---
     #   1. the real title is in the FILENAME            -> write it to both sides
@@ -2735,13 +2838,20 @@ def _episode_block(escalate_probs):
     return "\n".join(rows)
 
 
-def _metadata_repair_state(show_path):
+def _metadata_repair_state(show_path, only_names=None):
     """`(blank_plots, junk_titles)` on disk -- the postcondition an escalation must move.
 
     HANDOFF 10.4 reason 3: `escalate()` counted any non-empty closing sentence as
     success, so two timed-out/empty Toriko runs burned `escalate_n` and
     `MAX_ESCALATIONS_PER_SIG` retired the show permanently. The budget is charged only
     when the artifact actually changed.
+
+    `only_names` restricts the count to the exact episode files the escalation was
+    asked to fix. The whole-show count was measured against a LIVE ingest: a pack
+    filing new blank episodes mid-run turned a real repair into "no change" and a
+    no-op into a decrease (measured: BoJack `(0, 0) -> (2, 2)` while the run did
+    nothing). The postcondition is a statement about the work requested, so it is
+    measured on the work requested.
     """
     blank = junk = 0
     try:
@@ -2749,6 +2859,8 @@ def _metadata_repair_state(show_path):
     except Exception:                                            # noqa: BLE001
         return (0, 0)
     for v in videos:
+        if only_names is not None and v.name not in only_names:
+            continue
         nfo = library.episode_nfo_path(v)
         try:
             text = nfo.read_text("utf-8", "ignore") if nfo.exists() else ""
@@ -2791,7 +2903,12 @@ def escalate(probs, dry_run):
            "--max-turns", "80", "--timeout", "1740"]
     if config.AI_MODEL:
         cmd += ["--model", config.AI_MODEL]
-    before = _metadata_repair_state(probs.get("path"))
+    # The postcondition is measured on the exact episodes the run was handed, never on
+    # the whole show: a live ingest keeps filing while the run works, and those new
+    # sidecars must not move the verdict either way (see `_metadata_repair_state`).
+    targets = {it["file"] for p in escalate_probs for it in (p.get("items") or [])
+               if it.get("file")}
+    before = _metadata_repair_state(probs.get("path"), targets or None)
     _log(f"  escalating '{probs['show']}' to a headless AI run "
          f"({len(escalate_probs)} problem(s); before blank/junk={before})...")
     try:
@@ -2820,8 +2937,9 @@ def escalate(probs, dry_run):
     # VERIFY THE POSTCONDITION BEFORE CHARGING THE BUDGET (HANDOFF 10.4). A run that
     # returns a confident paragraph but leaves the .nfo files unchanged has not
     # repaired anything, and counting it is how Toriko reached escalate_n=2 and was
-    # retired for good. Only a real reduction in blank plots / junk titles counts.
-    after = _metadata_repair_state(probs.get("path"))
+    # retired for good. Only a real reduction in blank plots / junk titles among the
+    # episodes the run was given counts.
+    after = _metadata_repair_state(probs.get("path"), targets or None)
     if after >= before:
         _log(f"  {probs['show']}: escalation finished but the sidecars did not change "
              f"(blank/junk {before} -> {after}); NOT counted against its retry budget "
@@ -2855,6 +2973,13 @@ def write_report(all_probs, acted_map, scoped=False, state=None):
         lines.append("")
         for p in sorted(unhealthy, key=lambda x: -max(q["sev"] for q in x["problems"])):
             lines.append(f"• {p['show']}")
+            # Count this pass's problems as one unit: increments every line seen now and
+            # forgets the ones this pass did not report. These counts are state and are
+            # persisted by the caller AFTER this function runs (see `run_once`) -- when
+            # the save came first, the counters never survived and a genuinely stuck
+            # `[auto]` line stayed `[auto]` forever.
+            counts = (_note_problem_pass(state, p["show"], p["problems"])
+                      if state is not None else {})
             for q in p["problems"]:
                 # A problem marked `[auto]` claims the doctor is handling it. When the
                 # same one comes back pass after pass, that claim is false and the report
@@ -2864,7 +2989,7 @@ def write_report(all_probs, acted_map, scoped=False, state=None):
                 #
                 # So the report now says how long it has been stuck, and stops calling a
                 # problem automatic once the automatic path has demonstrably failed at it.
-                seen = _stuck_count(state, p["show"], q) if state is not None else 0
+                seen = counts.get(_stuck_key(q), 0)
                 stuck = seen >= STUCK_AFTER_PASSES
                 mark = "NEEDS REVIEW" if (not q["auto"] or stuck) else "auto"
                 lines.append(f"    [{mark}] {q['detail']}")
@@ -3252,6 +3377,9 @@ def run_once(dry_run=False, only=None, no_escalate=False):
             continue
         if not probs["problems"]:
             state.setdefault(probs["show"], {})["healthy_ts"] = time.time()
+            # A healthy pass forgets the show's stuck counters: a problem that returns
+            # later starts its count from this clean pass, not from history.
+            _note_problem_pass(state, probs["show"], [])
             remember_identity(probs)
             continue
         remember_identity(probs)
@@ -3336,12 +3464,20 @@ def run_once(dry_run=False, only=None, no_escalate=False):
     if dry_run:
         _log("dry run: state, worklist and library_health.txt left untouched")
     else:
+        # The report is written FIRST because it advances the stuck counters in `state`
+        # (`_note_problem_pass`). Saving before it persisted the PREVIOUS pass's counts,
+        # so a stuck `[auto]` line could never reach `STUCK_AFTER_PASSES` and the report
+        # kept calling an unfixable problem automatic forever -- the DW (1963) art loop
+        # ran 32 passes and was still `[auto]`.
+        try:
+            write_report(all_probs, acted_map, scoped=bool(only), state=state)
+        except Exception as e:                                        # noqa: BLE001
+            _log(f"report write failed (non-fatal): {e}")
         _save(STATE_FILE, state)
         # Invalidated by the (name, size, mtime) signature, so re-adopted artwork is
         # re-verified next pass rather than trusted from this pass's verdict.
         _save(ART_CACHE_FILE, art_cache)
         _save(WORKLIST_FILE, [{"show": p["show"], "problems": p["problems"]} for p in worklist])
-        write_report(all_probs, acted_map, scoped=bool(only), state=state)
         if only:
             _log(f"scoped to {only!r}: library_health.txt left untouched "
                  f"(a one-show report would read as a whole-library all-clear)")

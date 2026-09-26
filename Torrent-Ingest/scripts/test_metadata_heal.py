@@ -159,6 +159,52 @@ try:
         md.subprocess.run = _fix
         check("a verified write IS counted",
               md.escalate(probs, dry_run=False) is True)
+
+        # The postcondition is measured on the episodes the run was HANDED, never on
+        # the whole show: a live pack keeps filing while the run works, and those new
+        # sidecars must not move the verdict either way. Both directions, so neither
+        # the old whole-show count nor a blanket "did anything change" can pass.
+        print("Part 4 -- the postcondition names the work, not the whole show")
+        race = make_show(mount / "Shows", title="Race Show", n=2)
+        target = race / "Season 01" / "Race Show - S01E001.nfo"
+        neighbour = race / "Season 01" / "Race Show - S01E002.nfo"
+        junk = "[Judas] x265 10b"
+
+        def race_probs():
+            return {"show": "Race Show", "path": str(race), "sig": "2",
+                    "problems": [{"kind": "title_janky", "detail": "x", "auto": False,
+                                  "sev": 2,
+                                  "items": [{"file": "Race Show - S01E001.mkv",
+                                             "season": 1, "episode": 1,
+                                             "nfo_title": junk,
+                                             "jellyfin_title": "", "plot_blank": True}]}]}
+
+        def _fix_unrelated(*_a, **_k):
+            t = neighbour.read_text("utf-8")
+            t = t.replace("<title>Episode 2</title>", "<title>The Real Neighbour</title>")
+            t = t.replace("</episodedetails>", "  <plot>Present.</plot>\n</episodedetails>")
+            neighbour.write_text(t, encoding="utf-8")
+            return _Proc('{"result": "done", "is_error": false}')
+
+        md.subprocess.run = _fix_unrelated
+        check("an unrelated fix does NOT count as repairing the target",
+              md.escalate(race_probs(), dry_run=False) is False)
+
+        def _fix_target(*_a, **_k):
+            t = target.read_text("utf-8")
+            t = t.replace(junk, "The Real Target")
+            t = t.replace("</episodedetails>", "  <plot>Fixed.</plot>\n</episodedetails>")
+            target.write_text(t, encoding="utf-8")
+            (race / "Season 01" / "Race Show - S01E003.mkv").write_bytes(b"\0")
+            (race / "Season 01" / "Race Show - S01E003.nfo").write_text(
+                '<?xml version="1.0"?><episodedetails>'
+                f"<title>{junk}</title><season>1</season><episode>3</episode>"
+                "</episodedetails>", encoding="utf-8")
+            return _Proc('{"result": "fixed the target", "is_error": false}')
+
+        md.subprocess.run = _fix_target
+        check("a target fix DOES count even while the pack keeps filing",
+              md.escalate(race_probs(), dry_run=False) is True)
     finally:
         md.subprocess.run, md.config.AI_BIN = old_run, old_bin
 finally:

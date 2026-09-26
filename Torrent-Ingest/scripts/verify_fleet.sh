@@ -460,6 +460,16 @@ run "English-only language gates (both ways)" \
 # escalation budget only when the sidecars actually change (HANDOFF 10.4).
 run "metadata heal sees the mount and verifies writes (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_metadata_heal.py
+# The doctor's repair loop verifies its own postcondition and remembers what it
+# proved. An episode image whose provider-best answer is already applied (or absent)
+# is refused per image for a TTL instead of re-adopted every pass -- the provider
+# re-uses one still across episodes it has none for, so "re-adopt" rewrote the same
+# bytes forever. A provider LOOKUP failure is never remembered, a NEW provider still
+# is adopted at once, and a stuck `[auto]` line is persisted, demoted to NEEDS REVIEW
+# after STUCK_AFTER_PASSES, and forgotten when it stops being reported (the counters
+# were advanced in the report, which ran after the state save, so they never survived).
+run "the doctor's art repair and stuck reporting hold (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_media_doctor_repair.py
 # This repository is public. It used to track the MEGA account pool (822 remotes with
 # user/pass) and a live Jellyfin API key in nine plists; both moved to machine-local
 # `.env`/an untracked conf on 2026-09-19. A `.gitignore` rule is not a guard against

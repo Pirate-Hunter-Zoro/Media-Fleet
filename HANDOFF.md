@@ -209,9 +209,9 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 
 | | |
 |---|---|
-| `verify_fleet.sh` | **ALL CHECKS PASSED**, **67 blocking checks** (2026-09-25: `test_skeleton_merge_feedback.py` and `test_slot_repair.py` registered after `test_reconcile_presence.py`; the 65-check figure added `test_show_summary_inventory.py` on 2026-09-24, and the 60-check figure predates `test_undownloadable_torrent.py`) |
+| `verify_fleet.sh` | **ALL CHECKS PASSED**, **69 blocking checks** (2026-09-26: `test_media_doctor_repair.py` registered after `test_metadata_heal.py`; `test_pack_conflict.py` registered earlier the same day; the 65-check figure added `test_show_summary_inventory.py` on 2026-09-24 and the 2026-09-25 figure of 67 added `test_skeleton_merge_feedback.py` and `test_slot_repair.py`; the 60-check figure predates `test_undownloadable_torrent.py`) |
 | `fleet_doctor` / `fleet_health` | not re-run this session; §10.8 is the acceptance list |
-| `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3) |
+| `media_doctor` | series-level identity + title art are now scanned (`series_identity_stale`/`series_art_stale`/`episode_slot_missing`); **TZ (2019) repaired live** — folder.jpg `965f20be…`, landscape.jpg `ec122588…` (neither Too Cute hash), tvshow.nfo `premiered 2019-04-01`, `tvdbid 358915`, `enddate 2020-06-25`, item locked, 2 seasons / 20 indexed episodes / no ghost season (§10.3). **2026-09-26 evening:** an episode image whose provider-best answer is already applied (or absent) is refused per image for 30 d (`art_no_still` `{"ts","url","reason"}`, `_art_next_action`, transport failures never remembered) — the DW (1963) S04E16–E18 loop ended (scoped passes now `0 show(s) flagged`); the stuck counters persist (report written before the state save) so a genuinely unfixable `[auto]` line is demoted to NEEDS REVIEW; the AI escalation postcondition measures only the episodes the run was handed |
 | Repo | one monorepo at `~/Developer/Media-Orchestrator`; the 2026-09-23 session added `ac1c37a` (Smurfs re-fetch skeleton fix, deployed 21:49 via restart of torrentingest 49948 / directingest 49957 / driveingest 49969), plus HANDOFF/commit follow-ups through `1b9cfc9`. The 2026-09-24 session added `48f9fd9` (a private trackerless `.torrent` is refused at registration — see the shipped section), deployed 05:47 via restart of torrentingest 72073 / directingest 72081 / driveingest 72094; that restart also put `bde8d71` (a log line) live on those three. The 2026-09-24 **evening** session added `4202bb3` (the show summary counts evicted episodes; a proven collision retries instead of parking the pack — see the shipped section), deployed 21:37:41 via restart of torrentingest 88328 / directingest 88336 / driveingest 88349. On top of the stall fix `c9fd3aa` and the 2026-09-21/22 commits through `81d07d7` |
 | Stall policy | **one 24h deadline, partial bytes kept — shipped `c9fd3aa`, deployed 2026-09-23 20:08 CDT.** `_abandon_stalled` no longer reads `availability < 1` as "no complete copy in the swarm" (it is a connected-peers fact and reads < 1 during every stall); `STALL_ABANDON_NO_COMPLETE_SEC` is gone; an abandon calls `qbt.remove(delete_files=False)` so a re-drop resumes. The four Bob's Burgers packs the owner moved back are downloading again (S02 27%, S06 10.8%, S01 stalled with 4 complete peers known, S03 parked between waves) |
 | Jellyfin | 313 series, 20,052 episodes, 448 movies (last counted 2026-09-19) |
@@ -343,6 +343,73 @@ under `finished/` (its record is REFUSED; re-dropping would hit the new guard an
 duplicate). **Next session: confirm the three re-drops file their waves and that the AMZN
 rows do not resurrect** (`verify_owner_report`/`media_doctor` read queued purges as
 PENDING, not FAIL).
+
+### Shipped 2026-09-26 (evening) — the art repair remembers its own answer, and the stuck counter survives the save
+
+**Two report lines that could never clear, one class each.** `library_health.txt` listed
+Doctor Who (1963) with "3 episode image(s) are not real stills (identical to 2 other
+episode image(s))" beside `-> fixed: re-adopt 3 bogus episode image(s)`, pass after pass
+(32 consecutive logs). TMDB's best still for S04E16–E18 is the SAME image
+(`tBiH0u0…`) — the provider has no distinct still for those episodes — so `re-adopt`
+rewrote the same bytes, the shape check re-fired, and the doctor looped forever. The
+second line was Family Guy's two blank titles: the doctor's AI escalation DID write them
+(locked; Jellyfin renders "Road to the Multiverse"/"Family Goy"), but the postcondition
+counted blank plots/junk titles across the WHOLE show while the live pack kept filing, so
+the verified write was recorded as "the sidecars did not change" and never charged.
+
+**The fixes, computed and series-free.**
+
+1. **The art repair verifies its own answer and remembers a refusal.**
+   `_art_next_action(best_url, tried_url)` decides from the provider's own reply: `adopt`
+   (an answer not yet applied, or a NEW best still), `already-tried` (that exact URL was
+   adopted and the shape persisted — fetching it again cannot change the bytes),
+   `no-still` (the provider offers no landscape still). Both refusal branches write a
+   per-image refusal under `art_no_still` (`{"ts","url","reason"}`; the pre-upgrade
+   bare-timestamp entries are still honoured) for `ART_NO_STILL_TTL_SEC` (30 d), and
+   `_drop_refused_art` drops refused images while fresh, so one unfixable image cannot
+   hide a fixable neighbour. `best_remote_still` no longer swallows transport errors (it
+   returns None only for a genuine no-landscape-still): a lookup failure is logged and
+   remembers NOTHING, so a TMDB blip cannot hide an image for 30 days.
+   `art_still_tried`/`art_no_still` survive a disk-signature reset like `pids`.
+2. **The stuck counters are persisted.** `_note_problem_pass` advances the per-problem
+   counts and forgets lines that stop being reported; `run_once` now writes the report
+   BEFORE `_save(STATE_FILE, state)` — it ran after, so the counters never survived and
+   an unfixable `[auto]` line could never be demoted to NEEDS REVIEW (the DW art loop ran
+   32 passes and was still `[auto]`). A healthy pass clears the show's counters.
+3. **The escalation postcondition names the work.** `_metadata_repair_state(only_names=)`
+   measures the exact episodes the run was handed, never the whole show; the measured
+   race (BoJack `(0,0)->(2,2)` while the run did nothing) can no longer turn a no-op into
+   a change or a live-ingest move into a failure.
+
+No title, season, episode number, path or digest is written into the code; the rules are
+`ART_DUP_MIN`, the provider's own ranking, the existing TTL, and the file names the
+problem itself carries.
+
+**Tests.** New `scripts/test_media_doctor_repair.py` (registered): the action decision
+all three ways; fresh/expired/legacy refusal filtering; one image's refusal cannot hide
+its neighbour; the full live loop (pass 1 adopts once and records the URL, pass 2 refuses
+without re-adopting and the detection side drops it); a lookup failure records nothing;
+a NEW provider URL is adopted at once and clears the stale refusal; dry-run records
+nothing; and the stuck counter persisted/demoted/forgotten plus the healthy reset.
+`test_metadata_heal.py` Part 4 (registered): an unrelated fix does NOT count as repairing
+the target, and a target fix DOES count while the pack keeps filing.
+
+**Live acceptance (owner-visible, pasted).** DW (1963), scoped passes on the live library:
+
+```
+[media_doctor] FLAGGED Doctor Who (1963): 3 episode image(s) are not real stills (identical to 2 other episode image(s))
+[media_doctor]   -> Doctor Who (1963): re-adopt 3 bogus episode image(s) from the provider        # pass 1 records art_still_tried = the one TMDB URL for all three
+[media_doctor]   -> Doctor Who (1963): 3 episode image(s) left as-is (the provider's own still is already applied and still shared; re-checked after 30 days)   # pass 2 refuses, art_no_still reason=already-tried
+[media_doctor] pass done: 0 show(s) flagged, 0 auto-fixed, 0 pending human/AI review             # scoped re-checks: DW (1963) and Family Guy (1999)
+```
+
+The 12:18:03 report (written by the new code, PID 76619) has DW (1963) gone; Family Guy
+kept only its 11 just-refused portrait stills (`-> fixed: 11 episode image(s) left as-is
+(provider has no real still)`), whose scoped re-check prints `0 show(s) flagged`.
+`bash scripts/verify_fleet.sh` → **ALL CHECKS PASSED** (69 blocking checks; the new check
+is `test_media_doctor_repair.py`). A kickstart at 12:21 (PID 89183) started the next pass;
+it is escalating Friends (1994), the live ingest it is mid-identify on — the doctor's
+normal work, unrelated to this fix.
 
 ### Shipped 2026-09-25 — §15: the harness computes alternates, re-types are attributed, and a misfiled slot is repaired from its identity
 
