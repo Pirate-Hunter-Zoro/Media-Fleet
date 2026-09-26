@@ -2256,6 +2256,42 @@ def _existing_episode_mismatch(planned, rel, collisions):
             f"silently drop the planned copy.")
 
 
+def queued_for_purge():
+    """Library-relative paths already queued for MEGA purge (queue + in-flight batch).
+
+    A purge has two halves: the local unlink (which is a no-op for an episode evicted to
+    the pool) and the reaper's remote delete. Between them the pool copy is still served
+    through the mount, so a just-superseded episode would read as "already present" and
+    block the replacement that superseded it -- the exact window `pack_conflict` opens
+    when it supersedes a displaced duplicate's footprint and lets the blocked pack retry.
+    The queue is the harness's own statement that these paths are gone on purpose, which
+    is also how the owner report already treats them (a queued purge reads PENDING, not
+    FAIL). Best-effort: an unreadable queue answers nothing, so the caller keeps its
+    historical behavior.
+    """
+    out = set()
+    try:
+        q = config.MEDIAFS_DELETIONS_QUEUE
+    except AttributeError:
+        return out
+    for name in (q.name, q.name + ".processing"):
+        try:
+            text = q.with_name(name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rel = json.loads(line).get("path")
+            except (ValueError, AttributeError):
+                continue
+            if rel:
+                out.add(str(rel))
+    return out
+
+
 def _collapse_existing_episode_collisions(files):
     """Drop planned show episodes that duplicate an episode ALREADY on disk under the
     same season+episode number but a DIFFERENT filename.
@@ -2298,6 +2334,9 @@ def _collapse_existing_episode_collisions(files):
         # Both roots are scanned; the mount wins on a name collision (same bytes).
         entries: list[Path] = []
         seen_names: set[str] = set()
+        # A path already queued for purge is GONE (see `queued_for_purge`): the pool copy
+        # the mount still serves must not block the replacement that superseded it.
+        purge_queued = queued_for_purge()
         for base in (config.MEDIAFS_MOUNT, config.MEDIA_ROOT):
             season_dir = base / rel.parts[0] / rel.parts[1] / rel.parts[2]
             if not season_dir.is_dir():
@@ -2307,9 +2346,12 @@ def _collapse_existing_episode_collisions(files):
             except OSError:
                 continue
             for p in listing:
-                if p.name not in seen_names:
-                    seen_names.add(p.name)
-                    entries.append(p)
+                if p.name in seen_names:
+                    continue
+                if str(Path(*rel.parts[:3]) / p.name) in purge_queued:
+                    continue
+                seen_names.add(p.name)
+                entries.append(p)
         dst_name = rel.name
         # Every differently-named file already holding this slot. The COUNT matters
         # for the One Pace retarget below, so they are collected, not short-circuited.

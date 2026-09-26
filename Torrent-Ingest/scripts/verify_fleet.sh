@@ -438,6 +438,13 @@ run "absolute run split across seasons (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_absolute_run_split.py
 run "chunked wave stall clock (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_chunked_stall_clock.py
+# A parked pack colliding with a duplicate whose library footprint is a PROVEN uniform
+# episode shift is resolved automatically: the displaced footprint is superseded through
+# the sanctioned purge path and the duplicate is retired REFUSED, payload kept. Every
+# weaker shape ({shift 0, mixed shifts, cross-season, unconfirmed titles, a coverage gap,
+# two candidates}) must leave the park standing, so the test pins both directions.
+run "displaced duplicate packs resolve, or fail open (both ways)" \
+    env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_pack_conflict.py
 run "chunked progress is proven, not remembered (both ways)" \
     env -C "$DEV/Torrent-Ingest" "$PY_INGEST" scripts/test_chunk_progress_proof.py
 # The English-only rule is enforced by two `parse` gates, and both leaked:

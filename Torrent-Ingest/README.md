@@ -629,21 +629,24 @@ The safety property that replaces serialization is the **budget**, not a count:
 - This still lets a small working set ingest an unbounded library: fifty dropped
   `.torrent` files admit in waves as fast as the disk drains, not one at a time.
 
-**A stalled download is failed slowly, and its bytes are kept.** A torrent whose
-qBittorrent state is a stall state (`stalledDL`/`queuedDL`/`stoppedDL`/`pausedDL`/`error`/
-`missingFiles`) and whose `last_activity` is older than `STALL_ABANDON_SEC` (24 h) is failed
-and dropped from the budget reservation. The clock is raised to the pack's
-`wave_started_at` for a chunked wave, because a chunked pack is stopped between waves by
-design and the inherited clock would otherwise destroy it seconds after resuming
-(`scripts/test_chunked_stall_clock.py`). The failure **keeps the partial payload**
-(`qbt.remove(delete_files=False)`): a re-drop of the same source resumes from what is on
-disk, and the janitor reclaims a directory that is never retried after its own 7-day grace.
-There is deliberately **one** deadline — before 2026-09-23 a second, 4-hour deadline was
-selected by `availability < 1`, on the mistaken premise that availability is a swarm-wide
-fact. It is not: it counts the peers this client is *currently connected to*, so it reads
-< 1 during every stall and killed four slow-but-alive packs after an ordinary overnight
-lull, deleting ~7 GB of their partial bytes with them. A swarm's health is not knowable
-from a delta in that number.
+**A download that has fetched nothing is failed after a week; one that has fetched
+anything is never abandoned.** A torrent whose qBittorrent state is a no-progress state
+(`stalledDL`/`queuedDL`/`stoppedDL`/`pausedDL`/`error`/`missingFiles`) is failed only when
+it has fetched **zero bytes** AND it is older than `STALL_FIRST_PROGRESS_GRACE_SEC` (7
+days) on qBittorrent's own `added_on` clock. The moment a torrent has fetched a single
+byte it is given unlimited time: a public/DHT-only swarm's seeder gaps are measured in
+hours or days, the partial payload is the one thing a retry cannot recreate cheaply, and
+the owner's instruction is "give a torrent a week to start, and if it makes no progress by
+then, at THAT point we can kill it. But once it makes progress, give it all the time in
+the world" (`scripts/test_chunked_stall_clock.py` pins both directions). A never-starting
+torrent still has to drain, because it keeps its unfetched bytes reserved in
+`_remaining_budget()`; the abandon keeps every byte (`qbt.remove(delete_files=False)`), so
+a re-drop resumes from what is on disk and the janitor reclaims a directory that is never
+retried after its own 7-day grace. Before 2026-09-26 two wrong clocks ran here: a 4-hour
+deadline selected by `availability < 1` (availability counts only the peers this client is
+*currently connected to*, so it reads < 1 during every stall and killed four slow-but-alive
+packs, deleting ~7 GB of partial bytes), and then a 24-hour `last_activity` deadline that
+killed a pack at 70% after a 28-hour seeder gap.
 
 ---
 
@@ -1555,6 +1558,38 @@ dropped from the plan and the chunked wave then freed their bytes as "not in pla
 The plan-on-disk still named them; the validator had already pruned them. Rejecting the
 collapsed plan up front is what stops the loss: a retried plan numbers the parts at
 E05+ where nothing exists, so no part is dropped and no byte is freed.
+
+### A displaced duplicate resolves itself (`pack_conflict`, 2026-09-26)
+
+**A collision parks by design, but a park is not always the end of the story.** Two
+releases of one show were in flight; one mis-filed itself by a uniform same-season episode
+shift, the other then refused to overwrite those slots and parked with every byte intact.
+Neither `validate_plan` nor the collision guard may choose between two packs — that is a
+library-shaping call — and the pipeline had no way to make it, so it needed a human.
+
+`pack_conflict` makes the call computationally, from two facts. A **blocker** is a record
+whose library footprint is a proven displaced duplicate: every filed copy is either an
+explained self-keyed agreement copy or part of ONE non-zero same-season episode shift, at
+least 60% of the shifted copies' own titles confirm their source key (so a swapped
+`E01`/`E02` pair can ride the group but never anchor it), and at least half the footprint
+is shifted. A well-formed pack (shift 0), a release-order pack (varying shifts), a
+deliberate cross-season renumber, an unreadable title and a mixed-shift mess all fail
+open. The blocked pack's own filenames must **NAME every episode** the blocker's copies
+hold (`identify.release_covered_slots`; a combined file's two titles both count, and a
+dropped leading article still matches), and exactly one candidate may qualify. When both
+hold, the blocker's footprint is superseded through the sanctioned path
+(`library.supersede_paths` + `dbhook.record_purge`), the blocker is retired **REFUSED**
+with the reason on its record, its payload is kept (`delete_files=False`), and the parked
+wave retries against the freed slots (`ingest._park_chunked_unfiled` calls the resolver
+before it parks; `scripts/resolve_pack_conflict.py --scan|--record` is the operator
+window). No show title, season number or episode number is written into the module.
+
+**`library.queued_for_purge` closes the reaper window.** A purge's local unlink is a no-op
+for an episode evicted to the pool, and the pool copy is still served through the mount
+until the reaper deletes it remotely — a just-superseded episode would read as
+"already present" and block the replacement that superseded it. The collision scan now
+treats any path on `mediafs_deletions.jsonl` (or its `.processing` batch) as gone, the
+same way the owner report already reads a queued purge as PENDING rather than FAIL.
 
 ### The serial-release numbering guard (`identify.serial_release_map`, `validate_plan`)
 

@@ -1,47 +1,33 @@
 #!/usr/bin/env python3
-"""Regression test for the stall clock and the abandon deadline (2026-09-10, 2026-09-23).
+"""The stall clock: a week to prove the swarm can serve it, then patience forever.
 
-WHAT WENT WRONG (1) -- THE CHUNKED CLOCK. A chunked pack is deliberately STOPPED between
-waves while the finished wave is filed into the library -- so qBittorrent's `last_activity`,
-which is the stall clock, goes stale by design, for as long as filing takes. With identify
-capped that is hours. The next wave then resumed, `_abandon_stalled` read the clock left
-over from before the pause, and destroyed the whole pack seconds later.
+THE POLICY (owner decision, 2026-09-26). A torrent gets `STALL_FIRST_PROGRESS_GRACE_SEC`
+-- one week -- to fetch its FIRST byte. A torrent that has fetched anything is NEVER
+abandoned, however long its swarm goes quiet: a public/DHT-only pack that stalled at 70%
+has proven it can be served, and its partial payload is the one thing a retry cannot
+recreate cheaply. The owner's words: "give a torrent a week to start, and if it makes no
+progress by then, at THAT point we can kill it. But once it makes progress, give it all
+the time in the world."
 
-Measured on the live fleet: `[MTBB] Monogatari Series (BD 1080p)`, 103 files / 75 GB. Wave
-enabled 09:11:55, reported "0%" at 09:12:16, and at 09:12:16 was failed as
+WHY THE OLD CLOCK WENT AWAY. Two wrong rules preceded this one, both measured live:
 
-    stalled 8h with no progress (no seeders/peers); abandoned to release the download budget
+  * THE "NO COMPLETE COPY" 4h DEADLINE selected by qBittorrent's `availability < 1`.
+    Availability is the pieces held by the peers THIS client is currently connected to
+    plus our own, so during any stall it collapses to our own completion fraction and
+    reads < 1 even in a swarm full of seeders. Four slow-but-alive Bob's Burgers packs
+    (S01 45%, S02 22%, S03 1%, S06 0% at failure, 2026-09-23) were killed during an
+    ordinary overnight lull.
 
-...while a tracker scrape at the same hour showed 450 seeders and adding the identical
-`.torrent` by hand pulled 10 MB/s immediately. The swarm was never the problem. Worse, the
-abandon path called `qbt.remove(delete_files=True)`, so every partly-fetched byte went too.
+  * THE 24h "NO PEER ACTIVITY" DEADLINE on `last_activity`. It destroyed the partial
+    payloads of those four packs (`delete_files=True`), so every re-drop restarted from
+    zero -- and on 2026-09-26 it killed Bob's Burgers S01 at 70% after a 28h seeder gap,
+    which is exactly the slow-but-alive shape the owner says to wait out.
 
-THE FIX (1). Each wave stamps `wave_started_at`, and the deadline runs from the later of
-that and `last_activity` -- so it measures "this WAVE has been failing to fetch", not "this
-pack has been idle".
-
-WHAT WENT WRONG (2) -- THE "NO COMPLETE COPY" DEADLINE. `_abandon_stalled` also selected a
-4h deadline whenever qBittorrent's `availability` was below 1, on the premise that this
-means the swarm has no complete copy. It does not: availability is the pieces held by the
-peers this client is CURRENTLY CONNECTED to plus our own, so during any stall it collapses
-to our own completion fraction and reads < 1 even in a swarm full of seeders. Every stalled
-torrent therefore got the 4h path. Four slow-but-alive Bob's Burgers packs (S01 at 45%,
-S02 at 22%, S03 at 1%, S06 at 0%) were killed during an ordinary overnight lull on
-2026-09-23, and `delete_files=True` deleted their partial payloads with the torrent, so
-every re-drop restarted from zero and stalled again -- the "they'll likely fail again" loop
-the owner reported.
-
-THE FIX (2). One deadline (`STALL_ABANDON_SEC`, 24h) selected by peer activity alone, and
-the abandon keeps the partial payload (`delete_files=False`) so a re-drop resumes. The
-janitor reclaims an untried directory after its own 7-day grace.
-
-BOTH DIRECTIONS (§4.5), because a stall guard that can no longer fire lets a genuinely dead
-torrent pin the download budget forever, which is the deadlock it was written to break:
-
-  Part 1 -- a freshly-resumed wave is NOT abandoned, however stale the inherited clock.
-  Part 2 -- a wave that really has been failing past the deadline IS abandoned.
-  Part 3 -- non-chunked behaviour, including the 2026-09-23 regression: a sub-24h stall
-            with availability < 1 is KEPT, and every abandon keeps the partial bytes.
+The abandon that remains is ONLY for a torrent that has never fetched a byte, because
+that one can never advance and keeps its unfetched bytes reserved in `_remaining_budget`
+-- for a chunked pack, the whole active wave -- so it holds the admission queue forever.
+Its clock is qBittorrent's own `added_on`, so a daemon restart cannot re-arm it. Every
+abandon keeps the bytes (`delete_files=False`): nothing is ever destroyed by this path.
 
     python3 scripts/test_chunked_stall_clock.py
 
@@ -54,10 +40,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config                                                       # noqa: E402
 import ingest                                                        # noqa: E402
 
 failures: list[str] = []
-HOUR = 3600.0
+DAY = 86400.0
 
 
 def check(label, got, want):
@@ -69,15 +56,14 @@ def check(label, got, want):
 
 
 class FakeTorrent:
-    def __init__(self, state="stalledDL", last_activity_ago=None, availability=1.0,
-                 num_complete=1, completed=0):
+    def __init__(self, state="stalledDL", added_days_ago=None, progress=0.0,
+                 downloaded=0, completed=0):
         self.state = state
-        self.last_activity = (time.time() - last_activity_ago
-                              if last_activity_ago is not None else None)
-        self.availability = availability
-        self.num_complete = num_complete
+        self.added_on = (time.time() - added_days_ago * DAY
+                         if added_days_ago is not None else None)
+        self.progress = progress
+        self.downloaded = downloaded
         self.completed = completed
-        self.progress = 0.5
 
 
 def would_abandon(record, torrent):
@@ -103,65 +89,63 @@ def would_abandon(record, torrent):
     return out, seen["delete_files"]
 
 
-NOW = time.time()
-CHUNKED = {"info_hash": "a" * 40, "name": "Big Pack", "chunked": True}
-PLAIN = {"info_hash": "b" * 40, "name": "Ordinary Torrent"}
+with_bytes = dict(
+    info_hash="a" * 40, name="Slow But Alive",
+    chunked=True, chunk_done=[0, 1, 2],
+    created_at="2026-09-01T00:00:00+00:00",
+)
+fresh = dict(info_hash="b" * 40, name="Fresh And Stalled",
+             created_at="2026-09-26T00:00:00+00:00")
+plain = dict(info_hash="c" * 40, name="Ordinary Torrent",
+             created_at="2026-09-26T00:00:00+00:00")
 
-print("Part 1 -- a freshly-resumed wave survives a stale inherited clock")
-# The 2026-09-10 live failure: 8h since the last wave's activity, wave enabled seconds
-# ago, availability 0 because no peer has connected yet.
-rec = dict(CHUNKED, wave_started_at=NOW - 21)
-check("wave enabled 21s ago, last_activity 8h old, availability 0",
-      would_abandon(rec, FakeTorrent(last_activity_ago=8 * HOUR, availability=0.0))[0], False)
-check("wave enabled 2m ago, last_activity 30h old, availability 0",
-      would_abandon(dict(CHUNKED, wave_started_at=NOW - 120),
-                    FakeTorrent(last_activity_ago=30 * HOUR, availability=0.0))[0], False)
-check("wave enabled 3h ago (inside the 24h deadline)",
-      would_abandon(dict(CHUNKED, wave_started_at=NOW - 3 * HOUR),
-                    FakeTorrent(last_activity_ago=40 * HOUR, availability=0.0))[0], False)
+print("Part 1 -- a torrent that has fetched anything is NEVER abandoned")
+# The 2026-09-26 live failure: Bob's Burgers S01 at 70%, 28h of no peer activity, stopped
+# and would have been failed by the old 24h clock.
+check("70% on disk, stalled a month -> kept",
+      would_abandon(with_bytes, FakeTorrent(added_days_ago=30, progress=0.70))[0], False)
+check("a single fetched byte is enough",
+      would_abandon(dict(with_bytes, chunk_done=[]),
+                    FakeTorrent(added_days_ago=99, downloaded=1))[0], False)
+check("qBittorrent's completed counter alone keeps it",
+      would_abandon(dict(with_bytes, chunk_done=[]),
+                    FakeTorrent(added_days_ago=99, completed=5))[0], False)
+check("record evidence survives a torrent re-add that reset the live counters",
+      would_abandon(with_bytes, FakeTorrent(added_days_ago=99))[0], False)
+check("a chunked pack stopped between waves for a month is kept",
+      would_abandon(with_bytes, FakeTorrent(state="stoppedDL", added_days_ago=30))[0],
+      False)
 
-print("\nPart 2 -- a wave that really is failing is STILL abandoned")
-check("wave enabled 25h ago, availability 0 (deadline is activity, not availability)",
-      would_abandon(dict(CHUNKED, wave_started_at=NOW - 25 * HOUR),
-                    FakeTorrent(last_activity_ago=25 * HOUR, availability=0.0))[0], True)
-check("wave enabled 25h ago, availability 1",
-      would_abandon(dict(CHUNKED, wave_started_at=NOW - 25 * HOUR),
-                    FakeTorrent(last_activity_ago=25 * HOUR, availability=1.0))[0], True)
-check("stopped between waves for 30h with no wave ever enabled",
-      would_abandon(dict(CHUNKED), FakeTorrent(state="stoppedDL",
-                                               last_activity_ago=30 * HOUR,
-                                               availability=0.0))[0], True)
+print("\nPart 2 -- a torrent that has fetched NOTHING drains after the week")
+check("zero bytes, added 8 days ago -> abandoned",
+      would_abandon(fresh, FakeTorrent(added_days_ago=8))[0], True)
+check("zero bytes, added 8 days ago, stopped between waves -> abandoned",
+      would_abandon(fresh, FakeTorrent(state="stoppedDL", added_days_ago=8))[0], True)
+check("zero bytes, added 8 days ago, errored -> abandoned",
+      would_abandon(fresh, FakeTorrent(state="error", added_days_ago=8))[0], True)
+check("zero bytes, added 6 days ago -> kept (inside the grace)",
+      would_abandon(fresh, FakeTorrent(added_days_ago=6))[0], False)
+check("the grace window really is a week",
+      config.STALL_FIRST_PROGRESS_GRACE_SEC, 7 * 24 * 3600)
+# No `added_on` and no record creation time: the in-memory anchor is the fallback, and it
+# must not read as "already a week old" on its first look.
+check("a clockless torrent is not failed on first sight",
+      would_abandon({"info_hash": "d" * 40, "name": "Clockless"},
+                    FakeTorrent(added_days_ago=None))[0], False)
 
-print("\nPart 3 -- non-chunked records: the 2026-09-23 regression")
-check("plain torrent, 25h stalled -> abandoned",
-      would_abandon(PLAIN, FakeTorrent(last_activity_ago=25 * HOUR,
-                                       availability=1.0))[0], True)
-check("plain torrent, 1h stalled -> kept",
-      would_abandon(PLAIN, FakeTorrent(last_activity_ago=1 * HOUR,
-                                       availability=1.0))[0], False)
-# The exact shape that killed the four Bob's Burgers packs: hours of quiet with
-# availability < 1 because no complete peer is connected, and partial bytes on disk.
-check("plain torrent, 8h stalled, availability 0.45, num_complete 0 -> KEPT",
-      would_abandon(PLAIN, FakeTorrent(last_activity_ago=8 * HOUR, availability=0.45,
-                                       num_complete=0, completed=7_910_324_870))[0], False)
-check("plain torrent, 8h stalled, no seeder known, 0 bytes fetched -> KEPT",
-      would_abandon(PLAIN, FakeTorrent(last_activity_ago=8 * HOUR, availability=0.0,
-                                       num_complete=0, completed=0))[0], False)
-
-print("\nPart 4 -- an abandon never deletes the partial payload")
-_, delete_files = would_abandon(PLAIN, FakeTorrent(last_activity_ago=25 * HOUR))
-check("delete_files passed to qbt.remove", delete_files, False)
-_, delete_files = would_abandon(dict(CHUNKED, wave_started_at=NOW - 30 * HOUR,
-                                     chunk_active=[0]),
-                                FakeTorrent(last_activity_ago=30 * HOUR))
-check("chunked wave abandon keeps its bytes too", delete_files, False)
-
-print("\nControl -- a torrent that is actually downloading is never touched")
+print("\nPart 3 -- a torrent that is actually downloading is never touched")
 for st in ("downloading", "forcedDL", "metaDL", "uploading"):
     check(f"state {st!r} -> never abandoned",
-          would_abandon(dict(CHUNKED, wave_started_at=NOW - 99 * HOUR),
-                        FakeTorrent(state=st, last_activity_ago=99 * HOUR,
-                                    availability=0.0))[0], False)
+          would_abandon(fresh, FakeTorrent(state=st, added_days_ago=99))[0], False)
+
+print("\nPart 4 -- an abandon never deletes any payload")
+# The never-started case has no bytes today, but the same path serves a re-drop whose
+# bytes arrived after the clock started; deleting them is the one thing it must not do.
+_, delete_files = would_abandon(fresh, FakeTorrent(added_days_ago=8))
+check("delete_files passed to qbt.remove", delete_files, False)
+_, delete_files = would_abandon(dict(fresh, chunk_active=[0]),
+                                FakeTorrent(added_days_ago=8, state="stoppedDL"))
+check("a chunked wave abandon keeps its bytes too", delete_files, False)
 
 print()
 if failures:

@@ -947,6 +947,129 @@ def _match_titles(entries, guide, exact_only=False):
     return claims
 
 
+def release_file_titles(name):
+    """Every episode title a release filename states, or [] when it names none.
+
+    One name can state TWO titles -- a combined file (`S01E16.The.Car.-.The.Curse`) holds
+    two episodes -- and both count toward the release's content coverage. Bracket and dash
+    forms are read by their existing parsers; the scene dot form is split on the `.-.` /
+    ` - ` joiner. Used by `release_covered_slots`, NOT by the numbering guards: a file
+    holding two episodes states no single slot (see `release_dot_title_entries`).
+    """
+    ents = release_title_entries([name]) + release_dash_title_entries([name])
+    if ents:
+        return [e[3] for e in ents]
+    m = _DOT_TITLE_RE.search(Path(name).stem)
+    if not m:
+        return []
+    out = []
+    for part in re.split(r"\s+-\s+|\.-\.", m.group(3)):
+        part = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", part)
+        part = " ".join(part.replace(".", " ").replace("_", " ").split())
+        if len(part) >= 2:
+            out.append(part)
+    return out
+
+
+def _coverage_words(text):
+    """Comparison tokens for CONTENT COVERAGE: punctuation split, lowercased, and a
+    LEADING ARTICLE dropped on both sides.
+
+    Real releases drop the article their guide uses (`Mystery` for the guide's `The
+    Mystery`), and an exact comparison then reads a release that plainly holds the
+    episode as not holding it -- which on the coverage side of `pack_conflict` would
+    leave a redundant pack parked forever. Only a LEADING article is dropped, so titles
+    that differ anywhere else still compare exactly.
+    """
+    toks = [w for w in re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).split() if w]
+    if toks and toks[0] in ("the", "a", "an"):
+        toks = toks[1:]
+    return toks
+
+
+def match_guide_titles(titles, guide):
+    """The guide slots a set of episode titles names, exact and unique only, or empty.
+
+    The same longest-prefix rule `_match_dot_titles` uses: a dot-form title carries a tag
+    tail (`The.Third.1080p.AMZN.WEB-DL`), so the title is the longest guide name that is a
+    token prefix. No ratio pass, and two guide episodes sharing the matched name claim
+    nothing. A leading article is ignored on both sides (`Mystery` matches the guide's
+    `The Mystery`); nothing else is. This is content COVERAGE evidence (does this release
+    hold that episode?), so a title it cannot place contributes no slot and the caller
+    fails open.
+    """
+    by_words = []
+    for e in guide or ():
+        raw = re.sub(r"[^a-z0-9]+", " ", str(e.get("name") or "").lower()).split()
+        toks = _coverage_words(e.get("name"))
+        if not toks:
+            continue
+        try:
+            by_words.append((toks, len(raw), int(e["season"]), int(e["number"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    out = set()
+    for title in titles or ():
+        toks = _coverage_words(title)
+        best = None
+        for gtoks, raw_len, gs, ge in by_words:
+            # A multi-word guide name may match a title PREFIX (the dot tail is release
+            # tags); a one-word name must match the WHOLE extracted title, so a bare
+            # `Gi` can never claim a title that merely starts with "Gi".
+            hit = (toks[:len(gtoks)] == gtoks if raw_len >= 2 else toks == gtoks)
+            if hit and (best is None or len(gtoks) > len(best[0])):
+                best = (gtoks, gs, ge)
+        if best is None:
+            continue
+        if len({(gs, ge) for gtoks, _r, gs, ge in by_words if gtoks == best[0]}) != 1:
+            continue
+        out.add((best[1], best[2]))
+    return out
+
+
+def release_covered_slots(release_files, show_hint=None, tmdb_id=None):
+    """`(slots, provider)` -- the guide slots a release's own filenames name, or `(set(), "")`.
+
+    THE CONTENT-COVERAGE FACT. A pack that names its episodes (and combined files, whose
+    two titles both count) proves which library episodes it holds, without downloading a
+    byte. Used by `pack_conflict` to decide whether one pack fully covers another before
+    a displaced duplicate's library footprint may be superseded. Fails open: no guide, or
+    an unplaceable title, contributes nothing.
+    """
+    guide, provider = _guide_for(show_hint or "", tmdb_id)
+    if not guide:
+        return set(), ""
+    out = set()
+    for item in release_files or ():
+        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
+        out |= match_guide_titles(release_file_titles(rel), guide)
+    return out, provider
+
+
+def folder_tmdb_id(folder):
+    """The TMDB id `Shows/<folder>/tvshow.nfo` pins, or None.
+
+    `_pinned_show_tmdb_id` resolves a show by TITLE; `pack_conflict` works from a library
+    FOLDER (that is what a record's filed copies name), so this reads the nfo by exact
+    folder name. Fail open: an unreadable nfo is simply "no pinned id".
+    """
+    if not folder:
+        return None
+    for base in (config.MEDIAFS_MOUNT / "Shows", config.SHOWS_ROOT):
+        try:
+            text = (base / folder / "tvshow.nfo").read_text(encoding="utf-8",
+                                                           errors="replace")
+        except OSError:
+            continue
+        m = re.search(r"<tmdbid>\s*(\d+)\s*</tmdbid>", text)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                return None
+    return None
+
+
 def _match_dot_titles(entries, guide):
     """`{(season, episode): (guide_season, guide_episode)}` for dot-titled release files.
 

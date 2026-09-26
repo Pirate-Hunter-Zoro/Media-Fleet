@@ -845,16 +845,21 @@ MAX_SINGLE_FILE_BYTES = 10 * 1024 ** 3   # 10 GiB
 # that fits will normally be admitted within a cycle or two of registration.
 CHUNK_AFTER_DEFERRED_SEC = 2 * 3600      # 2 hours queued without fitting -> chunk it
 
-# How long a torrent that is DOWNLOADING but making no progress (qBittorrent reports
-# `stalledDL` -- no peers/seeders) may stay stalled before it is failed and its disk
-# reservation released. Without this deadline a stalled download keeps its unfetched bytes
-# reserved in _remaining_budget() forever, so no wave completes, no space frees, and no new
-# torrent is admitted: the whole pipeline deadlocks while the log reads "0MB admittable".
-# A torrent that merely loses its peers for a moment and resumes within the window is
-# untouched. Long enough to ride out a seeder's short offline stretch -- and a public/DHT
-# swarm's seeder gaps are measured in hours, so this must not be shortened -- short enough
-# that a genuinely dead torrent drains within a day rather than pinning the budget
-# indefinitely.
+# How long a torrent that has fetched NOTHING may sit before it is failed and its disk
+# reservation released. This is the ONLY stall deadline, and it applies ONLY to a torrent
+# that has never moved a byte.
+#
+# ONCE A TORRENT HAS FETCHED ANYTHING IT IS NEVER ABANDONED (owner decision, 2026-09-26).
+# A public/DHT-only swarm's seeder gaps are measured in hours or days; a pack whose swarm
+# went quiet at 70% has PROVEN it can serve bytes, and the partial payload is the one thing
+# a retry cannot recreate cheaply. The owner's instruction: "give a torrent a week to start,
+# and if it makes no progress by then, at THAT point we can kill it. But once it makes
+# progress, give it all the time in the world." The grace window is what stops a
+# never-starting drop from pinning the download budget forever; past it, a stalled
+# download only ever costs disk, never bytes, because every abandon keeps the payload.
+#
+# The clock is qBittorrent's own `added_on` for the torrent, with the record's creation
+# time as the fallback, so a daemon restart cannot re-arm it (an in-memory clock used to).
 #
 # THERE IS DELIBERATELY NO SHORTER "NO COMPLETE COPY" DEADLINE. One existed, selected by
 # qBittorrent's `availability < 1`, on the premise that availability is a swarm-wide fact.
@@ -862,9 +867,8 @@ CHUNK_AFTER_DEFERRED_SEC = 2 * 3600      # 2 hours queued without fitting -> chu
 # our own, so during a stall it collapses to our own completion fraction and reads < 1 even
 # in a swarm full of seeders. Every stall therefore took the 4h path, and four slow-but-
 # alive packs whose partial payloads were then deleted with the torrent (2026-09-23) are
-# the measured cost. The failure path now KEEPS the partial download, so patience costs
-# disk, not bytes.
-STALL_ABANDON_SEC = 24 * 3600            # 24 hours stalled with no progress -> abandon it
+# the measured cost.
+STALL_FIRST_PROGRESS_GRACE_SEC = 7 * 24 * 3600   # one week with zero bytes -> abandon
 
 # How long a freshly-added magnet waits for qBittorrent to fetch its metadata (the `.torrent`
 # info dict) from the swarm. A magnet has no metadata of its own, so until DHT/PEX/trackers

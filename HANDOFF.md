@@ -218,7 +218,7 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Mount | **One Piece, session 2 (2026-09-20 evening):** the franchise layout is live — `Manga/One Piece/One Piece/` (189 files) and `Manga/One Piece/Ace's Story/` (2), the old flat master and `One Piece - Ace's Story/` gone. 12 junk chapters purged (covered repeats c1080/1088/1098/1112/1133, the six bare `cNNNN.cbz` the old mislabel repair created, the nested `c1176` duplicate); 5 One Piece chapters misfiled into Jujutsu Kaisen purged as covered (JJK ends at 272 chapters, One Piece v108-v111 own them). Sessions' older rows (§10.0 rows 1–3) remain true. |
 | `library.db` | colour-aware comic identity is live (`item_key` includes `colored`; no `MAX(colored)`). The One Piece renames recorded `cNNNN` chapter rows and superseded the old volume rows; every purge's DB mirror runs via `dbhook.record_purge` from the reconciler/reaper |
 | YacReader | open (Comics), hidden, 30-min self-update. The migration moved 191 files, so the index is catching up; `yacreader_rescan.py --apply` was run and the supervisor refreshes it. Re-check `--files` after the next update |
-| In flight | The reaper drains (`reap.py` PID 6539). **The Simpsons (1989) `1d9098aa…` re-dropped itself and resumed**: registered 2026-09-24 23:48 ("resuming chunked waves at 43 file(s) already filed"), admitted 2026-09-25 03:11:33 with the corrected digest, parked for disk space (43 MB admittable vs 592 MB next file) and resuming automatically; the `4202bb3` S03 wave acceptance is still to be confirmed (§15.4). |
+| In flight | The reaper drains (`reap.py` PID 6539), now also carrying the 32 superseded Gumball AMZN paths. **2026-09-26: `failed/` was emptied** — the SA89 Gumball pack (`532D8E71…`, 15 files carried), Bob's Burgers S01 (`5FDDCE76…`, 70% kept and now never abandoned once it has progress) and BoJack Horseman (`BB87D07A…`, its two UNFILED S02 files re-fetch) went back to the watch root and are resuming; the AMZN S01 duplicate was superseded by `pack_conflict` and its record REFUSED. The Simpsons (§15.4) and the other §15 acceptance waves are unchanged. |
 | Parked re-drops | **§15's seams shipped 2026-09-25** (HANDOFF top section). American Dad's wrong-slot S04E06 and Doctor Who's S00E04 collision were repaired through `scripts/repair_slots.py`; after the deploy the three sources were moved out of `failed/` back to the watch root — Family Guy `705febda…`, Friends `1a6558e5…`, and American Dad `06dd53e1…` from its `state/torrent_sources/` mirror — each resuming from its `chunk_done`. The Simpsons is separately recovering (§15.4). |
 | Open work | **§15 is closed except the live acceptance checks**: the Simpsons wave/terminal confirmation (§15.4), and the three re-dropped packs completing their waves on the fixed code (Family Guy's S07E07 alternate, Friends' 32 Featurettes, American Dad's S10E06). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented; the §15.1–15.3 seams are its last measured gaps and are now shipped. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
@@ -276,18 +276,73 @@ shift refused through `validate_plan`; the confirmed slot accepted; cross-season
 Season-00 and unconfirmed files exempt. `bash scripts/verify_fleet.sh` → **ALL CHECKS
 PASSED**.
 
-**Open — owner decision, no new download needed.** The library's Gumball S01 is now a
-mix: E01-E13 are the SA89 combined files (two episodes each, filed at release-number
-slots) and E16-E47 are the AMZN single files (E18-E47 hold AMZN E03-E32's content; E14/
-E15 are empty). The two packs are duplicates for E01-E32 (SA89's 18 S01 files cover all
-36 TMDB episodes; AMZN's 36 cover the same season one-per-file and none of E33-E36 is
-filed yet). The SA89 pack stays parked until one of them wins: **(a)** keep the AMZN
-single-episode files — repair the 32 misfiled slots through `scripts/refile_season.py`
-and purge/replace the SA89 S01 overlap, or **(b)** keep the SA89 pack — purge the AMZN
-S01 files and let its waves file E14-E18 and finish. The AMZN pack's four remaining
-files (E33-E36) are on disk in `~/Downloads/.torrent-ingest/The.Amazing.World.of.Gumball.
-S01…/` and its `.torrent` is in `iCloud Drive/Torrents/ingesting/C9F58BDF….torrent`
-until the record retires.
+**The owner's call, executed the same day.** Keep the SA89 complete-series pack; the
+AMZN duplicate was superseded by the new `pack_conflict` resolver and the repair is
+detailed in the section below. No new download is needed.
+
+### Shipped 2026-09-26 (later) — a week to first progress, and a displaced duplicate pack resolves itself
+
+**The owner's stall policy, replacing both old clocks.** A torrent now gets
+`STALL_FIRST_PROGRESS_GRACE_SEC` (**one week**, from qBittorrent's own `added_on`) to fetch
+its first byte; the moment it has fetched anything it is **never abandoned**. The
+24h `last_activity` deadline and the 4h `availability < 1` deadline are both gone: the
+former killed Bob's Burgers S01 at 70% overnight after a 28-hour seeder gap, and the owner's
+instruction is "give a torrent a week to start, and if it makes no progress by then, at THAT
+point we can kill it. But once it makes progress, give it all the time in the world." The
+never-started case still has to drain (it pins its admission reservation); the abandon keeps
+every byte, and a re-drop resumes. `_has_fetched_anything` reads qBittorrent's
+`progress`/`downloaded`/`completed` **and** the record's `chunk_done`/`chunk_filed`/
+`applied`, so a chunked pack stopped between waves or re-added with reset counters is still
+seen to have progress. `scripts/test_chunked_stall_clock.py` rewritten both ways (19 checks).
+
+**The Gumball call, now made by the harness: `pack_conflict.py`.** The AMZN pack finished
+(the w32 wave filed E33-E36 at their own keys under the new guard, but at the same bare
+paths the shifted copies already occupied, so those four record entries point at the old
+bytes) and the SA89 pack sat parked on the collisions. The new resolver runs automatically
+from `_park_chunked_unfiled` and makes the same call a human made:
+
+  * a **blocker** is a record whose library footprint is PROVEN a displaced duplicate:
+    every copy is either an explained self-keyed agreement copy or part of ONE non-zero
+    same-season episode shift; at least 60% of the shifted copies' own titles must confirm
+    their source key (so a swapped E01/E02 pair rides the group but cannot anchor it), and
+    at least half the footprint must be shifted. A well-formed pack (shift 0), a
+    release-order pack (varying shifts), a deliberate cross-season merge, an unreadable
+    title or a mixed-shift mess all fail open to the park;
+  * the blocked pack's own filenames must **NAME every episode** the blocker's copies hold
+    (content coverage via `identify.release_covered_slots`; a combined file's two titles
+    both count; a leading article is ignored because releases drop it -- `Mystery` for the
+    guide's `The Mystery`);
+  * exactly one candidate, or it parks as before. Supersede goes through the sanctioned
+    path (`library.supersede_paths` + `dbhook.record_purge`), the blocker is retired
+    **REFUSED** with the reason on its record, and its payload is kept
+    (`delete_files=False`, re-droppable).
+
+`library.queued_for_purge` closes the window between the local unlink and the reaper's
+remote delete: a path already on the deletion queue (or in `.processing`) no longer counts
+as an existing episode in `_collapse_existing_episode_collisions`, so a superseded pool
+copy cannot block its replacement while the reaper catches up. `scripts/resolve_pack_conflict.py`
+is the operator window (`--record HASH [--apply]`, `--scan`).
+
+**Replay/acceptance (live).** `--scan` over every journal record: 1 resolvable conflict,
+the Gumball pair. `--record 532d8e71… --apply`: 32 AMZN paths superseded, 32 `library.db`
+rows superseded, the AMZN record REFUSED ("its 32 library file(s) were filed at one
+uniform episode shift … a separate in-flight release names every episode it holds").
+`scripts/test_pack_conflict.py` (registered): the full supersede end to end (SSD unlink,
+purge queue, db rows, REFUSED, payload kept) plus every fail-open shape. `verify_fleet.sh`
+→ **ALL CHECKS PASSED**. No title, season or episode number is written into `pack_conflict.py`
+or `identify.release_covered_slots`; the first-section test fixtures were rewritten to
+synthetic titles for the same reason.
+
+**`failed/` is empty (2026-09-26 09:07).** Moved back to the watch root, each resuming from
+provable progress: the SA89 pack (`532D8E71…`, 15 files carried, waves resume), Bob's
+Burgers S01 (`5FDDCE76…`, 70% on disk, now protected by the new policy), and BoJack
+Horseman (`BB87D07A…`, a pre-existing failure: two S02 files were freed UNFILED on
+2026-09-25 after every provider returned a plan with a bad `src`; `_carry_chunk_progress`
+excludes `chunk_failed_idx`, so those two re-fetch). The AMZN `.torrent` stays retired
+under `finished/` (its record is REFUSED; re-dropping would hit the new guard and the same
+duplicate). **Next session: confirm the three re-drops file their waves and that the AMZN
+rows do not resurrect** (`verify_owner_report`/`media_doctor` read queued purges as
+PENDING, not FAIL).
 
 ### Shipped 2026-09-25 — §15: the harness computes alternates, re-types are attributed, and a misfiled slot is repaired from its identity
 

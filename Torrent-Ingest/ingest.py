@@ -1394,9 +1394,9 @@ def _admit_magnet(record, client, tmap, budget=None):
 # --- state transitions -------------------------------------------------------
 
 # info_hash -> first time we observed this torrent stalled (qBittorrent `stalledDL`).
-# Only a fallback: the primary stall clock is qBittorrent's own `last_activity`, which is
-# exact, persistent across restarts, and needs no journal writes. In-memory on purpose so
-# it never adds a snapshot per stalled torrent per cycle.
+# Only a fallback for the rare torrent with neither an `added_on` stamp nor a record
+# creation time. In-memory on purpose so it never adds a snapshot per stalled torrent per
+# cycle; the primary clock is qBittorrent's own `added_on`, which is exact and persistent.
 _STALL_SINCE: dict[str, float] = {}
 
 
@@ -1405,26 +1405,79 @@ _NO_PROGRESS_STATES = (
 )
 
 
+def _has_fetched_anything(record, t):
+    """Whether this torrent has EVER moved a byte, from qBittorrent and the record.
+
+    THE LINE THE OWNER DREW (2026-09-26): a week to prove the swarm can serve it, then
+    infinite patience once it has. qBittorrent's counters are the live fact (`progress`
+    is the respected one; `downloaded`/`completed` are belt-and-braces). The record is
+    consulted too because a chunked pack is stopped between waves and its live counters
+    reset when it is re-added, while `chunk_done`/`chunk_filed`/`applied` survive as
+    proof of bytes that were fetched and filed.
+
+    A torrent with zero bytes after the grace is dead weight holding its admission
+    reservation; one with a single verified byte is a slow swarm worth waiting out.
+    """
+    for attr in ("progress", "downloaded", "completed"):
+        try:
+            if float(getattr(t, attr, 0) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    for key in ("chunk_done", "chunk_filed", "chunk_failed", "chunk_dropped", "applied"):
+        if record.get(key):
+            return True
+    return False
+
+
+def _added_at(record, t):
+    """Unix time this torrent began waiting to prove it can fetch.
+
+    qBittorrent's `added_on` is the authoritative start: it survives a daemon restart, so
+    the grace window cannot re-arm, and a re-dropped torrent starts a fresh window.
+    `created_at` from the record is the fallback (the journal is durable even when the
+    torrent has been removed), and the in-memory stamp is the last resort for a synthetic
+    torrent with neither.
+    """
+    try:
+        stamp = float(getattr(t, "added_on", 0) or 0)
+        if stamp > 0:
+            return stamp
+    except (TypeError, ValueError):
+        pass
+    created = record.get("created_at")
+    if created:
+        try:
+            from datetime import datetime as _dt
+            ts = _dt.fromisoformat(str(created).replace("Z", "+00:00")).timestamp()
+            if ts > 0:
+                return ts
+        except (TypeError, ValueError):
+            pass
+    h = record["info_hash"]
+    since = _STALL_SINCE.get(h)
+    if since is None:
+        since = time.time()
+        _STALL_SINCE[h] = since
+    return since
+
+
 def _abandon_stalled(record, t, client):
-    """Fail a download that has been stalled (no peer activity) for STALL_ABANDON_SEC.
+    """Fail a download that has fetched NOTHING within the first-progress grace.
 
-    A stalled torrent keeps its unfetched bytes reserved in `_remaining_budget` -- for a
-    chunked pack that is the whole active wave -- so left unchecked it deadlocks admission:
-    no wave finishes, no space frees, no new torrent is admitted, and the only visible
-    symptom is a log full of "0MB admittable" while nothing downloads. Failing it takes it
-    out of the reservation and lets the rest of the queue drain.
+    One deadline, one condition (HANDOFF §6, owner decision 2026-09-26):
+    `STALL_FIRST_PROGRESS_GRACE_SEC` (one week) from qBittorrent's `added_on`, and ONLY
+    for a torrent that has never moved a byte. The moment a torrent has fetched anything
+    it is never abandoned, however long its swarm goes quiet -- a public/DHT-only pack
+    that stalled at 70% has proven it can be served, and its partial payload is the one
+    thing a retry cannot recreate cheaply.
 
-    ONE DEADLINE, AND THE BYTES STAY. `availability` is NOT a swarm-wide fact -- it is the
-    pieces held by the peers this client is currently connected to, plus our own, so during
-    any stall it collapses to our completion fraction and reads < 1 even in a swarm full of
-    seeders. It used to select a 4h "no complete copy anywhere" deadline, which fired on
-    every stall; four Bob's Burgers packs (S01 45%, S02 22%, S03 1%, S06 0% at failure,
-    2026-09-23) were killed during an ordinary overnight lull and their partial payloads
-    were deleted with the torrent, so every re-drop restarted from zero and stalled again.
-    The 24h clock below is the one the config documents ("a genuinely dead torrent drains
-    within a day"), and the failure path now keeps the partial download -- the janitor
-    reclaims it after FAILED_ARTIFACT_GRACE_SEC if it is never retried -- so a slow-but-alive
-    torrent is never destroyed and a re-drop resumes from what is already on disk.
+    A never-starting torrent still has to drain, because it keeps its unfetched bytes
+    reserved in `_remaining_budget` (for a chunked pack, the whole active wave), so left
+    alone it holds the whole admission queue behind a drop that can never advance. That
+    is the only thing this fails. The abandon keeps every byte
+    (`delete_files=False`): a re-drop resumes from whatever is on disk, and the janitor
+    reclaims a directory that is never retried after its own grace.
 
     Returns True when the record was failed, so the caller can stop advancing it.
     """
@@ -1433,8 +1486,8 @@ def _abandon_stalled(record, t, client):
     # active download with no peers; "queuedDL" is the same torrent waiting for a slot
     # under the queueing ceiling; "stoppedDL"/"pausedDL" (qBittorrent v5 / v4 naming) is
     # a download that is not even trying; "error"/"missingFiles" cannot complete without
-    # intervention. A dead torrent must drain out of ANY of them -- otherwise it holds its
-    # reservation forever just as if it were stalled.
+    # intervention. A never-started torrent must drain out of ANY of them -- otherwise it
+    # holds its reservation forever just as if it were stalled.
     #
     # Omitting the stopped states is what produced the deadlock this function's docstring
     # describes. A 42 GB pack was added, stopped after 22 MB, and left in `stoppedDL`:
@@ -1444,57 +1497,32 @@ def _abandon_stalled(record, t, client):
     # the box parked itself with "0MB admittable" while nothing downloaded.
     #
     # CHUNKED RECORDS REACH HERE TOO. This comment used to assert they could not, and the
-    # code disagreed with it: `_advance_chunked` calls this on every in-flight wave. That
-    # mistaken belief is why nothing accounted for the park/unpark machinery deliberately
-    # leaving a chunked pack stopped between waves -- see the `wave_started_at` floor
-    # below, which is what makes the deadline mean "this WAVE has been failing" rather
-    # than "this pack has been idle".
+    # code disagreed with it: `_advance_chunked` calls this on every in-flight wave. A
+    # chunked pack stopped between waves is normal; if the whole torrent has never fetched
+    # anything, the grace below still runs from its own add time, not the current wave's.
     state = getattr(t, "state", "")
     if state not in _NO_PROGRESS_STATES:
         _STALL_SINCE.pop(h, None)
         return False
-    now = time.time()
-    # qBittorrent's last-activity stamp is the authoritative clock: the last moment this
-    # torrent saw ANY peer activity, so a download that briefly loses its seeders and then
-    # recovers keeps a fresh stamp and is never abandoned, while a torrent dead for days
-    # reads as dead the first cycle after a restart (the in-memory clock below would
-    # otherwise re-arm 24h from now on every daemon restart, pinning the budget forever).
-    since = getattr(t, "last_activity", None)
-    if not since:
-        since = _STALL_SINCE.get(h)
-        if since is None:
-            since = now
-            _STALL_SINCE[h] = since
-    # A CHUNKED pack is stopped between waves on purpose, so `last_activity` measures how
-    # long ago the LAST wave finished -- not how long THIS one has been failing to find
-    # peers. Taking the later of the two makes the deadline run from the moment the pack
-    # was actually asked to fetch. Without it a big pack is abandoned seconds after every
-    # resume, deleting a partly-downloaded 75 GB payload and reporting "no seeders/peers"
-    # about a swarm of 450. `wave_started_at` is absent on non-chunked records and on
-    # records written before this existed, so `or 0` leaves their behaviour unchanged.
-    since = max(since, record.get("wave_started_at") or 0)
-    # `since` is the last moment this torrent saw ANY peer activity, and the deadline is
-    # STALL_ABANDON_SEC -- long enough to ride out a seeder's offline stretch (the release
-    # windows of public/DHT-only swarms are measured in hours), short enough that a
-    # genuinely dead torrent drains within a day. It is deliberately the ONLY deadline:
-    # a shorter one selected by `availability < 1` was demonstrably wrong (see the
-    # docstring) and a torrent that stalls at 45% proves the swarm can serve it.
-    if now - since < config.STALL_ABANDON_SEC:
+    if _has_fetched_anything(record, t):
+        _STALL_SINCE.pop(h, None)
         return False
-    # delete_files=False ON PURPOSE. A stall is not a refusal and not corruption: the bytes
-    # are the one thing a retry cannot recreate cheaply (a thin swarm is exactly where they
-    # were slow to get), and `_fail`'s own promise -- "local download left for inspection"
-    # -- was false on this path while every other failure path leaves it. A re-drop of the
-    # same source resumes from the partial data; if it is never retried, the janitor
-    # reclaims the directory after FAILED_ARTIFACT_GRACE_SEC.
+    now = time.time()
+    since = _added_at(record, t)
+    if now - since < config.STALL_FIRST_PROGRESS_GRACE_SEC:
+        return False
+    # delete_files=False ON PURPOSE. A never-started torrent has no partial payload to
+    # lose today, but the same path serves a re-dropped torrent whose bytes arrive
+    # between the clock's start and this check; keeping the files makes the rule uniform
+    # and lets a re-drop resume.
     try:
         qbt.remove(client, h, delete_files=False)
     except Exception as exc:                                              # noqa: BLE001
         log(f"stall-abandon: could not remove {record['name']} from qBittorrent: {exc}")
     _STALL_SINCE.pop(h, None)
-    _fail(record, f"stalled {int((now - since) // 3600)}h with no progress "
-                  f"(no peer activity); abandoned to release the download budget; "
-                  f"partial download kept for a retry")
+    _fail(record, f"no progress in {int((now - since) // 86400)}d since it was added "
+                  f"(not one byte ever fetched); abandoned to release the download "
+                  f"budget; partial download kept for a retry")
     return True
 
 
@@ -2229,6 +2257,20 @@ def _park_chunked_unfiled(record, client, unresolved, by_index):
     freed 38 of them as junk. A partial plan must not be able to delete anything.
     """
     h = record["info_hash"]
+    # A COLLISION WITH A DISPLACED DUPLICATE IS RESOLVABLE (2026-09-26). Before parking
+    # for good, check whether the slots this wave cannot file are held by a separate pack
+    # whose library footprint is a PROVEN uniform episode shift and every episode of
+    # which this release's own filenames name. If so, supersede that displaced footprint
+    # through the sanctioned purge path, retire the duplicate pack, and leave this wave
+    # active so it retries against the freed slots. The gates live in `pack_conflict`;
+    # anything less proven fails open to the historical park below. See
+    # `pack_conflict`'s docstring for the two-release collision that motivated it.
+    try:
+        import pack_conflict                                              # noqa: PLC0415
+        if pack_conflict.resolve_parked(record, client):
+            return
+    except Exception as exc:                                              # noqa: BLE001
+        log(f"  pack-conflict resolution skipped ({exc}); parking as usual")
     try:
         qbt.set_file_priority(client, h, list(by_index), 0)
         qbt.stop(client, h)

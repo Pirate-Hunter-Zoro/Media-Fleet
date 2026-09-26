@@ -167,57 +167,32 @@ finally:
     tmp.cleanup()
 
 print("Part 3b -- a dot-titled pack's own titles confirm its numbering there")
-# THE GUMBALL AMZN PACK (2026-09-26). Frozen TMDB S01 for The Amazing World of Gumball
-# (37606). The release's E01/E02 titles are swapped relative to TMDB; E03-E32 match at
-# their own keys. The run filed E01-E32 at S01E16-E47 ("continue the absolute
-# numbering"), which is what parked the other in-flight Gumball pack on the collisions.
-GUMBALL_GUIDE = [
-    {"season": 1, "number": 1, "name": "The DVD"},
-    {"season": 1, "number": 2, "name": "The Responsible"},
-    {"season": 1, "number": 3, "name": "The Third"},
-    {"season": 1, "number": 4, "name": "The Debt"},
-    {"season": 1, "number": 5, "name": "The End"},
-    {"season": 1, "number": 6, "name": "The Dress"},
-    {"season": 1, "number": 7, "name": "The Quest"},
-    {"season": 1, "number": 8, "name": "The Spoon"},
-    {"season": 1, "number": 9, "name": "The Pressure"},
-    {"season": 1, "number": 10, "name": "The Painting"},
-    {"season": 1, "number": 11, "name": "The Laziest"},
-    {"season": 1, "number": 12, "name": "The Ghost"},
-    {"season": 1, "number": 13, "name": "The Mystery"},
-    {"season": 1, "number": 14, "name": "The Prank"},
-    {"season": 1, "number": 15, "name": "The Gi"},
-    {"season": 1, "number": 16, "name": "The Kiss"},
-    {"season": 1, "number": 17, "name": "The Party"},
-    {"season": 1, "number": 18, "name": "The Refund"},
-    {"season": 1, "number": 19, "name": "The Robot"},
-    {"season": 1, "number": 20, "name": "The Picnic"},
-    {"season": 1, "number": 21, "name": "The Goons"},
-    {"season": 1, "number": 22, "name": "The Secret"},
-    {"season": 1, "number": 23, "name": "The Sock"},
-    {"season": 1, "number": 24, "name": "The Genius"},
-    {"season": 1, "number": 25, "name": "The Poltergeist"},
-    {"season": 1, "number": 26, "name": "The Mustache"},
-    {"season": 1, "number": 27, "name": "The Date"},
-    {"season": 1, "number": 28, "name": "The Club"},
-    {"season": 1, "number": 29, "name": "The Wand"},
-    {"season": 1, "number": 30, "name": "The Ape"},
-    {"season": 1, "number": 31, "name": "The Car"},
-    {"season": 1, "number": 32, "name": "The Curse"},
-    {"season": 1, "number": 33, "name": "The Microwave"},
-    {"season": 1, "number": 34, "name": "The Meddler"},
-    {"season": 1, "number": 35, "name": "The Helmet"},
-    {"season": 1, "number": 36, "name": "The Fight"},
-]
-_amzn = {1: "The Responsible", 2: "The DVD"}
-AMZN_SRCS = ["The.Amazing.World.of.Gumball.S01E%02d.%s.1080p.AMZN.WEB-DL.mkv"
-             % (n, _amzn.get(n, GUMBALL_GUIDE[n - 1]["name"]).replace(" ", "."))
-             for n in range(1, 33)]
+# A dot-titled release (`Show.Name.S01E03.Story.Number.03.1080p.WEB.mkv`) whose titles match
+# the guide at their OWN keys confirms the release numbering per file. A uniform same-season
+# episode shift that contradicts those confirmations is refused; a deliberate cross-season
+# renumber, a Season-00 special and an unconfirmed file are not. Synthetic titles on purpose:
+# the incident this guard exists for is described in the docstrings, not encoded as data.
+FIXTURE_GUIDE = [{"season": 1, "number": n, "name": f"Story Number {n:02d}"}
+                 for n in range(1, 37)]
+
+
+def _fixture_src(n, title=None):
+    title = title or f"Story Number {n:02d}"
+    return (f"Fixture.Show.S01E{n:02d}.{title.replace(' ', '.')}"
+            f".1080p.WEB-DL.mkv")
+
+
+# The release swaps its own E01/E02 titles relative to the guide; E03-E32 match at their
+# keys. 30 of the 32 files are therefore confirmed; the swapped pair is not (their claim
+# would move them).
+FIXTURE_SRCS = [_fixture_src(1, "Story Number 02"),
+                _fixture_src(2, "Story Number 01")] + [
+    _fixture_src(n) for n in range(3, 33)]
 
 old_guide_for = identify._guide_for
-identify._guide_for = lambda _title, _tid=None: (GUMBALL_GUIDE, "TMDB")
+identify._guide_for = lambda _title, _tid=None: (FIXTURE_GUIDE, "TEST")
 try:
-    dots = identify.release_dot_title_entries(AMZN_SRCS)
+    dots = identify.release_dot_title_entries(FIXTURE_SRCS)
     check("every dot-titled release file is read", len(dots) == 32)
     check("a two-title combined file states no slot",
           identify.release_dot_title_entries(
@@ -226,7 +201,7 @@ try:
           identify.release_dot_title_entries(
               ["Show S01E01 (Pilot).mkv", "Show S01E01 - Pilot.mkv"]) == [])
     agreement = identify.release_episode_agreement(
-        AMZN_SRCS, show_hint="The Amazing World of Gumball")
+        FIXTURE_SRCS, show_hint="Fixture Show")
     check("the agreement confirms the 30 files whose own key the guide matches",
           len(agreement) == 30 and (1, 3) in agreement and (1, 32) in agreement)
     check("the two swapped titles are NOT confirmed (their claim moves)",
@@ -234,8 +209,8 @@ try:
     identify._guide_for = lambda _title, _tid=None: (None, "")
     check("no guide -> no agreement (fail open)",
           identify.release_episode_agreement(
-              AMZN_SRCS, show_hint="The Amazing World of Gumball") == {})
-    identify._guide_for = lambda _title, _tid=None: (GUMBALL_GUIDE, "TMDB")
+              FIXTURE_SRCS, show_hint="Fixture Show") == {})
+    identify._guide_for = lambda _title, _tid=None: (FIXTURE_GUIDE, "TEST")
 
     tmp2 = tempfile.TemporaryDirectory()
     try:
@@ -244,50 +219,50 @@ try:
         config.MEDIAFS_MOUNT, config.MEDIA_ROOT = root2 / "mount", root2 / "media"
         (config.MEDIAFS_MOUNT / "Shows").mkdir(parents=True, exist_ok=True)
         (config.MEDIA_ROOT / "Shows").mkdir(parents=True, exist_ok=True)
-        src = root2 / AMZN_SRCS[2]                 # S01E03 The Third
+        src = root2 / FIXTURE_SRCS[2]              # S01E03, guide-confirmed at its key
         src.write_bytes(b"x")
 
-        def amzn_plan(dst, season, episode):
-            return {"media_type": "show", "title": "The Amazing World of Gumball",
-                    "year": 2011, "owned": True, "tmdb_id": 37606,
+        def fixture_plan(dst, season, episode):
+            return {"media_type": "show", "title": "Fixture Show", "year": 2019,
+                    "owned": True, "tmdb_id": 1,
                     "files": [{"src": str(src), "dst_rel": dst, "season": season,
                                "episode": episode, "episode_title": "t", "plot": "p"}]}
 
         shifted = None
         try:
             library.validate_plan(
-                amzn_plan("Shows/The Amazing World of Gumball (2011)/Season 01/"
-                          "The Amazing World of Gumball (2011) - S01E18.mkv", 1, 18),
+                fixture_plan("Shows/Fixture Show (2019)/Season 01/"
+                             "Fixture Show (2019) - S01E18.mkv", 1, 18),
                 str(root2), episode_agreement=agreement)
         except library.PlanError as exc:
             shifted = str(exc)
         check("keeping the season and shifting the episode is refused",
               shifted and "S01E03" in shifted)
         ok = library.validate_plan(
-            amzn_plan("Shows/The Amazing World of Gumball (2011)/Season 01/"
-                      "The Amazing World of Gumball (2011) - S01E03.mkv", 1, 3),
+            fixture_plan("Shows/Fixture Show (2019)/Season 01/"
+                         "Fixture Show (2019) - S01E03.mkv", 1, 3),
             str(root2), episode_agreement=agreement)
-        check("the confirmed own slot is accepted", ok.get("title").endswith("Gumball"))
+        check("the confirmed own slot is accepted", ok.get("title") == "Fixture Show")
         # A deliberate cross-season renumber is a library layout (absolute runs, merged
         # cours) and must stay accepted; the guard is called directly so the fixture's
         # guide ceiling cannot speak instead.
         moved = {"src": str(src),
-                 "dst_rel": "Shows/The Amazing World of Gumball (2011)/Season 02/"
-                            "The Amazing World of Gumball (2011) - S02E03.mkv",
+                 "dst_rel": "Shows/Fixture Show (2019)/Season 02/"
+                            "Fixture Show (2019) - S02E03.mkv",
                  "season": 2, "episode": 3}
         library._reject_same_season_episode_shift([moved], agreement)
         check("a cross-season renumber is not constrained by this guard", True)
         special = {"src": str(src),
-                   "dst_rel": "Shows/The Amazing World of Gumball (2011)/Season 00/"
-                              "The Amazing World of Gumball (2011) - S00E03.mkv",
+                   "dst_rel": "Shows/Fixture Show (2019)/Season 00/"
+                              "Fixture Show (2019) - S00E03.mkv",
                    "season": 0, "episode": 3}
         library._reject_same_season_episode_shift([special], agreement)
         check("a special is the library's own scheme, not the guide's", True)
-        unconfirmed = {"src": str(root2 / AMZN_SRCS[0]),   # S01E01, not confirmed
-                       "dst_rel": "Shows/The Amazing World of Gumball (2011)/Season 01/"
-                                  "The Amazing World of Gumball (2011) - S01E18.mkv",
+        unconfirmed = {"src": str(root2 / FIXTURE_SRCS[0]),   # E01, not confirmed
+                       "dst_rel": "Shows/Fixture Show (2019)/Season 01/"
+                                  "Fixture Show (2019) - S01E18.mkv",
                        "season": 1, "episode": 18}
-        (root2 / AMZN_SRCS[0]).write_bytes(b"x")
+        (root2 / FIXTURE_SRCS[0]).write_bytes(b"x")
         library._reject_same_season_episode_shift([unconfirmed], agreement)
         check("a file the agreement does not cover is not constrained", True)
     finally:
