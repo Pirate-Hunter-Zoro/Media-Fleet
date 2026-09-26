@@ -223,6 +223,72 @@ Rows marked **measured** were verified this session (the owner's five, §10.0).
 | Open work | **§15 is closed except the live acceptance checks**: the Simpsons wave/terminal confirmation (§15.4), and the three re-dropped packs completing their waves on the fixed code (Family Guy's S07E07 alternate, Friends' 32 Featurettes, American Dad's S10E06). Toriko: 0 blank plots. The free-AI upgrade (§10.10) is implemented; the §15.1–15.3 seams are its last measured gaps and are now shipped. |
 | Pending after reboot | §12: rename close-out verified done; **rotation (item 6) CLOSED by owner decision 2026-09-23 — not doing it** |
 
+### Shipped 2026-09-26 — a dot-titled pack's own titles pin its numbering, so a same-season shift parks instead of misfiling
+
+**Two drops in `failed/` overnight, one cause and one policy.** The Amazing World of
+Gumball S01-S06 (`532d8e71…`) parked at 01:25 with its wave plan leaving S01E16-E18
+unaccounted; Bob's Burgers S01 (`5fddce76…`) failed at 22:27 "stalled 28h with no peer
+activity". The Bob's failure is the **24h stall policy working as designed** (§6, `c9fd3aa`):
+qBittorrent's own `last_activity` had been 28h old while the other Bob's packs still showed
+peer activity within the hour; the partial 70% payload is kept, and re-dropping the same
+`.torrent` resumes from it — **no new download is needed**.
+
+**The Gumball park was a bug two packs deep.** The *other* in-flight Gumball pack — the
+AMZN single-episode S01 set (`c9f58bdf…`, 36 files `The.Amazing.World.of.Gumball.S01E01.
+The.Responsible.1080p.AMZN.WEB-DL.mkv` …) — was identified while the library held the
+SA89 pack's E01-E06. Its run read the digest as "owned show, continuous-absolute
+numbering" and **filed release E01-E32 at S01E16-E47** ("it continues the existing 15
+episodes"). That plan was accepted, 32 episodes landed in the wrong slots, and the SA89
+pack's wave then correctly refused to overwrite them and parked with every byte on disk.
+Root cause of the acceptance: the harness had no computed witness for the most common
+scene spelling (`SxxEyy.Title.Words`), so nothing tied each file to the provider slot its
+own title names; the two guards that exist for a season over-fill are gated on a
+`type: "episode"` field the model has never emitted (**0 of 16,497 journal plan entries
+carry one**), so they have been silently dead. The missing `type` gate itself is left
+alone for now: the same replay shows resurrecting `_reject_season_over_provider_count`
+would reject 12 correct historical plans (anime cours, `Erased`, `Saiki`, `Urusei
+Yatsura`, …) — a guard with a measured false-positive rate is deleted or demoted, not
+shipped.
+
+**The fix (computed, per-file).** `identify.release_dot_title_entries` reads the
+`SxxEyy.Title.Words` form (bracket/dash names go to their own witnesses; a two-title
+combined file like `The.Car.-.The.Curse` states no single slot and is skipped);
+`identify.release_episode_agreement` matches each title against the guide Jellyfin
+scrapes and returns only the claims that land on the file's OWN key — evidence the
+release's numbering is the broadcast numbering THERE. `library._reject_same_season_episode_shift`
+then refuses the one shape that is never a legitimate library layout: **keeping the
+season and changing a confirmed episode number**. A deliberate renumber moves a file to
+another SEASON (absolute runs, merged cours, Doctor Who's serials), and Season 00 plays
+by the library's own specials scheme — both exempt; no guide or no exact match fails open.
+
+**Replay (before shipping, live guides).** Every `state/tmp/*_plan.json` with dot titles:
+148 plans with a pinned library id, 79 with agreement evidence (One Piece's absolute run,
+Steven Universe's S01E50 merge, Invader Zim/Boondocks/Powerpuff production order,
+SpongeBob's season merges). `_reject_same_season_episode_shift` rejects **1 plan — the
+Gumball AMZN w0 plan, 30 files**. 0 false positives. The AMZN w32 run (files E33-E36,
+started 07:38:48, two seconds after this code landed in the tree) is already on the new
+guard.
+
+**Tests.** `scripts/test_release_title_numbering.py` Part 3b (registered check):
+dot-entry parsing incl. two-title/bracket/dash exclusions; the 30/32 agreement over a
+frozen 36-title TMDB guide; the swapped E01/E02 not confirmed; no-guide fail-open; the
+shift refused through `validate_plan`; the confirmed slot accepted; cross-season,
+Season-00 and unconfirmed files exempt. `bash scripts/verify_fleet.sh` → **ALL CHECKS
+PASSED**.
+
+**Open — owner decision, no new download needed.** The library's Gumball S01 is now a
+mix: E01-E13 are the SA89 combined files (two episodes each, filed at release-number
+slots) and E16-E47 are the AMZN single files (E18-E47 hold AMZN E03-E32's content; E14/
+E15 are empty). The two packs are duplicates for E01-E32 (SA89's 18 S01 files cover all
+36 TMDB episodes; AMZN's 36 cover the same season one-per-file and none of E33-E36 is
+filed yet). The SA89 pack stays parked until one of them wins: **(a)** keep the AMZN
+single-episode files — repair the 32 misfiled slots through `scripts/refile_season.py`
+and purge/replace the SA89 S01 overlap, or **(b)** keep the SA89 pack — purge the AMZN
+S01 files and let its waves file E14-E18 and finish. The AMZN pack's four remaining
+files (E33-E36) are on disk in `~/Downloads/.torrent-ingest/The.Amazing.World.of.Gumball.
+S01…/` and its `.torrent` is in `iCloud Drive/Torrents/ingesting/C9F58BDF….torrent`
+until the record retires.
+
 ### Shipped 2026-09-25 — §15: the harness computes alternates, re-types are attributed, and a misfiled slot is repaired from its identity
 
 **One systemic seam, three packs.** Friends (`1a6558e5…`) and Family Guy

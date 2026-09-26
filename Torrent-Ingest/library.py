@@ -1491,8 +1491,68 @@ def _reject_title_numbering(files, title_map, identity_map=None):
             f"{f.get('dst_rel')!r}. File it at the computed slot.")
 
 
+def _reject_same_season_episode_shift(files, episode_agreement):
+    """Refuse changing a confirmed episode's NUMBER inside its own season.
+
+    THE AMAZON GUMBALL PACK (2026-09-26). Its release files are dot-titled
+    (`The.Amazing.World.of.Gumball.S01E03.The.Third.1080p.AMZN.WEB-DL.mkv`) and every
+    title matches the provider Jellyfin scrapes at the SAME `SxxEyy` the release states
+    -- the release's numbering IS broadcast numbering. The run nonetheless treated the
+    32-file season as a continuation of the library and filed E01-E32 at S01E16-E47;
+    `validate_plan` accepted it and 32 episodes landed in the wrong slots, which is what
+    then parked the other in-flight Gumball pack on the collisions.
+
+    `episode_agreement` is `identify.release_episode_agreement`: own-key title claims
+    for dot-named packs. The rule is deliberately the narrowest one that catches that
+    shape: the plan may keep, move ACROSS seasons, or file a special; it may not keep
+    the season and change the episode when the file's own title confirms the number.
+    Replayed over every plan in `state/tmp` with a live guide (190 dot-titled plans):
+    this rejects the 30 Gumball AMZN files and ZERO correct historical plans. The
+    cross-season case is exempt because libraries deliberately renumber (Steven
+    Universe's TMDB S02 opener lives at S01E50; One Piece runs absolute numbers in S01;
+    Doctor Who's serials are remapped by `serial_map`), and those packs confirm their
+    own keys too. Season 00 plays by the library's own specials scheme, and an
+    unparseable destination fails open.
+    """
+    if not episode_agreement:
+        return
+    for idx, f in enumerate(files):
+        src_p = Path(f.get("src") or "")
+        m = re.search(r"[Ss](\d{1,3})[Ee](\d{1,4})", src_p.name)
+        if not m:
+            continue
+        try:
+            key = (int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            continue
+        if key not in episode_agreement or key[0] < 1:
+            continue
+        got = None
+        dm = re.search(r"Season\s+(\d+)/.*?S(\d+)E(\d+)", str(f.get("dst_rel") or ""))
+        if dm:
+            got = (int(dm.group(2)), int(dm.group(3)))
+        else:
+            try:
+                got = (int(f.get("season")), int(f.get("episode")))
+            except (TypeError, ValueError):
+                got = None
+        if got is None or got[0] == 0:
+            continue
+        if got[0] == key[0] and got[1] != key[1]:
+            raise PlanError(
+                f"file[{idx}] {src_p.name!r}: the harness matched this file's episode "
+                f"title against the provider at its own `S{key[0]:02d}E{key[1]:02d}`, so "
+                f"the release numbering is confirmed THERE. The plan would keep Season "
+                f"{key[0]:02d} but file it at {f.get('dst_rel')!r} -- E{got[1]:02d} is a "
+                f"different episode of the same season. File it at "
+                f"S{key[0]:02d}E{key[1]:02d}. A deliberate library renumber moves the "
+                f"file to another SEASON (an absolute run or a merged cour); it never "
+                f"silently shifts a season's episode numbers.")
+
+
 def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
-                  release_name=None, title_map=None, identity_map=None):
+                  release_name=None, title_map=None, identity_map=None,
+                  episode_agreement=None):
     """Raise PlanError if the plan is unsafe or malformed. Returns normalized plan.
 
     `sibling_seasons` is the set of season numbers the SOURCE the plan was cut from
@@ -1507,6 +1567,10 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
     its computed broadcast numbering. `identity_map` is `identify.release_identity_map`:
     the release's own numbering AGREES with the provider, so a remap is refused
     (HANDOFF 15.1). Either may be None; both fail open on uncovered files.
+
+    `episode_agreement` is `identify.release_episode_agreement`: own-key title claims
+    for dot-named packs. It feeds `_reject_same_season_episode_shift` -- a plan may not
+    keep a confirmed file's season and change its episode number.
 
     `release_name` is the torrent/content name the drop arrived under. It feeds the
     release-identity guard (`_reject_release_identity`): a release whose own name
@@ -1924,6 +1988,7 @@ def validate_plan(plan, content_root, sibling_seasons=None, serial_map=None,
     _reject_comic_at_franchise_root(files)
     _reject_manga_mislabels(plan, files)
     _reject_title_numbering(files, title_map, identity_map)
+    _reject_same_season_episode_shift(files, episode_agreement)
     _reject_absolute_run_split(files)
     _reject_arc_split_across_seasons(files)
     _reject_season_over_provider_count(plan, files)

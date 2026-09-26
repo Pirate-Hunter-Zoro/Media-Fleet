@@ -716,6 +716,12 @@ _TITLE_TAG_RE = re.compile(
 # never reaches the ratio pass). Measured on the 70-file Smurfs re-fetch: `Nobody Smurf`
 # is TMDB S07E27 while the release number it carries, S07E49, is another episode's slot.
 _DASH_TITLE_RE = re.compile(r"[Ss](\d{1,3})[Ee](\d{1,4})\s+-\s+(.{2,90})$", re.I)
+# The scene form, `Show.Name.S01E03.The.Third.1080p.AMZN.WEB-DL.mkv`: the remainder
+# after the episode tag is dot/underscore-joined, and its tail is release tags. Read
+# ONLY for the AGREEMENT fact (`release_episode_agreement` below), never as a reorder
+# witness. A dot remainder that carries TWO titles (`The.Car.-.The.Curse`, a combined
+# file) states no single slot and is skipped.
+_DOT_TITLE_RE = re.compile(r"[Ss](\d{1,3})[Ee](\d{1,4})[._]([^/\\]{2,90})$", re.I)
 _TITLE_MAP_MIN_FRACTION = 0.6
 _TITLE_MAP_MIN_ENTRIES = 4
 
@@ -767,6 +773,44 @@ def release_dash_title_entries(release_files):
             # which left the identity map empty on the very pack it exists for.
             out.append((rel, int(m.group(1)), int(m.group(2)),
                         library._clean_episode_title(m.group(3).strip())))
+        except ValueError:
+            continue
+    return out
+
+
+def release_dot_title_entries(release_files):
+    """`[(rel, season, episode, title)]` for dot/underscore scene names, or [].
+
+    `The.Amazing.World.of.Gumball.S01E03.The.Third.1080p.AMZN.WEB-DL.mkv` -> the title
+    is `The Third` (dots are word separators; the tag tail is left in and simply fails
+    the exact match). A file the bracket or dash parsers already read is skipped, and a
+    remainder carrying TWO titles (`The.Car.-.The.Curse`) is skipped: a file that holds
+    two episodes does not state which single slot it belongs at. Read only by
+    `release_episode_agreement` -- never as a reorder witness (see that function for
+    the measured reason).
+    """
+    claimed = {str(e[0]) for e in release_title_entries(release_files)}
+    claimed |= {str(e[0]) for e in release_dash_title_entries(release_files)}
+    out = []
+    for item in release_files or ():
+        rel = str(item[0] if isinstance(item, (tuple, list)) else item)
+        if rel in claimed:
+            continue
+        stem = Path(rel).stem
+        if _TITLE_TAG_RE.search(stem) or _DASH_TITLE_RE.search(stem):
+            continue
+        m = _DOT_TITLE_RE.search(stem)
+        if not m:
+            continue
+        rest = m.group(3)
+        if re.search(r"\s-\s|\.-\.", rest):
+            continue                          # a two-episode file names no single slot
+        title = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", rest)
+        title = " ".join(title.replace(".", " ").replace("_", " ").split())
+        if len(title) < 2:
+            continue
+        try:
+            out.append((rel, int(m.group(1)), int(m.group(2)), title))
         except ValueError:
             continue
     return out
@@ -903,6 +947,55 @@ def _match_titles(entries, guide, exact_only=False):
     return claims
 
 
+def _match_dot_titles(entries, guide):
+    """`{(season, episode): (guide_season, guide_episode)}` for dot-titled release files.
+
+    The remainder after the episode tag is a dot-joined title plus a tag tail
+    (`The.Third.1080p.AMZN.WEB-DL`), so the title is the LONGEST guide name that is a
+    token prefix of the remainder. Exact prefixes and a unique guide episode only --
+    no ratio pass: a dot form is the ordinary spelling of thousands of packs, and the
+    2026-09-20 dash lesson is that a fuzzy witness on an ordinary spelling rejects
+    real work. A generic guide name ("The End") cannot shadow a longer real one
+    ("The End of the World") because the longest prefix wins, and a remainder whose
+    leading words match no guide name makes no claim.
+    """
+    by_words = []
+    for e in guide or ():
+        toks = str(e.get("name") or "").lower()
+        toks = [w for w in re.sub(r"[^a-z0-9]+", " ", toks).split() if w]
+        if len(toks) < 2:                # a one-word guide name is too weak to anchor
+            continue
+        try:
+            by_words.append((toks, int(e["season"]), int(e["number"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    claims = {}
+    for _rel, rs, re_, title in entries:
+        toks = [w for w in re.sub(r"[^a-z0-9]+", " ", title.lower()).split() if w]
+        best = None
+        for gtoks, gs, ge in by_words:
+            if len(gtoks) <= len(toks) and toks[:len(gtoks)] == gtoks:
+                if best is None or len(gtoks) > len(best[0]):
+                    best = (gtoks, gs, ge)
+        if best is None:
+            continue
+        if len({(gs, ge) for gtoks, gs, ge in by_words if gtoks == best[0]}) != 1:
+            continue                     # two episodes share the matched name
+        key = (rs, re_)
+        hit = (best[1], best[2])
+        if key in claims and claims[key] != hit:
+            continue
+        claims[key] = hit
+    seen = {}
+    for key, target in claims.items():
+        seen.setdefault(target, []).append(key)
+    for target, keys in seen.items():
+        if len(keys) > 1:                # one guide slot claimed by two release files
+            for key in keys:
+                claims.pop(key, None)
+    return claims
+
+
 def _title_claims(strong_entries, weak_entries, guide, identity_weak=False):
     """All computed title claims, with the two witnesses kept separate.
 
@@ -1031,6 +1124,48 @@ def release_identity_map(content_path, release_files, show_hint=None, tmdb_id=No
     claims, reordered, provider = release_numbering_claims(
         content_path, release_files, show_hint=show_hint, tmdb_id=tmdb_id)
     return ({}, "") if reordered else (claims, provider)
+
+
+def release_episode_agreement(release_files, show_hint=None, tmdb_id=None):
+    """`{(s, e): (s, e)}` for dot-titled files whose own title confirms their own key.
+
+    THE AMAZON GUMBALL PACK (2026-09-26). `The.Amazing.World.of.Gumball.S01E03.The.Third.
+    1080p.AMZN.WEB-DL.mkv` carries a title that the guide itself puts at S01E03, and the
+    release says S01E03. The identify run instead treated the 32-file season as a
+    CONTINUATION of the library ("owned show with continuous-absolute numbering") and
+    filed E01-E32 at S01E16-E47; `validate_plan` accepted it, 32 episodes landed in the
+    wrong slots, and the *other* in-flight Gumball pack then parked on the collisions.
+    Nothing was wrong with the plan's own season/episode fields or the destination
+    layout, so the layout guards saw nothing; the computed witness is the file's own
+    TITLE against the provider Jellyfin scrapes.
+
+    This is deliberately NOT `release_identity_map`: a dot-titled pack whose own key is
+    confirmed says nothing about a library that deliberately renumbers (Steven Universe
+    files TMDB's S02 opener at S01E50; One Piece runs absolute numbers in S01). Replayed
+    over every plan in `state/tmp` with a live guide (190 plans): feeding these claims
+    into the season-remap guard rejected correct work; the same-season shift guard
+    (`library._reject_same_season_episode_shift`) rejects exactly the Gumball AMZN shape
+    and nothing else. So this map is consumed only by that guard, and only own-key
+    claims for numbered seasons are returned.
+
+    Same thresholds as the other witnesses, and fails open on no guide, too few titled
+    files, or too few exact matches: a single coincidental title must not constrain a
+    plan.
+    """
+    dots = release_dot_title_entries(release_files)
+    if len(dots) < _TITLE_MAP_MIN_ENTRIES:
+        return {}
+    title = show_hint or ""
+    guide, _provider = _guide_for(title, tmdb_id)
+    if not guide:
+        return {}
+    claims = _match_dot_titles(dots, guide)
+    own = {k: v for k, v in claims.items()
+           if tuple(k) == tuple(v) and k[0] >= 1}
+    if len(own) < max(_TITLE_MAP_MIN_ENTRIES,
+                      int(len(dots) * _TITLE_MAP_MIN_FRACTION)):
+        return {}
+    return own
 
 
 def numbering_agreement_block(identity_map, provider=""):
@@ -2303,6 +2438,20 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
             identity_block = numbering_agreement_block(identity_map, _prov)
             _note(f"identify: release numbering confirms the provider for "
                   f"{len(identity_map)} file(s); a season remap is refused")
+    # The dot-titled scene form (`Show.Name.S01E03.The.Third.1080p...`): a file whose own
+    # title matches the guide at exactly its own key confirms the release numbering THERE.
+    # Read by `_reject_same_season_episode_shift` only -- a plan that keeps the season and
+    # shifts the episode is refused; a deliberate cross-season renumber (absolute runs,
+    # merged cours) is untouched. Not stated as a prompt block: the dot witness is a
+    # per-file validator fact, and the 2026-09-26 replay showed a global "do not remap"
+    # block would contradict libraries that deliberately renumber.
+    episode_agreement = {}
+    if release_files and not serial_map:
+        episode_agreement = release_episode_agreement(
+            release_abs or release_files, show_hint=show_title, tmdb_id=show_tmdb_id)
+        if episode_agreement:
+            _note(f"identify: {len(episode_agreement)} file(s) carry a title confirming "
+                  f"their own `SxxEyy`; a same-season episode shift is refused")
     # The library's OWN Season-00 scheme, when this show already owns specials
     # (HANDOFF 15.5): a provider's special number is not the library's slot, and the
     # free AI must be told the scheme as fact rather than scraping the provider.
@@ -2723,7 +2872,8 @@ def run_identify(info_hash, content_path, log_fn=None, stored_plan=None, settled
                                       sibling_seasons=sibling_seasons,
                                       serial_map=serial_map,
                                       title_map=title_map or None,
-                                      identity_map=identity_map or None)
+                                      identity_map=identity_map or None,
+                                      episode_agreement=episode_agreement or None)
                 # An id the provider contradicted was stripped in place (10.3). Log it
                 # loudly -- the plan is still good, but the next reader must not wonder
                 # why the nfo has no provider id.
